@@ -261,7 +261,6 @@ static struct aws_h2err s_decoder_on_headers_end(
     bool malformed,
     enum aws_http_header_block block_type,
     void *userdata) {
-
     return s_on_headers_end(false /*is_push_promise*/, stream_id, malformed, block_type, userdata);
 }
 
@@ -611,7 +610,7 @@ int h2_fake_peer_send_data_frame_with_padding_length(
     ASSERT_TRUE(msg->message_data.len != 0);
 
     ASSERT_SUCCESS(testing_channel_push_read_message(peer->testing_channel, msg));
-    aws_input_stream_destroy(body_stream);
+    aws_input_stream_release(body_stream);
     return AWS_OP_SUCCESS;
 }
 
@@ -643,6 +642,8 @@ int h2_fake_peer_send_connection_preface_default_settings(struct h2_fake_peer *p
 /******************************************************************************/
 
 struct aws_input_stream_tester {
+    struct aws_input_stream base;
+    struct aws_allocator *allocator;
     /* aws_input_stream_byte_cursor provides our actual functionality  */
     struct aws_input_stream *cursor_stream;
 
@@ -655,12 +656,12 @@ static int s_aws_input_stream_tester_seek(
     int64_t offset,
     enum aws_stream_seek_basis basis) {
 
-    struct aws_input_stream_tester *impl = stream->impl;
+    struct aws_input_stream_tester *impl = AWS_CONTAINER_OF(stream, struct aws_input_stream_tester, base);
     return aws_input_stream_seek(impl->cursor_stream, offset, basis);
 }
 
 static int s_aws_input_stream_tester_read(struct aws_input_stream *stream, struct aws_byte_buf *dest) {
-    struct aws_input_stream_tester *impl = stream->impl;
+    struct aws_input_stream_tester *impl = AWS_CONTAINER_OF(stream, struct aws_input_stream_tester, base);
 
     if (impl->is_reading_broken) {
         return aws_raise_error(AWS_IO_STREAM_READ_FAILED);
@@ -678,21 +679,18 @@ static int s_aws_input_stream_tester_read(struct aws_input_stream *stream, struc
 }
 
 static int s_aws_input_stream_tester_get_status(struct aws_input_stream *stream, struct aws_stream_status *status) {
-    struct aws_input_stream_tester *impl = stream->impl;
+    struct aws_input_stream_tester *impl = AWS_CONTAINER_OF(stream, struct aws_input_stream_tester, base);
     return aws_input_stream_get_status(impl->cursor_stream, status);
 }
 
 static int s_aws_input_stream_tester_get_length(struct aws_input_stream *stream, int64_t *out_length) {
-    struct aws_input_stream_tester *impl = stream->impl;
+    struct aws_input_stream_tester *impl = AWS_CONTAINER_OF(stream, struct aws_input_stream_tester, base);
     return aws_input_stream_get_length(impl->cursor_stream, out_length);
 }
 
-static void s_aws_input_stream_tester_destroy(struct aws_input_stream *stream) {
-    if (stream) {
-        struct aws_input_stream_tester *impl = stream->impl;
-        aws_input_stream_destroy(impl->cursor_stream);
-        aws_mem_release(stream->allocator, stream);
-    }
+static void s_aws_input_stream_tester_destroy(struct aws_input_stream_tester *impl) {
+    aws_input_stream_release(impl->cursor_stream);
+    aws_mem_release(impl->allocator, impl);
 }
 
 static struct aws_input_stream_vtable s_aws_input_stream_tester_vtable = {
@@ -700,38 +698,144 @@ static struct aws_input_stream_vtable s_aws_input_stream_tester_vtable = {
     .read = s_aws_input_stream_tester_read,
     .get_status = s_aws_input_stream_tester_get_status,
     .get_length = s_aws_input_stream_tester_get_length,
-    .destroy = s_aws_input_stream_tester_destroy,
 };
 
 struct aws_input_stream *aws_input_stream_new_tester(struct aws_allocator *alloc, struct aws_byte_cursor cursor) {
 
-    struct aws_input_stream *stream = NULL;
-    struct aws_input_stream_tester *impl = NULL;
-    aws_mem_acquire_many(
-        alloc, 2, &stream, sizeof(struct aws_input_stream), &impl, sizeof(struct aws_input_stream_tester));
-    AWS_FATAL_ASSERT(stream);
-
-    AWS_ZERO_STRUCT(*stream);
-    AWS_ZERO_STRUCT(*impl);
-
-    stream->allocator = alloc;
-    stream->impl = impl;
-    stream->vtable = &s_aws_input_stream_tester_vtable;
+    struct aws_input_stream_tester *impl = aws_mem_calloc(alloc, 1, sizeof(struct aws_input_stream_tester));
+    AWS_FATAL_ASSERT(impl);
 
     impl->max_bytes_per_read = SIZE_MAX;
 
     impl->cursor_stream = aws_input_stream_new_from_cursor(alloc, &cursor);
     AWS_FATAL_ASSERT(impl->cursor_stream);
-
-    return stream;
+    impl->allocator = alloc;
+    impl->base.vtable = &s_aws_input_stream_tester_vtable;
+    aws_ref_count_init(
+        &impl->base.ref_count, impl, (aws_simple_completion_callback *)s_aws_input_stream_tester_destroy);
+    return &impl->base;
 }
 
 void aws_input_stream_tester_set_max_bytes_per_read(struct aws_input_stream *input_stream, size_t max_bytes) {
-    struct aws_input_stream_tester *impl = input_stream->impl;
+    struct aws_input_stream_tester *impl = AWS_CONTAINER_OF(input_stream, struct aws_input_stream_tester, base);
     impl->max_bytes_per_read = max_bytes;
 }
 
 void aws_input_stream_tester_set_reading_broken(struct aws_input_stream *input_stream, bool is_broken) {
-    struct aws_input_stream_tester *impl = input_stream->impl;
+    struct aws_input_stream_tester *impl = AWS_CONTAINER_OF(input_stream, struct aws_input_stream_tester, base);
     impl->is_reading_broken = is_broken;
+}
+
+struct aws_input_stream_tester_upload_impl {
+    struct aws_input_stream base;
+    size_t position;
+    size_t length;
+    size_t num_sentence_sent;
+    struct aws_allocator *allocator;
+};
+
+static int s_aws_input_stream_tester_upload_seek(
+    struct aws_input_stream *stream,
+    int64_t offset,
+    enum aws_stream_seek_basis basis) {
+    (void)stream;
+    (void)offset;
+    (void)basis;
+
+    /* Stream should never be seeked; all reads should be sequential. */
+    aws_raise_error(AWS_ERROR_UNKNOWN);
+    return AWS_OP_ERR;
+}
+
+const struct aws_byte_cursor s_test_string = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("This is CRT HTTP test.");
+
+static int s_aws_input_stream_tester_upload_read(struct aws_input_stream *stream, struct aws_byte_buf *dest) {
+    (void)stream;
+    (void)dest;
+
+    struct aws_input_stream_tester_upload_impl *test_input_stream =
+        AWS_CONTAINER_OF(stream, struct aws_input_stream_tester_upload_impl, base);
+
+    while (dest->len < dest->capacity && test_input_stream->length - test_input_stream->position > 0) {
+        size_t buffer_pos = test_input_stream->position % s_test_string.len;
+
+        struct aws_byte_cursor source_byte_cursor = {
+            .len = s_test_string.len - buffer_pos,
+            .ptr = s_test_string.ptr + buffer_pos,
+        };
+
+        size_t remaining_in_buffer =
+            aws_min_size(dest->capacity - dest->len, test_input_stream->length - test_input_stream->position);
+
+        if (remaining_in_buffer < source_byte_cursor.len) {
+            source_byte_cursor.len = remaining_in_buffer;
+        }
+
+        aws_byte_buf_append(dest, &source_byte_cursor);
+        buffer_pos += source_byte_cursor.len;
+
+        test_input_stream->position += source_byte_cursor.len;
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_aws_input_stream_tester_upload_get_status(
+    struct aws_input_stream *stream,
+    struct aws_stream_status *status) {
+    (void)stream;
+    (void)status;
+
+    struct aws_input_stream_tester_upload_impl *test_input_stream =
+        AWS_CONTAINER_OF(stream, struct aws_input_stream_tester_upload_impl, base);
+
+    status->is_end_of_stream = test_input_stream->position == test_input_stream->length;
+    status->is_valid = true;
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_aws_input_stream_tester_upload_get_length(struct aws_input_stream *stream, int64_t *out_length) {
+    AWS_ASSERT(stream != NULL);
+    struct aws_input_stream_tester_upload_impl *test_input_stream =
+        AWS_CONTAINER_OF(stream, struct aws_input_stream_tester_upload_impl, base);
+    *out_length = (int64_t)test_input_stream->length;
+    return AWS_OP_SUCCESS;
+}
+
+static void s_aws_input_stream_tester_upload_destroy(struct aws_input_stream_tester_upload_impl *test_input_stream) {
+    aws_mem_release(test_input_stream->allocator, test_input_stream);
+}
+
+static struct aws_input_stream_vtable s_aws_input_stream_tester_upload_vtable = {
+    .seek = s_aws_input_stream_tester_upload_seek,
+    .read = s_aws_input_stream_tester_upload_read,
+    .get_status = s_aws_input_stream_tester_upload_get_status,
+    .get_length = s_aws_input_stream_tester_upload_get_length,
+};
+
+struct aws_input_stream *aws_input_stream_tester_upload_new(struct aws_allocator *alloc, size_t length) {
+
+    struct aws_input_stream_tester_upload_impl *test_input_stream =
+        aws_mem_calloc(alloc, 1, sizeof(struct aws_input_stream_tester_upload_impl));
+    test_input_stream->base.vtable = &s_aws_input_stream_tester_upload_vtable;
+    aws_ref_count_init(
+        &test_input_stream->base.ref_count,
+        test_input_stream,
+        (aws_simple_completion_callback *)s_aws_input_stream_tester_upload_destroy);
+
+    struct aws_input_stream *input_stream = &test_input_stream->base;
+
+    test_input_stream->position = 0;
+    test_input_stream->length = length;
+    test_input_stream->allocator = alloc;
+    test_input_stream->num_sentence_sent = length / s_test_string.len;
+
+    return input_stream;
+}
+
+size_t aws_input_stream_tester_upload_get_num_sentence_sent(struct aws_input_stream *stream) {
+    struct aws_input_stream_tester_upload_impl *test_input_stream =
+        AWS_CONTAINER_OF(stream, struct aws_input_stream_tester_upload_impl, base);
+    return test_input_stream->num_sentence_sent;
 }

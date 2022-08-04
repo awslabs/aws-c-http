@@ -53,6 +53,23 @@ enum aws_h2_stream_api_state {
     AWS_H2_STREAM_API_STATE_COMPLETE,
 };
 
+/* Indicates the state of the body of the HTTP/2 stream */
+enum aws_h2_stream_body_state {
+    AWS_H2_STREAM_BODY_STATE_NONE,           /* Has no body for the HTTP/2 stream */
+    AWS_H2_STREAM_BODY_STATE_WAITING_WRITES, /* Has no active body, but waiting for more to be
+                                                write */
+    AWS_H2_STREAM_BODY_STATE_ONGOING,        /* Has active ongoing body */
+};
+
+/* represents a write operation, which will be turned into a data frame */
+struct aws_h2_stream_data_write {
+    struct aws_linked_list_node node;
+    struct aws_input_stream *data_stream;
+    aws_http2_stream_write_data_complete_fn *on_complete;
+    void *user_data;
+    bool end_stream;
+};
+
 struct aws_h2_stream {
     struct aws_http_stream base;
 
@@ -68,7 +85,21 @@ struct aws_h2_stream {
          * We leave it up to the remote peer to detect whether the max window size has been exceeded. */
         int64_t window_size_self;
         struct aws_http_message *outgoing_message;
+        /* All queued writes. If the message provides a body stream, it will be first in this list
+         * This list can drain, which results in the stream being put to sleep (moved to waiting_streams_list in
+         * h2_connection). */
+        struct aws_linked_list outgoing_writes; /* aws_http2_stream_data_write */
         bool received_main_headers;
+
+        bool content_length_received;
+        /* Set if incoming message has content-length header */
+        uint64_t incoming_content_length;
+        /* The total length of payload of data frame received */
+        uint64_t incoming_data_length;
+        /* Indicates that the stream is currently in the waiting_streams_list and is
+         * asleep. When stream needs to be awaken, moving the stream back to the outgoing_streams_list and set this bool
+         * to false */
+        bool waiting_for_writes;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
@@ -84,22 +115,21 @@ struct aws_h2_stream {
          * code we want to inform user about. */
         struct aws_h2err reset_error;
         bool reset_called;
+        bool manual_write_ended;
 
         /* Simplified stream state. */
         enum aws_h2_stream_api_state api_state;
+
+        /* any data streams sent manually via aws_http2_stream_write_data */
+        struct aws_linked_list pending_write_list; /* aws_h2_stream_pending_data */
     } synced_data;
+    bool manual_write;
 
     /* Store the sent reset HTTP/2 error code, set to -1, if none has sent so far */
     int64_t sent_reset_error_code;
 
     /* Store the received reset HTTP/2 error code, set to -1, if none has received so far */
     int64_t received_reset_error_code;
-
-    /**
-     * Back up the message if we create a new message from it to keep the underlying input stream alive.
-     * TODO: remove this once we have input stream refcounted
-     */
-    struct aws_http_message *backup_outgoing_message;
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);
@@ -113,16 +143,15 @@ enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *str
 struct aws_h2err aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed, bool self);
 
 /* Connection is ready to send frames from stream now */
-int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data);
+int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_body_state *body_state);
+
+/* Completes stream for one reason or another, clean up any pending writes/resources. */
+void aws_h2_stream_complete(struct aws_h2_stream *stream, int error_code);
 
 /* Connection is ready to send data from stream now.
  * Stream may complete itself during this call.
- * data_encode_status:
- * AWS_H2_DATA_ENCODE_COMPLETE: Finished encoding data for the stream
- * AWS_H2_DATA_ENCODE_ONGOING: Stream has more data to send.
- * AWS_H2_DATA_ENCODE_ONGOING_BODY_STALLED: Stream has more data to send, but it's not ready right now
- * AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED: Stream has more data to send but its window size is too small, and stream
- * will be moved to stalled_window_stream_list */
+ * data_encode_status: see `aws_h2_data_encode_status`
+ */
 int aws_h2_stream_encode_data_frame(
     struct aws_h2_stream *stream,
     struct aws_h2_frame_encoder *encoder,

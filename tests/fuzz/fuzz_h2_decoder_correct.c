@@ -42,8 +42,10 @@ static struct aws_http_headers *s_generate_headers(
         struct aws_http_header path = {.name = aws_http_header_path, .value = aws_byte_cursor_from_c_str("/")};
         aws_http_headers_add_header(headers, &path);
 
-        struct aws_http_header authority = {.name = aws_http_header_authority,
-                                            .value = aws_byte_cursor_from_c_str("example.com")};
+        struct aws_http_header authority = {
+            .name = aws_http_header_authority,
+            .value = aws_byte_cursor_from_c_str("example.com"),
+        };
         aws_http_headers_add_header(headers, &authority);
 
     } else if (header_style == HEADER_STYLE_RESPONSE) {
@@ -216,7 +218,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     /* figure out if we should use huffman encoding */
     uint8_t huffman_choice = 0;
     aws_byte_cursor_read_u8(&input, &huffman_choice);
-    aws_hpack_set_huffman_mode(encoder.hpack, huffman_choice % 3);
+    aws_hpack_encoder_set_huffman_mode(&encoder.hpack, huffman_choice % 3);
 
     switch (frame_type) {
         case AWS_H2_FRAME_T_DATA: {
@@ -252,7 +254,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             struct aws_stream_status body_status;
             aws_input_stream_get_status(body, &body_status);
             AWS_FATAL_ASSERT(body_complete == body_status.is_end_of_stream)
-            aws_input_stream_destroy(body);
+            aws_input_stream_release(body);
             break;
         }
         case AWS_H2_FRAME_T_HEADERS: {

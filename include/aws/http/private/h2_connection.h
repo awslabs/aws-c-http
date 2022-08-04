@@ -13,6 +13,7 @@
 
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/h2_frames.h>
+#include <aws/http/statistics.h>
 
 struct aws_h2_decoder;
 struct aws_h2_stream;
@@ -70,6 +71,14 @@ struct aws_h2_connection {
          * Waiting for WINDOW_UPDATE to set them free */
         struct aws_linked_list stalled_window_streams_list;
 
+        /* List using aws_h2_stream.node.
+         * Contains all streams that are open, but are only sending data when notified, rather than polling
+         * for it (e.g. event streams)
+         * Streams are moved to the outgoing_streams_list until they send pending data, then are moved back
+         * to this list to sleep until more data comes in
+         */
+        struct aws_linked_list waiting_streams_list;
+
         /* List using aws_h2_frame.node.
          * Queues all frames (except DATA frames) for connection to send.
          * When queue is empty, then we send DATA frames from the outgoing_streams_list */
@@ -108,6 +117,14 @@ struct aws_h2_connection {
         int channel_shutdown_error_code;
         bool channel_shutdown_immediately;
         bool channel_shutdown_waiting_for_goaway_to_be_written;
+
+        /* TODO: Consider adding stream monitor */
+        struct aws_crt_statistics_http2_channel stats;
+
+        /* Timestamp when connection has data to send, which is when there is an active stream with body to send */
+        uint64_t outgoing_timestamp_ns;
+        /* Timestamp when connection has data to receive, which is when there is an active stream */
+        uint64_t incoming_timestamp_ns;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
@@ -200,8 +217,9 @@ enum aws_h2_stream_closed_when {
 enum aws_h2_data_encode_status {
     AWS_H2_DATA_ENCODE_COMPLETE,
     AWS_H2_DATA_ENCODE_ONGOING,
-    AWS_H2_DATA_ENCODE_ONGOING_BODY_STALLED,
-    AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED,
+    AWS_H2_DATA_ENCODE_ONGOING_BODY_STREAM_STALLED, /* stalled reading from body stream */
+    AWS_H2_DATA_ENCODE_ONGOING_WAITING_FOR_WRITES,  /* waiting for next manual write */
+    AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED,      /* stalled due to reduced window size */
 };
 
 /* When window size is too small to fit the possible padding into it, we stop sending data and wait for WINDOW_UPDATE */

@@ -174,6 +174,7 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
         }
     } else {
         if (prior_knowledge_http2) {
+            AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "Using prior knowledge to start HTTP/2 connection");
             version = AWS_HTTP_VERSION_2;
         }
     }
@@ -253,6 +254,11 @@ void aws_http_connection_close(struct aws_http_connection *connection) {
     connection->vtable->close(connection);
 }
 
+void aws_http_connection_stop_new_requests(struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    connection->vtable->stop_new_requests(connection);
+}
+
 bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     return connection->vtable->is_open(connection);
@@ -295,7 +301,7 @@ int aws_http2_connection_ping(
     return http2_connection->vtable->send_ping(http2_connection, optional_opaque_data, on_ack, user_data);
 }
 
-int aws_http2_connection_send_goaway(
+void aws_http2_connection_send_goaway(
     struct aws_http_connection *http2_connection,
     uint32_t http2_error,
     bool allow_more_streams,
@@ -303,8 +309,7 @@ int aws_http2_connection_send_goaway(
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
     AWS_FATAL_ASSERT(http2_connection->http_version == AWS_HTTP_VERSION_2);
-    return http2_connection->vtable->send_goaway(
-        http2_connection, http2_error, allow_more_streams, optional_debug_data);
+    http2_connection->vtable->send_goaway(http2_connection, http2_error, allow_more_streams, optional_debug_data);
 }
 
 int aws_http2_connection_get_sent_goaway(

@@ -240,7 +240,7 @@ struct aws_http_connection_manager {
     /*
      * HTTP/2 specific.
      */
-    bool prior_knowledge_http2;
+    bool http2_prior_knowledge;
     struct aws_array_list *initial_settings;
     size_t max_closed_streams;
     bool http2_conn_manual_window_management;
@@ -812,6 +812,13 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         return NULL;
     }
 
+    if (options->tls_connection_options && options->http2_prior_knowledge) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - HTTP/2 prior knowledge cannot be set when TLS is used");
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
     struct aws_http_connection_manager *manager =
         aws_mem_calloc(allocator, 1, sizeof(struct aws_http_connection_manager));
     if (manager == NULL) {
@@ -876,7 +883,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         }
         manager->proxy_ev_settings.tls_options = manager->proxy_ev_tls_options;
     }
-    manager->prior_knowledge_http2 = options->prior_knowledge_http2;
+    manager->http2_prior_knowledge = options->http2_prior_knowledge;
     if (options->num_initial_settings > 0) {
         manager->initial_settings = aws_mem_calloc(allocator, 1, sizeof(struct aws_array_list));
         aws_array_list_init_dynamic(
@@ -988,7 +995,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
     options.manual_window_management = manager->enable_read_back_pressure;
     options.proxy_ev_settings = &manager->proxy_ev_settings;
-    options.prior_knowledge_http2 = manager->prior_knowledge_http2;
+    options.prior_knowledge_http2 = manager->http2_prior_knowledge;
 
     struct aws_http2_connection_options h2_options;
     AWS_ZERO_STRUCT(h2_options);
@@ -1537,4 +1544,16 @@ static void s_cull_task(struct aws_task *task, void *arg, enum aws_task_status s
     s_cull_idle_connections(manager);
 
     s_schedule_connection_culling(manager);
+}
+
+void aws_http_connection_manager_fetch_metrics(
+    const struct aws_http_connection_manager *manager,
+    struct aws_http_manager_metrics *out_metrics) {
+    AWS_PRECONDITION(manager);
+    AWS_PRECONDITION(out_metrics);
+
+    AWS_FATAL_ASSERT(aws_mutex_lock((struct aws_mutex *)(void *)&manager->lock) == AWS_OP_SUCCESS);
+    out_metrics->available_concurrency = manager->idle_connection_count;
+    out_metrics->pending_concurrency_acquires = manager->pending_acquisition_count;
+    AWS_FATAL_ASSERT(aws_mutex_unlock((struct aws_mutex *)(void *)&manager->lock) == AWS_OP_SUCCESS);
 }

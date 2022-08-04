@@ -50,8 +50,8 @@ struct header_test_fixture {
     struct aws_allocator *allocator;
     bool one_byte_at_a_time; /* T: decode one byte at a time. F: decode whole buffer at once */
 
-    struct aws_hpack_context *encoder;
-    struct aws_hpack_context *decoder;
+    struct aws_hpack_encoder encoder;
+    struct aws_hpack_decoder decoder;
 
     struct aws_http_headers *headers_to_encode;
     struct aws_byte_buf expected_encoding_buf;
@@ -65,10 +65,8 @@ static int s_header_test_before(struct aws_allocator *allocator, void *ctx) {
 
     aws_http_library_init(allocator);
 
-    fixture->encoder = aws_hpack_context_new(allocator, AWS_LS_HTTP_ENCODER, NULL);
-    ASSERT_NOT_NULL(fixture->encoder);
-    fixture->decoder = aws_hpack_context_new(allocator, AWS_LS_HTTP_DECODER, NULL);
-    ASSERT_NOT_NULL(fixture->decoder);
+    aws_hpack_encoder_init(&fixture->encoder, allocator, NULL);
+    aws_hpack_decoder_init(&fixture->decoder, allocator, NULL);
     fixture->headers_to_encode = aws_http_headers_new(allocator);
     ASSERT_NOT_NULL(fixture->headers_to_encode);
 
@@ -93,7 +91,7 @@ static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
     ASSERT_SUCCESS(aws_byte_buf_init(&output_buffer, allocator, S_BUFFER_SIZE));
 
     /* Encode the headers */
-    ASSERT_SUCCESS(aws_hpack_encode_header_block(fixture->encoder, fixture->headers_to_encode, &output_buffer));
+    ASSERT_SUCCESS(aws_hpack_encode_header_block(&fixture->encoder, fixture->headers_to_encode, &output_buffer));
 
     /* Compare the encoded output against the expected header block fragment */
     ASSERT_BIN_ARRAYS_EQUALS(
@@ -109,10 +107,10 @@ static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
 
         if (fixture->one_byte_at_a_time) {
             struct aws_byte_cursor one_byte_payload = aws_byte_cursor_advance(&payload, 1);
-            ASSERT_SUCCESS(aws_hpack_decode(fixture->decoder, &one_byte_payload, &result));
+            ASSERT_SUCCESS(aws_hpack_decode(&fixture->decoder, &one_byte_payload, &result));
             ASSERT_UINT_EQUALS(0, one_byte_payload.len);
         } else {
-            ASSERT_SUCCESS(aws_hpack_decode(fixture->decoder, &payload, &result));
+            ASSERT_SUCCESS(aws_hpack_decode(&fixture->decoder, &payload, &result));
         }
 
         if (result.type == AWS_HPACK_DECODE_T_HEADER_FIELD) {
@@ -143,8 +141,8 @@ static int s_header_test_after(struct aws_allocator *allocator, int setup_res, v
         aws_http_headers_release(fixture->decoded_headers);
         aws_byte_buf_clean_up(&fixture->expected_encoding_buf);
         aws_http_headers_release(fixture->headers_to_encode);
-        aws_hpack_context_destroy(fixture->decoder);
-        aws_hpack_context_destroy(fixture->encoder);
+        aws_hpack_decoder_clean_up(&fixture->decoder);
+        aws_hpack_encoder_clean_up(&fixture->encoder);
     }
     aws_http_library_clean_up();
 
@@ -185,7 +183,7 @@ HEADER_TEST(h2_header_empty_payload, s_test_empty_payload, NULL);
 /* RFC-7541 - Header Field Representation Examples - C.2.1. Literal Header Field with Indexing */
 static int s_test_ex_2_1_init(struct header_test_fixture *fixture) {
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
+    aws_hpack_encoder_set_huffman_mode(&fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
 
     struct aws_http_header headers[] = {
         DEFINE_STATIC_HEADER("custom-key", "custom-header", USE_CACHE),
@@ -205,7 +203,7 @@ HEADER_TEST(h2_header_ex_2_1, s_test_ex_2_1_init, NULL);
 /* RFC-7541 - Header Field Representation Examples - C.2.2. Literal Header Field without Indexing */
 static int s_test_ex_2_2_init(struct header_test_fixture *fixture) {
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
+    aws_hpack_encoder_set_huffman_mode(&fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
 
     struct aws_http_header headers[] = {
         DEFINE_STATIC_HEADER(":path", "/sample/path", NO_CACHE),
@@ -224,7 +222,7 @@ HEADER_TEST(h2_header_ex_2_2, s_test_ex_2_2_init, NULL);
 /* RFC-7541 - Header Field Representation Examples - C.2.3. Literal Header Field Never Indexed */
 static int s_test_ex_2_3_init(struct header_test_fixture *fixture) {
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
+    aws_hpack_encoder_set_huffman_mode(&fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
 
     struct aws_http_header headers[] = {
         DEFINE_STATIC_HEADER("password", "secret", NO_FORWARD_CACHE),
@@ -243,7 +241,7 @@ HEADER_TEST(h2_header_ex_2_3, s_test_ex_2_3_init, NULL);
 /* RFC-7541 - Header Field Representation Examples - C.2.3. Indexed Header Field */
 static int s_test_ex_2_4_init(struct header_test_fixture *fixture) {
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
+    aws_hpack_encoder_set_huffman_mode(&fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
 
     struct aws_http_header headers[] = {
         DEFINE_STATIC_HEADER(":method", "GET", USE_CACHE),
@@ -272,8 +270,8 @@ struct header_request_response_test_fixture {
     struct aws_allocator *allocator;
     bool one_byte_at_a_time; /* T: decode one byte at a time. F: decode whole buffer at once */
 
-    struct aws_hpack_context *encoder;
-    struct aws_hpack_context *decoder;
+    struct aws_hpack_encoder encoder;
+    struct aws_hpack_decoder decoder;
 
     struct aws_http_headers *headers_to_encode[3];
     struct aws_byte_buf expected_encoding_buf[3];
@@ -290,10 +288,8 @@ static int s_header_request_response_test_before(struct aws_allocator *allocator
 
     aws_http_library_init(allocator);
 
-    fixture->encoder = aws_hpack_context_new(allocator, AWS_LS_HTTP_ENCODER, NULL);
-    ASSERT_NOT_NULL(fixture->encoder);
-    fixture->decoder = aws_hpack_context_new(allocator, AWS_LS_HTTP_DECODER, NULL);
-    ASSERT_NOT_NULL(fixture->decoder);
+    aws_hpack_encoder_init(&fixture->encoder, allocator, NULL);
+    aws_hpack_decoder_init(&fixture->decoder, allocator, NULL);
     for (int i = 0; i < 3; i++) {
         fixture->headers_to_encode[i] = aws_http_headers_new(allocator);
         ASSERT_NOT_NULL(fixture->headers_to_encode[i]);
@@ -312,7 +308,7 @@ static int s_encoder_result_check(
     struct aws_byte_buf expected_encoding_buf,
     struct aws_byte_buf *output_buffer) {
     /* Encode the headers */
-    ASSERT_SUCCESS(aws_hpack_encode_header_block(fixture->encoder, headers_to_encode, output_buffer));
+    ASSERT_SUCCESS(aws_hpack_encode_header_block(&fixture->encoder, headers_to_encode, output_buffer));
 
     /* Compare the encoded output against the expected header block fragment */
     ASSERT_BIN_ARRAYS_EQUALS(
@@ -325,10 +321,10 @@ static int s_encoder_result_check(
 
         if (fixture->one_byte_at_a_time) {
             struct aws_byte_cursor one_byte_payload = aws_byte_cursor_advance(&payload, 1);
-            ASSERT_SUCCESS(aws_hpack_decode(fixture->decoder, &one_byte_payload, &result));
+            ASSERT_SUCCESS(aws_hpack_decode(&fixture->decoder, &one_byte_payload, &result));
             ASSERT_UINT_EQUALS(0, one_byte_payload.len);
         } else {
-            ASSERT_SUCCESS(aws_hpack_decode(fixture->decoder, &payload, &result));
+            ASSERT_SUCCESS(aws_hpack_decode(&fixture->decoder, &payload, &result));
         }
 
         if (result.type == AWS_HPACK_DECODE_T_HEADER_FIELD) {
@@ -349,14 +345,14 @@ static int s_dynamic_table_last_entry_check(
     struct aws_http_header *expected_entry,
     size_t dynamic_table_len) {
     /* check the decoder's dynamic table */
-    struct aws_hpack_context *context = fixture->decoder;
+    const struct aws_hpack_context *context = &fixture->decoder.context;
     /* get the last element in dynamic table, which will be the absolute index plus all the elements in static table */
     ASSERT_TRUE(dynamic_table_len == aws_hpack_get_dynamic_table_num_elements(context));
     const struct aws_http_header *back = aws_hpack_get_header(context, dynamic_table_len + 61);
     ASSERT_TRUE(aws_byte_cursor_eq(&back->name, &expected_entry->name));
     ASSERT_TRUE(aws_byte_cursor_eq(&back->value, &expected_entry->value));
     /* check the encoder's dynamic table */
-    context = fixture->encoder;
+    context = &fixture->encoder.context;
     ASSERT_TRUE(dynamic_table_len == aws_hpack_get_dynamic_table_num_elements(context));
     back = aws_hpack_get_header(context, dynamic_table_len + 61);
     ASSERT_TRUE(aws_byte_cursor_eq(&back->name, &expected_entry->name));
@@ -406,8 +402,8 @@ static int s_header_request_response_test_after(struct aws_allocator *allocator,
             aws_byte_buf_clean_up(&fixture->expected_encoding_buf[i]);
             aws_http_headers_release(fixture->headers_to_encode[i]);
         }
-        aws_hpack_context_destroy(fixture->decoder);
-        aws_hpack_context_destroy(fixture->encoder);
+        aws_hpack_decoder_clean_up(&fixture->decoder);
+        aws_hpack_encoder_clean_up(&fixture->encoder);
     }
     aws_http_library_clean_up();
 
@@ -440,7 +436,7 @@ static int s_header_request_response_test_after(struct aws_allocator *allocator,
 /* RFC-7541 - Request Examples without Huffman Coding - C.3 */
 static int s_test_ex_3_init(struct header_request_response_test_fixture *fixture) {
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
+    aws_hpack_encoder_set_huffman_mode(&fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
     int index = 0;
     /* First Request RFC-7541 C.3.1 */
     struct aws_http_header headers_1[] = {
@@ -508,7 +504,7 @@ HEADER_REQUEST_RESPONSE_TEST(h2_header_ex_3, s_test_ex_3_init, NULL);
 /* RFC-7541 - Request Examples with Huffman Coding - C.4 */
 static int s_test_ex_4_init(struct header_request_response_test_fixture *fixture) {
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_ALWAYS);
+    aws_hpack_encoder_set_huffman_mode(&fixture->encoder, AWS_HPACK_HUFFMAN_ALWAYS);
     int index = 0;
     /* First Request RFC-7541 C.4.1 */
     struct aws_http_header headers_1[] = {
@@ -575,10 +571,10 @@ HEADER_REQUEST_RESPONSE_TEST(h2_header_ex_4, s_test_ex_4_init, NULL);
 static int s_test_ex_5_init(struct header_request_response_test_fixture *fixture) {
 
     /* set the max table size to 256 */
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(fixture->encoder, 256));
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(fixture->decoder, 256));
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(&fixture->encoder.context, 256));
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(&fixture->decoder.context, 256));
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
+    aws_hpack_encoder_set_huffman_mode(&fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
     int index = 0;
     /* First Response RFC-7541 C.5.1 */
     struct aws_http_header headers_1[] = {
@@ -651,10 +647,10 @@ HEADER_REQUEST_RESPONSE_TEST(h2_header_ex_5, s_test_ex_5_init, NULL);
 static int s_test_ex_6_init(struct header_request_response_test_fixture *fixture) {
 
     /* set the max table size to 256 */
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(fixture->encoder, 256));
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(fixture->decoder, 256));
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(&fixture->encoder.context, 256));
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(&fixture->decoder.context, 256));
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_ALWAYS);
+    aws_hpack_encoder_set_huffman_mode(&fixture->encoder, AWS_HPACK_HUFFMAN_ALWAYS);
 
     int index = 0;
     /* First Response RFC-7541 C.6.1 */

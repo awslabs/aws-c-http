@@ -56,6 +56,7 @@ static struct aws_http_stream *s_new_server_request_handler_stream(
     const struct aws_http_request_handler_options *options);
 static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response);
 static void s_connection_close(struct aws_http_connection *connection_base);
+static void s_connection_stop_new_request(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
 static int s_decoder_on_request(
@@ -90,6 +91,7 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .new_server_request_handler_stream = s_new_server_request_handler_stream,
     .stream_send_response = s_stream_send_response,
     .close = s_connection_close,
+    .stop_new_requests = s_connection_stop_new_request,
     .is_open = s_connection_is_open,
     .new_requests_allowed = s_connection_new_requests_allowed,
     .change_settings = NULL,
@@ -194,6 +196,18 @@ static void s_connection_close(struct aws_http_connection *connection_base) {
 
     /* Don't stop reading/writing immediately, let that happen naturally during the channel shutdown process. */
     s_stop(connection, false /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, AWS_ERROR_SUCCESS);
+}
+
+static void s_connection_stop_new_request(struct aws_http_connection *connection_base) {
+    struct aws_h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h1_connection, base);
+
+    { /* BEGIN CRITICAL SECTION */
+        aws_h1_connection_lock_synced_data(connection);
+        if (!connection->synced_data.new_stream_error_code) {
+            connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
+        }
+        aws_h1_connection_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
 }
 
 static bool s_connection_is_open(const struct aws_http_connection *connection_base) {

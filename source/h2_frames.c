@@ -4,7 +4,6 @@
  */
 
 #include <aws/http/private/h2_frames.h>
-#include <aws/http/private/hpack.h>
 
 #include <aws/compression/huffman.h>
 
@@ -31,7 +30,7 @@ const uint32_t aws_h2_settings_initial[AWS_HTTP2_SETTINGS_END_RANGE] = {
     [AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE] = 4096,
     [AWS_HTTP2_SETTINGS_ENABLE_PUSH] = 1,
     [AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS] = UINT32_MAX, /* "Initially there is no limit to this value" */
-    [AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] = 65535,
+    [AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] = AWS_H2_INIT_WINDOW_SIZE,
     [AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE] = 16384,
     [AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE] = UINT32_MAX, /* "The initial value of this setting is unlimited" */
 };
@@ -227,6 +226,7 @@ static void s_frame_priority_settings_encode(
     writes_ok &= aws_byte_buf_write_u8(output, priority->weight);
 
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 }
 
 /***********************************************************************************************************************
@@ -279,6 +279,7 @@ static void s_frame_prefix_encode(
     writes_ok &= aws_byte_buf_write_be32(output, stream_id);
 
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 }
 
 /***********************************************************************************************************************
@@ -296,10 +297,7 @@ int aws_h2_frame_encoder_init(
     encoder->allocator = allocator;
     encoder->logging_id = logging_id;
 
-    encoder->hpack = aws_hpack_context_new(allocator, AWS_LS_HTTP_ENCODER, logging_id);
-    if (!encoder->hpack) {
-        return AWS_OP_ERR;
-    }
+    aws_hpack_encoder_init(&encoder->hpack, allocator, logging_id);
 
     encoder->settings.max_frame_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE];
     return AWS_OP_SUCCESS;
@@ -307,7 +305,7 @@ int aws_h2_frame_encoder_init(
 void aws_h2_frame_encoder_clean_up(struct aws_h2_frame_encoder *encoder) {
     AWS_PRECONDITION(encoder);
 
-    aws_hpack_context_destroy(encoder->hpack);
+    aws_hpack_encoder_clean_up(&encoder->hpack);
 }
 
 /***********************************************************************************************************************
@@ -444,6 +442,7 @@ int aws_h2_encode_data_frame(
     *stream_window_size_peer -= (int32_t)payload_len;
 
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
     return AWS_OP_SUCCESS;
 
 handle_waiting_for_more_space:
@@ -501,6 +500,8 @@ static struct aws_h2_frame *s_frame_new_headers_or_push_promise(
     const struct aws_h2_frame_priority_settings *optional_priority,
     uint32_t promised_stream_id) {
 
+    /* TODO: Host and ":authority" are no longer permitted to disagree. Should we enforce it here or sent it as
+     * requested, let the server side reject the request? */
     AWS_PRECONDITION(allocator);
     AWS_PRECONDITION(frame_type == AWS_H2_FRAME_T_HEADERS || frame_type == AWS_H2_FRAME_T_PUSH_PROMISE);
     AWS_PRECONDITION(headers);
@@ -721,6 +722,7 @@ static void s_encode_single_header_block_frame(
     }
 
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     /* Success! Wrote entire frame. It's safe to change state now */
     frame->state =
@@ -749,7 +751,7 @@ static int s_frame_headers_encode(
     /* Pre-encode the entire header-block into another buffer
      * the first time we're called. */
     if (frame->state == AWS_H2_HEADERS_STATE_INIT) {
-        if (aws_hpack_encode_header_block(encoder->hpack, frame->headers, &frame->whole_encoded_header_block)) {
+        if (aws_hpack_encode_header_block(&encoder->hpack, frame->headers, &frame->whole_encoded_header_block)) {
             ENCODER_LOGF(
                 ERROR,
                 encoder,
@@ -887,6 +889,7 @@ static int s_frame_prebuilt_encode(
     struct aws_byte_cursor chunk = aws_byte_cursor_advance(&frame->cursor, chunk_len);
     writes_ok &= aws_byte_buf_write_from_whole_cursor(output, chunk);
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     if (frame->cursor.len == 0) {
         *complete = true;
@@ -966,6 +969,7 @@ struct aws_h2_frame *aws_h2_frame_new_rst_stream(
     bool writes_ok = true;
     writes_ok &= aws_byte_buf_write_be32(&frame->encoded_buf, error_code);
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     return &frame->base;
 }
@@ -1026,6 +1030,7 @@ struct aws_h2_frame *aws_h2_frame_new_settings(
         writes_ok &= aws_byte_buf_write_be32(&frame->encoded_buf, settings_array[i].value);
     }
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     return &frame->base;
 }
@@ -1059,6 +1064,7 @@ struct aws_h2_frame *aws_h2_frame_new_ping(
     bool writes_ok = true;
     writes_ok &= aws_byte_buf_write(&frame->encoded_buf, opaque_data, AWS_HTTP2_PING_DATA_SIZE);
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     /* PING responses SHOULD be given higher priority than any other frame */
     frame->base.high_priority = ack;
@@ -1117,6 +1123,7 @@ struct aws_h2_frame *aws_h2_frame_new_goaway(
     writes_ok &= aws_byte_buf_write_be32(&frame->encoded_buf, error_code);
     writes_ok &= aws_byte_buf_write_from_whole_cursor(&frame->encoded_buf, debug_data);
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     return &frame->base;
 }
@@ -1165,6 +1172,7 @@ struct aws_h2_frame *aws_h2_frame_new_window_update(
     bool writes_ok = true;
     writes_ok &= aws_byte_buf_write_be32(&frame->encoded_buf, window_size_increment);
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     return &frame->base;
 }
@@ -1217,8 +1225,7 @@ int aws_h2_encode_frame(
 void aws_h2_frame_encoder_set_setting_header_table_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {
     /* Setting for dynamic table size changed from peer, we will update the dynamic table size when we encoder the next
      * header block */
-    aws_hpack_set_max_table_size(encoder->hpack, data);
-    aws_hpack_set_protocol_max_size_setting(encoder->hpack, data);
+    aws_hpack_encoder_update_max_table_size(&encoder->hpack, data);
 }
 
 void aws_h2_frame_encoder_set_setting_max_frame_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {

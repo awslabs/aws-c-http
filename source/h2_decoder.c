@@ -8,6 +8,7 @@
 #include <aws/http/private/strutil.h>
 
 #include <aws/common/string.h>
+#include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 
 #include <inttypes.h>
@@ -192,7 +193,7 @@ struct aws_h2_decoder {
     /* Implementation data. */
     struct aws_allocator *alloc;
     const void *logging_id;
-    struct aws_hpack_context *hpack;
+    struct aws_hpack_decoder hpack;
     bool is_server;
     struct aws_byte_buf scratch;
     const struct decoder_state *state;
@@ -259,6 +260,8 @@ struct aws_h2_decoder {
          * We continue decoding and report that it's malformed in on_headers_end(). */
         bool malformed;
 
+        bool body_headers_forbidden;
+
         /* Buffer up cookie header fields to concatenate separate ones */
         struct aws_byte_buf cookies;
         /* If separate cookie fields have different compression types, the concatenated cookie uses the strictest type.
@@ -310,10 +313,7 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
 
     decoder->scratch = aws_byte_buf_from_empty_array(scratch_buf, s_scratch_space_size);
 
-    decoder->hpack = aws_hpack_context_new(params->alloc, AWS_LS_HTTP_DECODER, decoder);
-    if (!decoder->hpack) {
-        goto error;
-    }
+    aws_hpack_decoder_init(&decoder->hpack, params->alloc, decoder);
 
     if (decoder->is_server && !params->skip_connection_preface) {
         decoder->state = &s_state_connection_preface_string;
@@ -339,7 +339,7 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
 
 error:
     if (decoder) {
-        aws_hpack_context_destroy(decoder->hpack);
+        aws_hpack_decoder_clean_up(&decoder->hpack);
         aws_array_list_clean_up(&decoder->settings_buffer_list);
         aws_byte_buf_clean_up(&decoder->header_block_in_progress.cookies);
     }
@@ -362,7 +362,7 @@ void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder) {
         return;
     }
     aws_array_list_clean_up(&decoder->settings_buffer_list);
-    aws_hpack_context_destroy(decoder->hpack);
+    aws_hpack_decoder_clean_up(&decoder->hpack);
     s_reset_header_block_in_progress(decoder);
     aws_byte_buf_clean_up(&decoder->header_block_in_progress.cookies);
     aws_byte_buf_clean_up(&decoder->goaway_in_progress.debug_data);
@@ -1178,9 +1178,16 @@ static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
                 DECODER_LOG(ERROR, decoder, "Informational (1xx) response cannot END_STREAM");
                 goto malformed;
             }
+            current_block->body_headers_forbidden = true;
         } else {
             current_block->block_type = AWS_HTTP_HEADER_BLOCK_MAIN;
         }
+        /**
+         * RFC-9110 8.6.
+         * A server MUST NOT send a Content-Length header field in any response with a status code of 1xx
+         * (Informational) or 204 (No Content).
+         */
+        current_block->body_headers_forbidden |= status_code == AWS_HTTP_STATUS_CODE_204_NO_CONTENT;
 
     } else {
         /* Trailing header block. */
@@ -1339,17 +1346,36 @@ static struct aws_h2err s_process_header_field(
                 if (aws_byte_buf_append_dynamic(&current_block->cookies, &header_field->value)) {
                     return aws_h2err_from_last_error();
                 }
-                break;
-            /* TODO: Validate connection-specific header field (RFC7540 8.1.2.2) */
-            default:
-                /* Deliver header-field via callback */
-                if (current_block->is_push_promise) {
-                    DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, header_field, name_enum);
-                } else {
-                    DECODER_CALL_VTABLE_STREAM_ARGS(
-                        decoder, on_headers_i, header_field, name_enum, current_block->block_type);
+                /* Early return */
+                return AWS_H2ERR_SUCCESS;
+            case AWS_HTTP_HEADER_TRANSFER_ENCODING:
+            case AWS_HTTP_HEADER_UPGRADE:
+            case AWS_HTTP_HEADER_KEEP_ALIVE:
+            case AWS_HTTP_HEADER_PROXY_CONNECTION: {
+                /* connection-specific header field are treated as malformed (RFC9113 8.2.2) */
+                DECODER_LOGF(
+                    ERROR,
+                    decoder,
+                    "Connection-specific header ('" PRInSTR "') found, not allowed in HTTP/2",
+                    AWS_BYTE_CURSOR_PRI(name));
+                goto malformed;
+            } break;
+
+            case AWS_HTTP_HEADER_CONTENT_LENGTH:
+                if (current_block->body_headers_forbidden) {
+                    /* The content-length are forbidden */
+                    DECODER_LOG(ERROR, decoder, "Unexpected Content-Length header found");
+                    goto malformed;
                 }
                 break;
+            default:
+                break;
+        }
+        /* Deliver header-field via callback */
+        if (current_block->is_push_promise) {
+            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, header_field, name_enum);
+        } else {
+            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, header_field, name_enum, current_block->block_type);
         }
     }
 
@@ -1459,7 +1485,7 @@ static struct aws_h2err s_state_fn_header_block_entry(struct aws_h2_decoder *dec
     const size_t prev_fragment_len = fragment.len;
 
     struct aws_hpack_decode_result result;
-    if (aws_hpack_decode(decoder->hpack, &fragment, &result)) {
+    if (aws_hpack_decode(&decoder->hpack, &fragment, &result)) {
         DECODER_LOGF(ERROR, decoder, "Error decoding header-block fragment: %s", aws_error_name(aws_last_error()));
 
         /* Any possible error from HPACK decoder (except OOM) is treated as a COMPRESSION error. */
@@ -1554,7 +1580,7 @@ static struct aws_h2err s_state_fn_connection_preface_string(
 
 void aws_h2_decoder_set_setting_header_table_size(struct aws_h2_decoder *decoder, uint32_t data) {
     /* Set the protocol_max_size_setting for hpack. */
-    aws_hpack_set_protocol_max_size_setting(decoder->hpack, data);
+    aws_hpack_decoder_update_max_table_size(&decoder->hpack, data);
 }
 
 void aws_h2_decoder_set_setting_enable_push(struct aws_h2_decoder *decoder, uint32_t data) {
