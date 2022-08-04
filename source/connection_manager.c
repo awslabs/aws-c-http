@@ -820,9 +820,6 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
 
     struct aws_http_connection_manager *manager =
         aws_mem_calloc(allocator, 1, sizeof(struct aws_http_connection_manager));
-    if (manager == NULL) {
-        return NULL;
-    }
 
     manager->allocator = allocator;
 

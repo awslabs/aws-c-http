@@ -304,9 +304,6 @@ static struct aws_h2_connection *s_connection_new(
     AWS_PRECONDITION(http2_options);
 
     struct aws_h2_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct aws_h2_connection));
-    if (!connection) {
-        return NULL;
-    }
     connection->base.vtable = &s_h2_connection_vtable;
     connection->base.alloc = alloc;
     connection->base.channel_handler.vtable = &s_h2_connection_vtable.channel_handler_vtable;
@@ -420,9 +417,7 @@ static struct aws_h2_connection *s_connection_new(
         http2_options->num_initial_settings,
         http2_options->on_initial_settings_completed,
         NULL /* user_data is set later... */);
-    if (!connection->thread_data.init_pending_settings) {
-        goto error;
-    }
+    AWS_ASSERT(connection->thread_data.init_pending_settings);
     /* We enqueue the inital settings when handler get installed */
     return connection;
 
@@ -511,15 +506,13 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     size_t settings_storage_size = sizeof(struct aws_http2_setting) * num_settings;
     struct aws_h2_pending_settings *pending_settings;
     void *settings_storage;
-    if (!aws_mem_acquire_many(
-            allocator,
-            2,
-            &pending_settings,
-            sizeof(struct aws_h2_pending_settings),
-            &settings_storage,
-            settings_storage_size)) {
-        return NULL;
-    }
+    aws_mem_acquire_many(
+        allocator,
+        2,
+        &pending_settings,
+        sizeof(struct aws_h2_pending_settings),
+        &settings_storage,
+        settings_storage_size);
 
     AWS_ZERO_STRUCT(*pending_settings);
     /* We buffer the settings up, incase the caller has freed them when the ACK arrives */
@@ -542,9 +535,7 @@ static struct aws_h2_pending_ping *s_new_pending_ping(
     aws_http2_on_ping_complete_fn *on_completed) {
 
     struct aws_h2_pending_ping *pending_ping = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_pending_ping));
-    if (!pending_ping) {
-        return NULL;
-    }
+
     if (optional_opaque_data) {
         memcpy(pending_ping->opaque_data, optional_opaque_data->ptr, AWS_HTTP2_PING_DATA_SIZE);
     }
@@ -1410,9 +1401,6 @@ static struct aws_h2err s_decoder_on_settings(
     struct aws_http2_setting *callback_array = NULL;
     if (num_settings) {
         callback_array = aws_mem_acquire(connection->base.alloc, num_settings * sizeof(struct aws_http2_setting));
-        if (!callback_array) {
-            return aws_h2err_from_last_error();
-        }
     }
     size_t callback_array_num = 0;
 
@@ -2274,9 +2262,7 @@ static int s_connection_change_settings(
 
     struct aws_h2_pending_settings *pending_settings =
         s_new_pending_settings(connection->base.alloc, settings_array, num_settings, on_completed, user_data);
-    if (!pending_settings) {
-        return AWS_OP_ERR;
-    }
+    AWS_ASSERT(pending_settings);
     struct aws_h2_frame *settings_frame =
         aws_h2_frame_new_settings(connection->base.alloc, settings_array, num_settings, false /*ACK*/);
     if (!settings_frame) {

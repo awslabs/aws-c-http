@@ -1052,15 +1052,13 @@ static struct aws_crt_statistics_handler *s_aws_crt_statistics_handler_new_http_
     struct aws_crt_statistics_handler *handler = NULL;
     struct mock_http_connection_monitor_impl *impl = NULL;
 
-    if (!aws_mem_acquire_many(
-            allocator,
-            2,
-            &handler,
-            sizeof(struct aws_crt_statistics_handler),
-            &impl,
-            sizeof(struct mock_http_connection_monitor_impl))) {
-        return NULL;
-    }
+    aws_mem_acquire_many(
+        allocator,
+        2,
+        &handler,
+        sizeof(struct aws_crt_statistics_handler),
+        &impl,
+        sizeof(struct mock_http_connection_monitor_impl));
 
     AWS_ZERO_STRUCT(*handler);
     AWS_ZERO_STRUCT(*impl);

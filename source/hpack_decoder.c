@@ -278,6 +278,25 @@ int aws_hpack_decode(
                     decoder->progress_entry.u.literal.prefix_size = 4;
                     decoder->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
                 }
+                if (decoder->dynamic_table_protocol_max_size_setting < decoder->context.dynamic_table.size) {
+                    /**
+                     * RFC-9113 4.3.1 An endpoint MUST treat a field block that follows an acknowledgment of the
+                     * reduction to the maximum dynamic table size as a connection error of type
+                     * COMPRESSION_ERROR if it does not start with a conformant Dynamic Table Size Update instruction.
+                     *
+                     * The protocol max will only be updated once the SETTING ACK received.
+                     */
+                    if (decoder->progress_entry.state != HPACK_ENTRY_STATE_DYNAMIC_TABLE_RESIZE) {
+                        /* it will result in AWS_HTTP2_ERR_COMPRESSION_ERROR  */
+                        HPACK_LOG(
+                            ERROR,
+                            decoder,
+                            "SETTINGS_HEADER_TABLE_SIZE below the current size and other end has acknowledged the "
+                            "change, but not started with a conformant Dynamic Table Size Update instruction as "
+                            "required");
+                        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+                    }
+                }
             } break;
 
             /* RFC-7541 6.1. Indexed Header Field Representation.
@@ -414,7 +433,7 @@ int aws_hpack_decode(
                 /* The new maximum size MUST be lower than or equal to the limit determined by the protocol using HPACK.
                  * A value that exceeds this limit MUST be treated as a decoding error. */
                 if (*size64 > decoder->dynamic_table_protocol_max_size_setting) {
-                    HPACK_LOG(ERROR, decoder, "Dynamic table update size is larger than the protocal setting");
+                    HPACK_LOG(ERROR, decoder, "Dynamic table update size is larger than the protocol setting");
                     return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
                 }
                 size_t size = (size_t)*size64;

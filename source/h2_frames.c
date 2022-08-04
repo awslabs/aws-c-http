@@ -523,9 +523,6 @@ static struct aws_h2_frame *s_frame_new_headers_or_push_promise(
     /* Create */
 
     struct aws_h2_frame_headers *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_headers));
-    if (!frame) {
-        return NULL;
-    }
 
     if (aws_byte_buf_init(&frame->whole_encoded_header_block, allocator, s_encoded_header_block_reserve)) {
         goto error;
@@ -820,10 +817,7 @@ static struct aws_h2_frame_prebuilt *s_h2_frame_new_prebuilt(
     /* Use single allocation for frame and buffer storage */
     struct aws_h2_frame_prebuilt *frame;
     void *storage;
-    if (!aws_mem_acquire_many(
-            allocator, 2, &frame, sizeof(struct aws_h2_frame_prebuilt), &storage, encoded_frame_len)) {
-        return NULL;
-    }
+    aws_mem_acquire_many(allocator, 2, &frame, sizeof(struct aws_h2_frame_prebuilt), &storage, encoded_frame_len);
 
     AWS_ZERO_STRUCT(*frame);
     s_init_frame_base(&frame->base, allocator, type, &s_frame_prebuilt_vtable, stream_id);

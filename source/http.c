@@ -205,7 +205,6 @@ static void s_init_str_to_enum_hash_table(
     for (int i = start_index; i < end_index; ++i) {
         int was_created = 0;
         struct aws_enum_value *enum_value = aws_mem_calloc(alloc, 1, sizeof(struct aws_enum_value));
-        AWS_FATAL_ASSERT(enum_value);
         enum_value->allocator = alloc;
         enum_value->value = i;
 

@@ -542,10 +542,7 @@ struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const str
     struct aws_h1_chunk *chunk;
     size_t chunk_line_size = s_calculate_chunk_line_size(options);
     void *chunk_line_storage;
-    if (!aws_mem_acquire_many(
-            allocator, 2, &chunk, sizeof(struct aws_h1_chunk), &chunk_line_storage, chunk_line_size)) {
-        return NULL;
-    }
+    aws_mem_acquire_many(allocator, 2, &chunk, sizeof(struct aws_h1_chunk), &chunk_line_storage, chunk_line_size);
 
     chunk->allocator = allocator;
     chunk->data = aws_input_stream_acquire(options->chunk_data);
