@@ -259,7 +259,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
     };
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
     struct aws_logger_standard_options logger_options = {
-        .level = AWS_LOG_LEVEL_DEBUG, /* We are stress testing, and if this ever failed, the default trace level log is
+        .level = AWS_LOG_LEVEL_ERROR, /* We are stress testing, and if this ever failed, the default trace level log is
                                          too much to handle, let's do debug level instead */
         .file = stderr,
     };
@@ -410,7 +410,7 @@ static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, v
     /* Using Python hyper h2 server frame work, met a weird upload performance issue on Linux. Our client against nginx
      * platform has not met the same issue. We assume it's because the server framework implementation.  Use lower
      * number of linux */
-    length = 250000000UL;
+    length = 2500000000UL;
 #endif
 
     struct aws_string *http_localhost_host = NULL;

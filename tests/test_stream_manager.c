@@ -1277,7 +1277,7 @@ TEST_CASE(h2_sm_acquire_stream_stress_with_body) {
     };
     ASSERT_SUCCESS(s_tester_init(&options));
     s_tester.length_sent = 2000;
-    int num_to_acquire = 500 * 100;
+    int num_to_acquire = 1000;
 
     ASSERT_SUCCESS(s_sm_stream_acquiring_with_body(num_to_acquire, false));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
@@ -1399,12 +1399,14 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
 TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
     (void)ctx;
     struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/upload_test");
+    enum aws_log_level log_level = AWS_LOG_LEVEL_ERROR;
     struct sm_tester_options options = {
         .max_connections = 100,
         .max_concurrent_streams_per_connection = 100,
         .connection_ping_period_ms = 100 * AWS_TIMESTAMP_MILLIS,
         .alloc = allocator,
         .uri_cursor = &uri_cursor,
+        .log_level = &log_level,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
     s_tester.length_sent = 2000;
@@ -1415,7 +1417,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
      * platform has not met the same issue. We assume it's because the server framework implementation. Use lower
      * number of linux
      */
-    num_to_acquire = 500;
+    num_to_acquire = 500 * 100;
 #endif
 
     ASSERT_SUCCESS(s_sm_stream_acquiring_with_body(num_to_acquire, true));
