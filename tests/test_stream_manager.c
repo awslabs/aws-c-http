@@ -1200,7 +1200,93 @@ TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
     return s_tester_clean_up();
 }
 
-/* Test that makes tons of real streams against real world */
+static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
+    (void)user_data;
+    (void)stream;
+    struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.allocator, data);
+    size_t num_received = (uint32_t)atoi((const char *)content_length_header_str->bytes);
+    ASSERT_UINT_EQUALS(s_tester.length_sent, num_received);
+    aws_string_destroy(content_length_header_str);
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_sm_stream_acquiring_with_body(int num_streams, bool check_body) {
+    char content_length_sprintf_buffer[128] = "";
+    snprintf(content_length_sprintf_buffer, sizeof(content_length_sprintf_buffer), "%zu", s_tester.length_sent);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "PUT"),
+        {
+            .name = aws_byte_cursor_from_c_str(":scheme"),
+            .value = *aws_uri_scheme(&s_tester.endpoint),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":path"),
+            .value = *aws_uri_path(&s_tester.endpoint),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = *aws_uri_host_name(&s_tester.endpoint),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str("content_length"),
+            .value = aws_byte_cursor_from_c_str(content_length_sprintf_buffer),
+        },
+    };
+    for (int i = 0; i < num_streams; ++i) {
+        /* TODO: Test the callback will always be fired asynced, as now the CM cannot ensure the callback happens
+         * asynchronously, we cannot ensure it as well. */
+        struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
+        aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+        struct aws_input_stream *body_stream =
+            aws_input_stream_tester_upload_new(s_tester.allocator, s_tester.length_sent);
+        aws_http_message_set_body_stream(request, body_stream);
+        aws_input_stream_release(body_stream);
+        struct aws_http_make_request_options request_options = {
+            .self_size = sizeof(request_options),
+            .request = request,
+            .on_response_body = check_body ? s_tester_on_put_body : NULL,
+            .on_complete = s_sm_tester_on_stream_complete,
+        };
+
+        struct aws_http2_stream_manager_acquire_stream_options acquire_stream_option = {
+            .options = &request_options,
+            .callback = s_sm_tester_on_stream_acquired,
+            .user_data = &s_tester,
+        };
+        aws_http2_stream_manager_acquire_stream(s_tester.stream_manager, &acquire_stream_option);
+        aws_http_message_release(request);
+    }
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that makes many real streams with some body against real world */
+TEST_CASE(h2_sm_acquire_stream_stress_with_body) {
+    (void)ctx;
+    enum aws_log_level log_level = AWS_LOG_LEVEL_ERROR;
+    /* server that will return 500 status code all the time. */
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://httpbin.org/put");
+    struct sm_tester_options options = {
+        .max_connections = 1,
+        .max_concurrent_streams_per_connection = 10,
+        .alloc = allocator,
+        .uri_cursor = &uri_cursor,
+        .close_connection_on_server_error = true,
+        .log_level = &log_level,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_tester.length_sent = 2000;
+    int num_to_acquire = 500 * 100;
+
+    ASSERT_SUCCESS(s_sm_stream_acquiring_with_body(num_to_acquire, false));
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
+    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
+    ASSERT_TRUE((int)s_tester.stream_200_count == num_to_acquire);
+
+    return s_tester_clean_up();
+}
+
 TEST_CASE(h2_sm_close_connection_on_server_error) {
     (void)ctx;
     /* server that will return 500 status code all the time. */
@@ -1309,67 +1395,6 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
     return s_tester_clean_up();
 }
 
-static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
-    (void)user_data;
-    (void)stream;
-    struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.allocator, data);
-    size_t num_received = (uint32_t)atoi((const char *)content_length_header_str->bytes);
-    ASSERT_UINT_EQUALS(s_tester.length_sent, num_received);
-    aws_string_destroy(content_length_header_str);
-
-    return AWS_OP_SUCCESS;
-}
-
-static int s_sm_stream_acquiring_with_body(int num_streams) {
-    char content_length_sprintf_buffer[128] = "";
-    snprintf(content_length_sprintf_buffer, sizeof(content_length_sprintf_buffer), "%zu", s_tester.length_sent);
-
-    struct aws_http_header request_headers_src[] = {
-        DEFINE_HEADER(":method", "PUT"),
-        {
-            .name = aws_byte_cursor_from_c_str(":scheme"),
-            .value = *aws_uri_scheme(&s_tester.endpoint),
-        },
-        {
-            .name = aws_byte_cursor_from_c_str(":path"),
-            .value = *aws_uri_path(&s_tester.endpoint),
-        },
-        {
-            .name = aws_byte_cursor_from_c_str(":authority"),
-            .value = *aws_uri_host_name(&s_tester.endpoint),
-        },
-        {
-            .name = aws_byte_cursor_from_c_str("content_length"),
-            .value = aws_byte_cursor_from_c_str(content_length_sprintf_buffer),
-        },
-    };
-    for (int i = 0; i < num_streams; ++i) {
-        /* TODO: Test the callback will always be fired asynced, as now the CM cannot ensure the callback happens
-         * asynchronously, we cannot ensure it as well. */
-        struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
-        aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
-        struct aws_input_stream *body_stream =
-            aws_input_stream_tester_upload_new(s_tester.allocator, s_tester.length_sent);
-        aws_http_message_set_body_stream(request, body_stream);
-        aws_input_stream_release(body_stream);
-        struct aws_http_make_request_options request_options = {
-            .self_size = sizeof(request_options),
-            .request = request,
-            .on_response_body = s_tester_on_put_body,
-            .on_complete = s_sm_tester_on_stream_complete,
-        };
-
-        struct aws_http2_stream_manager_acquire_stream_options acquire_stream_option = {
-            .options = &request_options,
-            .callback = s_sm_tester_on_stream_acquired,
-            .user_data = &s_tester,
-        };
-        aws_http2_stream_manager_acquire_stream(s_tester.stream_manager, &acquire_stream_option);
-        aws_http_message_release(request);
-    }
-    return AWS_OP_SUCCESS;
-}
-
 /* Test that makes tons of real streams with body against local host */
 TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
     (void)ctx;
@@ -1393,7 +1418,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
     num_to_acquire = 500;
 #endif
 
-    ASSERT_SUCCESS(s_sm_stream_acquiring_with_body(num_to_acquire));
+    ASSERT_SUCCESS(s_sm_stream_acquiring_with_body(num_to_acquire, true));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
     ASSERT_TRUE((int)s_tester.stream_200_count == num_to_acquire);

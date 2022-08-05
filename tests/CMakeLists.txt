@@ -622,6 +622,7 @@ add_net_test_case(h2_sm_acquire_stream)
 add_net_test_case(h2_sm_acquire_stream_multiple_connections)
 add_net_test_case(h2_sm_closing_before_connection_acquired)
 add_net_test_case(h2_sm_close_connection_on_server_error)
+add_net_test_case(h2_sm_acquire_stream_stress_with_body)
 # Tests against local server
 if (ENABLE_LOCALHOST_INTEGRATION_TESTS)
     # Tests should be named with localhost_integ_*
