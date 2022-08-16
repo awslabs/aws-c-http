@@ -2097,15 +2097,17 @@ static struct aws_http_stream *s_connection_make_request(
             aws_error_name(aws_last_error()));
         goto error;
     }
-    int error = 0;
     struct aws_byte_cursor method;
     AWS_ZERO_STRUCT(method);
     struct aws_byte_cursor path;
     AWS_ZERO_STRUCT(path);
 
-    error |= aws_http_message_get_request_method(stream->thread_data.outgoing_message, &method);
-    error |= aws_http_message_get_request_path(stream->thread_data.outgoing_message, &path);
-    AWS_ASSERT(!error);
+    if (aws_http_message_get_request_method(stream->thread_data.outgoing_message, &method) ||
+        aws_http_message_get_request_path(stream->thread_data.outgoing_message, &path)) {
+        aws_raise_error(AWS_ERROR_HTTP_REQUIRED_PSEUDO_HEADER_MISSING);
+        CONNECTION_LOG(ERROR, connection, "Cannot create request stream, the :path or :method header is missing.");
+        goto error;
+    }
 
     AWS_H2_STREAM_LOGF(
         DEBUG,
@@ -2834,6 +2836,7 @@ static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_
 
         connection->thread_data.outgoing_timestamp_ns = now_ns;
     }
+
     if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) != 0) {
         s_add_time_measurement_to_stats(
             connection->thread_data.incoming_timestamp_ns,

@@ -1165,6 +1165,7 @@ static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
             DECODER_LOG(ERROR, decoder, "Request is missing :method.");
             goto malformed;
         }
+
         if (!aws_strutil_is_http_token(aws_byte_cursor_from_string(method_string))) {
             DECODER_LOG(ERROR, decoder, "Request method is invalid.");
             DECODER_LOGF(
@@ -1174,7 +1175,8 @@ static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
                 AWS_BYTE_CURSOR_PRI(aws_byte_cursor_from_string(method_string)));
             goto malformed;
         }
-        if (aws_string_eq_c_str(method_string, "CONNECT")) {
+
+        if (aws_string_eq_byte_cursor(method_string, &aws_http_method_connect)) {
             if (scheme_string || path_string) {
                 /* RFC-9113 8.5 The ":scheme" and ":path" pseudo-header fields MUST be omitted for CONNECT method */
                 DECODER_LOG(ERROR, decoder, "CONNECT request has :path or :scheme that are must omitted.");

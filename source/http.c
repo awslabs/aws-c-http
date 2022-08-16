@@ -139,6 +139,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_STREAM_MANAGER_UNEXPECTED_HTTP_VERSION,
         "Stream acquisition failed because stream manager got an unexpected version of HTTP connection"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_REQUIRED_PSEUDO_HEADER_MISSING,
+        "The required pseudo header is missing from the HTTP message."),
 };
 /* clang-format on */
 
