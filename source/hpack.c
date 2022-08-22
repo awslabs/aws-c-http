@@ -894,13 +894,15 @@ int aws_hpack_encode_string(
             break;
 
         case AWS_HPACK_HUFFMAN_SMALLEST:
-            str_length = aws_huffman_get_encoded_length(&context->encoder, to_encode);
-            if (str_length < to_encode.len) {
-                use_huffman = 1;
-            } else {
-                str_length = to_encode.len;
-                use_huffman = 0;
-            }
+            use_huffman = 0;
+            str_length = to_encode.len;
+            // str_length = aws_huffman_get_encoded_length(&context->encoder, to_encode);
+            // if (str_length < to_encode.len) {
+            //     use_huffman = 1;
+            // } else {
+            //     str_length = to_encode.len;
+            //     use_huffman = 0;
+            // }
             break;
 
         default:
