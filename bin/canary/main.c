@@ -19,7 +19,6 @@
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
 #include <aws/io/logging.h>
-#include <aws/io/shared_library.h>
 #include <aws/io/socket.h>
 #include <aws/io/stream.h>
 #include <aws/io/tls_channel_handler.h>
@@ -202,6 +201,12 @@ static void s_run_canary(struct canary_ctx *app_ctx) {
         requests
          * made to be completed. */
         s_wait_on_batch_complete(app_ctx);
+        size_t streams_failed = aws_atomic_load_int(&app_ctx->streams_failed);
+        if (streams_failed > 0) {
+            fprintf(
+                stderr, "%zu stream failed to complete %s\n", streams_failed, aws_error_debug_str(aws_last_error()));
+            exit(1);
+        }
 
         size_t finished = aws_atomic_load_int(&app_ctx->helper.canary_finished);
         if (finished) {
