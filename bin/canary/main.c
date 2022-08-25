@@ -37,9 +37,11 @@
 
 const struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https://localhost:8443/echo");
 const int rate_secs = 10;           /* Time interval to collect data */
-const int batch_size = 100;         /* The number of requests to made each batch */
+const int batch_size = 10;          /* The number of requests to made each batch */
 const int num_data_to_collect = 10; /* The number of data to collect */
-const enum aws_log_level log_level = AWS_LOG_LEVEL_NONE;
+const enum aws_log_level log_level = AWS_LOG_LEVEL_ERROR;
+const bool direct_connection = true; /* If true, will create one connection and make requests from that connection.
+                                      * If false, will use stream manager to acquire streams */
 
 struct aws_http_canary_helper {
     struct aws_task task;
@@ -69,7 +71,11 @@ struct canary_ctx {
 
     int batch_size;
     struct aws_atomic_var batch_completed;
+
+    struct aws_http_connection *connection;
 };
+
+/************************* Data collector ******************************************/
 
 static void s_collect_data_task(struct aws_task *task, void *arg, enum aws_task_status status) {
     (void)status;
@@ -105,6 +111,8 @@ void aws_http_canary_helper_init(struct canary_ctx *app_ctx, struct aws_http_can
     aws_event_loop_schedule_task_future(helper->eventloop, &helper->task, now + helper->rate_ns);
 }
 
+/************************* Stream callbacks ******************************************/
+
 static void s_on_stream_acquired(struct aws_http_stream *stream, int error_code, void *user_data) {
     (void)stream;
 
@@ -135,6 +143,8 @@ static void s_on_stream_complete(struct aws_http_stream *stream, int error_code,
     aws_condition_variable_notify_one(&app_ctx->c_var);
 }
 
+/************************* Stream manager ops ******************************************/
+
 static bool s_are_batch_completed(void *context) {
     struct canary_ctx *app_ctx = context;
     size_t completed = aws_atomic_load_int(&app_ctx->batch_completed);
@@ -151,31 +161,7 @@ static int s_wait_on_batch_complete(struct canary_ctx *app_ctx) {
     return signal_error;
 }
 
-static struct aws_http_message *s_create_request(struct canary_ctx *app_ctx) {
-    struct aws_http_message *request = aws_http2_message_new_request(app_ctx->allocator);
-
-    struct aws_http_header request_headers_src[] = {
-        DEFINE_HEADER(":method", "GET"),
-        {
-            .name = aws_byte_cursor_from_c_str(":scheme"),
-            .value = *aws_uri_scheme(&app_ctx->uri),
-        },
-        {
-            .name = aws_byte_cursor_from_c_str(":path"),
-            .value = *aws_uri_path(&app_ctx->uri),
-        },
-        {
-            .name = aws_byte_cursor_from_c_str(":authority"),
-            .value = *aws_uri_host_name(&app_ctx->uri),
-        },
-    };
-    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
-    return request;
-}
-
-static void s_run_canary(struct canary_ctx *app_ctx) {
-    aws_http_canary_helper_init(app_ctx, &app_ctx->helper);
-    struct aws_http_message *request = s_create_request(app_ctx);
+static void s_run_stream_manager_test(struct canary_ctx *app_ctx, struct aws_http_message *request) {
     struct aws_http_make_request_options request_options = {
         .self_size = sizeof(request_options),
         .request = request,
@@ -213,21 +199,123 @@ static void s_run_canary(struct canary_ctx *app_ctx) {
             keep_loop = false;
         }
     }
-    aws_http_message_release(request);
 }
 
-static bool s_is_shutdown_complete(void *context) {
-    struct canary_ctx *app_ctx = context;
-    return app_ctx->is_shutdown_complete;
-}
-
-static void s_on_sm_shutdown_complete(void *user_data) {
+static void s_on_shutdown_complete(void *user_data) {
     struct canary_ctx *app_ctx = user_data;
 
     aws_mutex_lock(&app_ctx->mutex);
     app_ctx->is_shutdown_complete = true;
     aws_mutex_unlock(&app_ctx->mutex);
     aws_condition_variable_notify_one(&app_ctx->c_var);
+}
+
+/************************* direct connection ops ******************************************/
+
+static void s_run_direct_connection_test(struct canary_ctx *app_ctx, struct aws_http_message *request) {
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .user_data = app_ctx,
+        .on_complete = s_on_stream_complete,
+    };
+
+    bool keep_loop = true;
+    while (keep_loop) {
+        /* Loop a batch of requests to be made and completed */
+        aws_atomic_store_int(&app_ctx->batch_completed, 0);
+
+        for (int i = 0; i < app_ctx->batch_size; ++i) {
+            struct aws_http_stream *stream = aws_http_connection_make_request(app_ctx->connection, &request_options);
+            aws_http_stream_activate(stream);
+        }
+        /* once the data finished collected during waiting, no more data will be collected, still wait for all
+        requests
+         * made to be completed. */
+        s_wait_on_batch_complete(app_ctx);
+        size_t streams_failed = aws_atomic_load_int(&app_ctx->streams_failed);
+        if (streams_failed > 0) {
+            fprintf(
+                stderr, "%zu stream failed to complete %s\n", streams_failed, aws_error_debug_str(aws_last_error()));
+            exit(1);
+        }
+
+        size_t finished = aws_atomic_load_int(&app_ctx->helper.canary_finished);
+        if (finished) {
+            keep_loop = false;
+        }
+    }
+}
+
+static void s_on_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
+    (void)connection;
+    (void)error_code;
+    struct canary_ctx *app_ctx = user_data;
+
+    aws_mutex_lock(&app_ctx->mutex);
+    app_ctx->is_shutdown_complete = true;
+    aws_mutex_unlock(&app_ctx->mutex);
+    aws_condition_variable_notify_one(&app_ctx->c_var);
+}
+
+static void s_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
+    if (error_code) {
+        fprintf(stderr, "Failed to create connection with error %s\n", aws_error_debug_str(aws_last_error()));
+        exit(1);
+    }
+    struct canary_ctx *app_ctx = user_data;
+
+    aws_mutex_lock(&app_ctx->mutex);
+    app_ctx->connection = connection;
+    aws_mutex_unlock(&app_ctx->mutex);
+    aws_condition_variable_notify_one(&app_ctx->c_var);
+}
+
+static bool s_is_connected(void *context) {
+    struct canary_ctx *app_ctx = context;
+    return app_ctx->connection != NULL;
+}
+
+/************************* general connection ops ******************************************/
+
+static bool s_is_shutdown_complete(void *context) {
+    struct canary_ctx *app_ctx = context;
+    return app_ctx->is_shutdown_complete;
+}
+
+static struct aws_http_message *s_create_request(struct canary_ctx *app_ctx) {
+    struct aws_http_message *request = aws_http2_message_new_request(app_ctx->allocator);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        {
+            .name = aws_byte_cursor_from_c_str(":scheme"),
+            .value = *aws_uri_scheme(&app_ctx->uri),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":path"),
+            .value = *aws_uri_path(&app_ctx->uri),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = *aws_uri_host_name(&app_ctx->uri),
+        },
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    return request;
+}
+
+static void s_run_canary(struct canary_ctx *app_ctx) {
+    aws_http_canary_helper_init(app_ctx, &app_ctx->helper);
+    struct aws_http_message *request = s_create_request(app_ctx);
+
+    if (direct_connection) {
+        s_run_direct_connection_test(app_ctx, request);
+    } else {
+        s_run_stream_manager_test(app_ctx, request);
+    }
+
+    aws_http_message_release(request);
 }
 
 int main(int argc, char **argv) {
@@ -344,23 +432,47 @@ int main(int argc, char **argv) {
         .keepalive = false,
         .keep_alive_interval_sec = 0,
     };
-
-    struct aws_http2_stream_manager_options sm_options = {
-        .bootstrap = bootstrap,
-        .socket_options = &socket_options,
-        .tls_connection_options = use_tls ? tls_options : NULL,
-        .host = app_ctx.uri.host_name,
-        .port = port,
-        .max_connections = 100,
-        .http2_prior_knowledge = !use_tls,
-        .shutdown_complete_user_data = &app_ctx,
-        .shutdown_complete_callback = s_on_sm_shutdown_complete,
-    };
-    app_ctx.manager = aws_http2_stream_manager_new(allocator, &sm_options);
-
+    if (!direct_connection) {
+        struct aws_http2_stream_manager_options sm_options = {
+            .bootstrap = bootstrap,
+            .socket_options = &socket_options,
+            .tls_connection_options = use_tls ? tls_options : NULL,
+            .host = app_ctx.uri.host_name,
+            .port = port,
+            .max_connections = 100,
+            .http2_prior_knowledge = !use_tls,
+            .shutdown_complete_user_data = &app_ctx,
+            .shutdown_complete_callback = s_on_shutdown_complete,
+        };
+        app_ctx.manager = aws_http2_stream_manager_new(allocator, &sm_options);
+    } else {
+        struct aws_http_client_connection_options http_client_options = {
+            .self_size = sizeof(struct aws_http_client_connection_options),
+            .socket_options = &socket_options,
+            .allocator = allocator,
+            .port = port,
+            .host_name = app_ctx.uri.host_name,
+            .bootstrap = bootstrap,
+            .initial_window_size = SIZE_MAX,
+            .tls_options = tls_options,
+            .user_data = &app_ctx,
+            .on_setup = s_on_client_connection_setup,
+            .on_shutdown = s_on_connection_shutdown,
+        };
+        if (aws_http_client_connect(&http_client_options)) {
+            exit(1);
+        }
+        aws_mutex_lock(&app_ctx.mutex);
+        aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_is_connected, &app_ctx);
+        aws_mutex_unlock(&app_ctx.mutex);
+    }
     /* Really do the job */
     s_run_canary(&app_ctx);
-    aws_http2_stream_manager_release(app_ctx.manager);
+    if (!direct_connection) {
+        aws_http2_stream_manager_release(app_ctx.manager);
+    } else {
+        aws_http_connection_release(app_ctx.connection);
+    }
 
     aws_mutex_lock(&app_ctx.mutex);
     aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_is_shutdown_complete, &app_ctx);
