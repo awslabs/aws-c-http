@@ -36,13 +36,13 @@
     { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
 
 /* TODO: Make those configurable from cmd line */
-const struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https://localhost:8443/echo");
+const struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https://localhost:443/echo");
 const int rate_secs = 10;           /* Time interval to collect data */
-const int batch_size = 10;          /* The number of requests to made each batch */
+const int batch_size = 100;         /* The number of requests to made each batch */
 const int num_data_to_collect = 10; /* The number of data to collect */
 const enum aws_log_level log_level = AWS_LOG_LEVEL_NONE;
-const bool direct_connection = true; /* If true, will create one connection and make requests from that connection.
-                                      * If false, will use stream manager to acquire streams */
+const bool direct_connection = false; /* If true, will create one connection and make requests from that connection.
+                                       * If false, will use stream manager to acquire streams */
 
 struct aws_http_canary_helper {
     struct aws_task task;
