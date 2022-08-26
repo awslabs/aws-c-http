@@ -35,11 +35,12 @@
 #define DEFINE_HEADER(NAME, VALUE)                                                                                     \
     { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
 
+/* TODO: Make those configurable from cmd line */
 const struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https://localhost:8443/echo");
 const int rate_secs = 10;           /* Time interval to collect data */
 const int batch_size = 10;          /* The number of requests to made each batch */
 const int num_data_to_collect = 10; /* The number of data to collect */
-const enum aws_log_level log_level = AWS_LOG_LEVEL_ERROR;
+const enum aws_log_level log_level = AWS_LOG_LEVEL_NONE;
 const bool direct_connection = true; /* If true, will create one connection and make requests from that connection.
                                       * If false, will use stream manager to acquire streams */
 
@@ -87,6 +88,7 @@ static void s_collect_data_task(struct aws_task *task, void *arg, enum aws_task_
     /* collect data */
     size_t stream_completed = aws_atomic_exchange_int(&app_ctx->streams_completed, 0);
     ++helper->num_collected;
+    /* TODO: maybe collect the data somewhere instead of just printing it out. */
     printf("Loop %d: The stream completed during %d secs: %zu\n", helper->num_collected, rate_secs, stream_completed);
     if (helper->num_collected >= num_data_to_collect) {
         /* done */
@@ -276,7 +278,7 @@ static bool s_is_connected(void *context) {
     return app_ctx->connection != NULL;
 }
 
-/************************* general connection ops ******************************************/
+/************************* general ops ******************************************/
 
 static bool s_is_shutdown_complete(void *context) {
     struct canary_ctx *app_ctx = context;
@@ -466,8 +468,10 @@ int main(int argc, char **argv) {
         aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_is_connected, &app_ctx);
         aws_mutex_unlock(&app_ctx.mutex);
     }
+
     /* Really do the job */
     s_run_canary(&app_ctx);
+
     if (!direct_connection) {
         aws_http2_stream_manager_release(app_ctx.manager);
     } else {
