@@ -98,6 +98,9 @@ struct aws_h2_connection {
          * Reduce the space after receiving a flow-controlled frame. Increment after sending WINDOW_UPDATE for
          * connection */
         size_t window_size_self;
+        /* The size dropped */
+        size_t window_size_self_dropped;
+        size_t window_size_self_dropped_threshold;
 
         /* Highest self-initiated stream-id that peer might have processed.
          * Defaults to max stream-id, may be lowered when GOAWAY frame received. */

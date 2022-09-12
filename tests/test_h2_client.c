@@ -2429,15 +2429,6 @@ TEST_CASE(h2_client_stream_send_window_update) {
     ASSERT_NOT_NULL(stream_window_update_frame);
     ASSERT_UINT_EQUALS(5, stream_window_update_frame->window_size_increment);
 
-    struct h2_decoded_frame *connection_window_update_frame = h2_decode_tester_find_stream_frame(
-        &s_tester.peer.decode,
-        AWS_H2_FRAME_T_WINDOW_UPDATE,
-        0 /*stream_id*/,
-        initial_window_update_index + 1 /*idx*/,
-        NULL);
-    ASSERT_NOT_NULL(connection_window_update_frame);
-    ASSERT_UINT_EQUALS(5, connection_window_update_frame->window_size_increment);
-
     /* clean up */
     aws_http_headers_release(response_headers);
     aws_http_message_release(request);

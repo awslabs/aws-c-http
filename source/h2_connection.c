@@ -384,6 +384,8 @@ static struct aws_h2_connection *s_connection_new(
     connection->thread_data.window_size_peer = AWS_H2_INIT_WINDOW_SIZE;
     connection->thread_data.window_size_self = AWS_H2_INIT_WINDOW_SIZE;
 
+    connection->thread_data.window_size_self_dropped_threshold = 0; /* TODO: expose this config to user? */
+
     connection->thread_data.goaway_received_last_stream_id = AWS_H2_STREAM_ID_MAX;
     connection->thread_data.goaway_sent_last_stream_id = AWS_H2_STREAM_ID_MAX;
 
@@ -1246,17 +1248,19 @@ struct aws_h2err s_decoder_on_data_begin(
         /* Automatically update the full amount we just received */
         auto_window_update = payload_len;
     }
-
-    if (auto_window_update != 0) {
-        if (s_connection_send_update_window(connection, auto_window_update)) {
+    CONNECTION_LOGF(TRACE, connection, "%" PRIu32 " Bytes of padding received.", total_padding_bytes);
+    connection->thread_data.window_size_self_dropped += auto_window_update;
+    if (connection->thread_data.window_size_self_dropped >=
+        connection->thread_data.window_size_self_dropped_threshold) {
+        if (s_connection_send_update_window(connection, connection->thread_data.window_size_self_dropped)) {
             return aws_h2err_from_last_error();
         }
+        connection->thread_data.window_size_self_dropped = 0;
         CONNECTION_LOGF(
             TRACE,
             connection,
-            "Automatically updating connection window by %" PRIu32 "(%" PRIu32 " due to padding).",
-            auto_window_update,
-            total_padding_bytes);
+            "Automatically updating connection window by %zu",
+            connection->thread_data.window_size_self_dropped);
     }
 
     return AWS_H2ERR_SUCCESS;
@@ -1762,6 +1766,8 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
         aws_linked_list_push_back(
             &connection->thread_data.outgoing_frames_queue, &connection_window_update_frame->node);
         connection->thread_data.window_size_self += initial_window_update_size;
+        /* For automatic window management, we only update connectio windows when it droped blow 50% of MAX. */
+        connection->thread_data.window_size_self_dropped_threshold = AWS_H2_WINDOW_UPDATE_MAX / 2;
     }
     aws_h2_try_write_outgoing_frames(connection);
     return;
