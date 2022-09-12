@@ -46,7 +46,7 @@ def run_command(args):
                 raise RuntimeError("Return code {code} from: {cmd}".format(
                     code=process.returncode, cmd=args_str))
         else:
-            print(output)
+            print(output.decode("utf-8"))
 
 
 run_command(canary_args)
