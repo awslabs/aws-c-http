@@ -31,7 +31,6 @@ def run_command(args):
     except subprocess.TimeoutExpired:
         timedout = True
         process.kill()
-        args_str = subprocess.list2cmdline(args)
         output = process.communicate()[0]
     finally:
         if process.returncode != 0 or timedout:
