@@ -17,6 +17,6 @@
     "test_steps": [
         "aws-c-http-test",
         ["{python}", "{source_dir}/integration-testing/http_client_test.py", "{install_dir}/bin/elasticurl{exe}"],
-        "{install_dir}/bin/canary{exe}"
+        ["{python}", "{source_dir}/integration-testing/http_client_canary.py", "{install_dir}/bin/canary{exe}"]
     ]
 }

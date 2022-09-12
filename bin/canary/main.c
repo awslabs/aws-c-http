@@ -36,7 +36,7 @@
     { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
 
 /* TODO: Make those configurable from cmd line */
-const struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https://localhost:443/echo");
+const struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("http://localhost:8080/");
 const int rate_secs = 10;           /* Time interval to collect data */
 const int batch_size = 100;         /* The number of requests to made each batch */
 const int num_data_to_collect = 10; /* The number of data to collect */
@@ -120,11 +120,8 @@ static void s_on_stream_acquired(struct aws_http_stream *stream, int error_code,
 
     struct canary_ctx *app_ctx = user_data;
     if (error_code) {
-        aws_mutex_lock(&app_ctx->mutex);
-        aws_atomic_fetch_add(&app_ctx->streams_failed, 1);
-        aws_atomic_fetch_add(&app_ctx->batch_completed, 1);
-        aws_mutex_unlock(&app_ctx->mutex);
-        aws_condition_variable_notify_one(&app_ctx->c_var);
+        fprintf(stderr, "stream failed to be acquired from stream manager %s\n", aws_error_debug_str(error_code));
+        exit(1);
     }
 }
 
@@ -135,7 +132,8 @@ static void s_on_stream_complete(struct aws_http_stream *stream, int error_code,
     aws_mutex_lock(&app_ctx->mutex);
     aws_atomic_fetch_add(&app_ctx->batch_completed, 1);
     if (error_code) {
-        aws_atomic_fetch_add(&app_ctx->streams_failed, 1);
+        fprintf(stderr, "stream failed to complete %s\n", aws_error_debug_str(error_code));
+        exit(1);
     } else {
         aws_atomic_fetch_add(&app_ctx->streams_completed, 1);
     }
