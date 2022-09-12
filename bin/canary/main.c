@@ -117,8 +117,8 @@ void aws_http_canary_helper_init(struct canary_ctx *app_ctx, struct aws_http_can
 
 static void s_on_stream_acquired(struct aws_http_stream *stream, int error_code, void *user_data) {
     (void)stream;
+    (void)user_data;
 
-    struct canary_ctx *app_ctx = user_data;
     if (error_code) {
         fprintf(stderr, "stream failed to be acquired from stream manager %s\n", aws_error_debug_str(error_code));
         exit(1);
