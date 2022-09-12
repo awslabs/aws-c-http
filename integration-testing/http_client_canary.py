@@ -5,7 +5,7 @@ import sys
 import os.path
 import subprocess
 
-TIMEOUT = 100
+TIMEOUT = 300
 
 canary_args = sys.argv[1:]
 if not canary_args:
