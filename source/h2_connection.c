@@ -1259,7 +1259,7 @@ struct aws_h2err s_decoder_on_data_begin(
         CONNECTION_LOGF(
             TRACE,
             connection,
-            "Automatically updating connection window by %zu",
+            "Automatically updating connection window by %" PRIu32 "",
             connection->thread_data.window_size_self_dropped);
     }
 
