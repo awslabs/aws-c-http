@@ -45,6 +45,8 @@ def run_command(args):
             else:
                 raise RuntimeError("Return code {code} from: {cmd}".format(
                     code=process.returncode, cmd=args_str))
+        else:
+            print(output)
 
 
 run_command(canary_args)
