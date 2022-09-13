@@ -1250,7 +1250,7 @@ struct aws_h2err s_decoder_on_data_begin(
     }
     CONNECTION_LOGF(TRACE, connection, "%" PRIu32 " Bytes of padding received.", total_padding_bytes);
     connection->thread_data.window_size_self_dropped += auto_window_update;
-    if (connection->thread_data.window_size_self_dropped >=
+    if (connection->thread_data.window_size_self_dropped >
         connection->thread_data.window_size_self_dropped_threshold) {
         if (s_connection_send_update_window(connection, connection->thread_data.window_size_self_dropped)) {
             return aws_h2err_from_last_error();
