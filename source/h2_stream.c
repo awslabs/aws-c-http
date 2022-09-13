@@ -712,6 +712,10 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
     stream->thread_data.window_size_self =
         connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
 
+    if (!connection->base.stream_manual_window_management) {
+        stream->thread_data.window_size_self_dropped_threshold =
+            connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] / 2;
+    }
     if (with_data) {
         /* If stream has DATA to send, put it in the outgoing_streams_list, and we'll send data later */
         stream->thread_data.state = AWS_H2_STREAM_STATE_OPEN;
@@ -1077,17 +1081,21 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
             /* Automatically update the full amount we just received */
             auto_window_update = payload_len;
         }
+        if (total_padding_bytes) {
+            AWS_H2_STREAM_LOGF(TRACE, stream, "%" PRIu32 " Bytes of padding received.", total_padding_bytes);
+        }
+        stream->thread_data.window_size_self_dropped += auto_window_update;
 
-        if (auto_window_update != 0) {
-            if (s_stream_send_update_window(stream, auto_window_update)) {
+        if (stream->thread_data.window_size_self_dropped > stream->thread_data.window_size_self_dropped_threshold) {
+            if (s_stream_send_update_window(stream, stream->thread_data.window_size_self_dropped)) {
                 return aws_h2err_from_last_error();
             }
+            stream->thread_data.window_size_self_dropped = 0;
             AWS_H2_STREAM_LOGF(
                 TRACE,
                 stream,
-                "Automatically updating stream window by %" PRIu32 "(%" PRIu32 " due to padding).",
-                auto_window_update,
-                total_padding_bytes);
+                "Automatically updating stream window by %" PRIu32 ".",
+                stream->thread_data.window_size_self_dropped);
         }
     }
 

@@ -84,6 +84,18 @@ struct aws_h2_stream {
          * We allow this value exceed the max window size (int64 can hold much more than 0x7FFFFFFF),
          * We leave it up to the remote peer to detect whether the max window size has been exceeded. */
         int64_t window_size_self;
+        /* The self window size dropped before the client send window update automatically.
+         * When manual management for stream window is off, the dropped size equals to the size of data frame
+         * received.
+         * When manual management for stream window is on, the dropped size equals to the size of all the padding in
+         * the data frame received */
+        uint32_t window_size_self_dropped;
+        /* The threshold to send out a window update frame. When the window_size_self_dropped is larger than the
+         * threshold, client will automatically send a WINDOW_UPDATE frame with the dropped size to keep flow continues.
+         * TODO: expose this to user
+         */
+        uint32_t window_size_self_dropped_threshold;
+
         struct aws_http_message *outgoing_message;
         /* All queued writes. If the message provides a body stream, it will be first in this list
          * This list can drain, which results in the stream being put to sleep (moved to waiting_streams_list in

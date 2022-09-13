@@ -384,7 +384,7 @@ static struct aws_h2_connection *s_connection_new(
     connection->thread_data.window_size_peer = AWS_H2_INIT_WINDOW_SIZE;
     connection->thread_data.window_size_self = AWS_H2_INIT_WINDOW_SIZE;
 
-    connection->thread_data.window_size_self_dropped_threshold = 0; /* TODO: expose this config to user? */
+    connection->thread_data.window_size_self_dropped_threshold = 0;
 
     connection->thread_data.goaway_received_last_stream_id = AWS_H2_STREAM_ID_MAX;
     connection->thread_data.goaway_sent_last_stream_id = AWS_H2_STREAM_ID_MAX;
@@ -1248,7 +1248,9 @@ struct aws_h2err s_decoder_on_data_begin(
         /* Automatically update the full amount we just received */
         auto_window_update = payload_len;
     }
-    CONNECTION_LOGF(TRACE, connection, "%" PRIu32 " Bytes of padding received.", total_padding_bytes);
+    if (total_padding_bytes) {
+        CONNECTION_LOGF(TRACE, connection, "%" PRIu32 " Bytes of padding received.", total_padding_bytes);
+    }
     connection->thread_data.window_size_self_dropped += auto_window_update;
     if (connection->thread_data.window_size_self_dropped > connection->thread_data.window_size_self_dropped_threshold) {
         if (s_connection_send_update_window(connection, connection->thread_data.window_size_self_dropped)) {
@@ -1258,7 +1260,7 @@ struct aws_h2err s_decoder_on_data_begin(
         CONNECTION_LOGF(
             TRACE,
             connection,
-            "Automatically updating connection window by %" PRIu32 "",
+            "Automatically updating connection window by %" PRIu32 ".",
             connection->thread_data.window_size_self_dropped);
     }
 

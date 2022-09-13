@@ -98,8 +98,16 @@ struct aws_h2_connection {
          * Reduce the space after receiving a flow-controlled frame. Increment after sending WINDOW_UPDATE for
          * connection */
         size_t window_size_self;
-        /* The size dropped */
+        /* The self window size dropped before the client send window update automatically.
+         * When manual management for connection window is off, the dropped size equals to the size of data frame
+         * received.
+         * When manual management for connection window is on, the dropped size equals to the size of all the padding in
+         * the data frame received */
         uint32_t window_size_self_dropped;
+        /* The threshold to send out a window update frame. When the window_size_self_dropped is larger than the
+         * threshold, client will automatically send a WINDOW_UPDATE frame with the dropped size to keep flow continues.
+         * TODO: expose this to user
+         */
         uint32_t window_size_self_dropped_threshold;
 
         /* Highest self-initiated stream-id that peer might have processed.
