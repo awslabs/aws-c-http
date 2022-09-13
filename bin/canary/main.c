@@ -37,12 +37,17 @@
 
 /* TODO: Make those configurable from cmd line */
 const struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("http://localhost:8080/");
-const int rate_secs = 10;           /* Time interval to collect data */
-const int batch_size = 100;         /* The number of requests to made each batch */
-const int num_data_to_collect = 10; /* The number of data to collect */
+const int rate_secs = 5; /* Time interval to collect data */
+const int streams_per_connection = 20;
+const int max_connections = 8;
+const int num_data_to_collect = 5; /* The number of data to collect */
 const enum aws_log_level log_level = AWS_LOG_LEVEL_NONE;
 const bool direct_connection = false; /* If true, will create one connection and make requests from that connection.
                                        * If false, will use stream manager to acquire streams */
+
+const double rate_threshold =
+    4000; /* From the previous tests. All platforms seem to be larger than 4000, but it could various. TODO: Maybe
+             gather the number of previous test run, and be platform specific. */
 
 struct aws_http_canary_helper {
     struct aws_task task;
@@ -52,6 +57,8 @@ struct aws_http_canary_helper {
     uint64_t rate_ns;  /* Collect data per rate_ns */
 
     struct aws_atomic_var canary_finished;
+
+    double *results;
 };
 
 struct canary_ctx {
@@ -87,11 +94,27 @@ static void s_collect_data_task(struct aws_task *task, void *arg, enum aws_task_
 
     /* collect data */
     size_t stream_completed = aws_atomic_exchange_int(&app_ctx->streams_completed, 0);
-    ++helper->num_collected;
+
     /* TODO: maybe collect the data somewhere instead of just printing it out. */
-    printf("Loop %d: The stream completed during %d secs: %zu\n", helper->num_collected, rate_secs, stream_completed);
+    double rate = (double)stream_completed / rate_secs;
+    helper->results[helper->num_collected] = rate;
+    ++helper->num_collected;
+    printf("Loop %d: The stream completed per second is %f\n", helper->num_collected, rate);
     if (helper->num_collected >= num_data_to_collect) {
         /* done */
+        double sum = 0;
+        for (int i = 0; i < num_data_to_collect; i++) {
+            sum += helper->results[i];
+        }
+        double avg = sum / num_data_to_collect;
+        printf("In average, the stream completed per second is %f\n", avg);
+
+        if (avg < rate_threshold) {
+
+            fprintf(stderr, "The average result is lower than threshold (%f). Failed\n", rate_threshold);
+            exit(1);
+        }
+
         aws_atomic_store_int(&helper->canary_finished, 1);
     } else {
         /* keep running */
@@ -107,6 +130,7 @@ void aws_http_canary_helper_init(struct canary_ctx *app_ctx, struct aws_http_can
     helper->rate_ns = aws_timestamp_convert(rate_secs, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL);
     aws_atomic_init_int(&helper->canary_finished, 0);
     aws_task_init(&helper->task, s_collect_data_task, app_ctx, "data_collector");
+    helper->results = aws_mem_calloc(app_ctx->allocator, num_data_to_collect, sizeof(double));
     uint64_t now = 0;
     aws_high_res_clock_get_ticks(&now);
 
@@ -329,7 +353,7 @@ int main(int argc, char **argv) {
     struct canary_ctx app_ctx;
     AWS_ZERO_STRUCT(app_ctx);
     app_ctx.allocator = allocator;
-    app_ctx.batch_size = batch_size;
+    app_ctx.batch_size = max_connections * streams_per_connection;
     app_ctx.log_level = log_level;
 
     aws_mutex_init(&app_ctx.mutex);
@@ -439,7 +463,8 @@ int main(int argc, char **argv) {
             .tls_connection_options = use_tls ? tls_options : NULL,
             .host = app_ctx.uri.host_name,
             .port = port,
-            .max_connections = 100,
+            .max_connections = max_connections,
+            .max_concurrent_streams_per_connection = streams_per_connection,
             .http2_prior_knowledge = !use_tls,
             .shutdown_complete_user_data = &app_ctx,
             .shutdown_complete_callback = s_on_shutdown_complete,
