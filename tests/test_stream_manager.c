@@ -1388,14 +1388,6 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
     s_tester.length_sent = 2000;
     int num_to_acquire = 500 * 100;
 
-#ifdef AWS_OS_LINUX
-    /* Using Python hyper h2 server frame work, met a weird upload performance issue on Linux. Our client against nginx
-     * platform has not met the same issue. We assume it's because the server framework implementation. Use lower
-     * number of linux
-     */
-    num_to_acquire = 500;
-#endif
-
     ASSERT_SUCCESS(s_sm_stream_acquiring_with_body(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);

@@ -2419,15 +2419,18 @@ TEST_CASE(h2_client_stream_send_window_update) {
     const char *body_src = "hello";
     ASSERT_SUCCESS(h2_fake_peer_send_data_frame_str(&s_tester.peer, stream_id, body_src, false /*end_stream*/));
 
-    /* check that 2 WINDOW_UPDATE frames have been sent.
-     * 1 for the connection, and 1 for the stream */
+    /* check that 1 WINDOW_UPDATE frames have been sent.
+     * 1 for the connection, and no window_update for the stream as window only updates when the window smaller than
+     * half of the original window */
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     struct h2_decoded_frame *stream_window_update_frame = h2_decode_tester_find_stream_frame(
         &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id, 0 /*idx*/, NULL);
-    ASSERT_NOT_NULL(stream_window_update_frame);
-    ASSERT_UINT_EQUALS(5, stream_window_update_frame->window_size_increment);
+    ASSERT_NULL(stream_window_update_frame);
+
+    /* For testing automatic window update, we have localhost_integ_h2_download_stress that downloads a file from one
+     * connection and one stream. If the window was not properly updated, that should fail */
 
     /* clean up */
     aws_http_headers_release(response_headers);
@@ -3888,16 +3891,10 @@ TEST_CASE(h2_client_manual_window_management_user_send_conn_window_update) {
         } else {
             ASSERT_SUCCESS(h2_fake_peer_send_data_frame(&s_tester.peer, stream_id, body_cursor, false /*end_stream*/));
         }
-        /* manually update the stream and connection flow-control window. */
-        aws_http_stream_update_window(stream_tester.stream, body_size);
+        /* manually update connection flow-control window. */
         aws_http2_connection_update_window(s_tester.connection, (uint32_t)body_size);
         testing_channel_drain_queued_tasks(&s_tester.testing_channel);
         ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-
-        struct h2_decoded_frame *stream_window_update_frame = h2_decode_tester_find_stream_frame(
-            &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id, 0 /*idx*/, NULL);
-        ASSERT_NOT_NULL(stream_window_update_frame);
-        ASSERT_UINT_EQUALS(body_size, stream_window_update_frame->window_size_increment);
 
         struct h2_decoded_frame *connection_window_update_frame = h2_decode_tester_find_stream_frame(
             &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, 0 /*stream_id*/, 0 /*idx*/, NULL);
