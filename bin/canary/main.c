@@ -108,7 +108,7 @@ static void s_collect_data_task(struct aws_task *task, void *arg, enum aws_task_
         }
         double avg = sum / num_data_to_collect;
         printf("In average, the stream completed per second is %f\n", avg);
-
+        aws_mem_release(app_ctx->allocator, helper->results);
         if (avg < rate_threshold) {
 
             fprintf(stderr, "The average result is lower than threshold (%f). Failed\n", rate_threshold);
