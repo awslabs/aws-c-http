@@ -37,7 +37,7 @@
 
 /* TODO: Make those configurable from cmd line */
 const struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("http://localhost:8080/");
-const int rate_secs = 5; /* Time interval to collect data */
+const int rate_secs = 30; /* Time interval to collect data */
 const int streams_per_connection = 20;
 const int max_connections = 8;
 const int num_data_to_collect = 5; /* The number of data to collect */
