@@ -24,7 +24,8 @@ void aws_hpack_decoder_init(struct aws_hpack_decoder *decoder, struct aws_alloca
 
     aws_byte_buf_init(&decoder->progress_entry.scratch, allocator, s_hpack_decoder_scratch_initial_size);
 
-    decoder->dynamic_table_protocol_max_size_setting = aws_hpack_get_dynamic_table_max_size(&decoder->context);
+    decoder->dynamic_table_protocol_max_size_setting.latest_value =
+        aws_hpack_get_dynamic_table_max_size(&decoder->context);
 }
 
 void aws_hpack_decoder_clean_up(struct aws_hpack_decoder *decoder) {
@@ -44,7 +45,17 @@ static const struct aws_http_header *s_get_header_u64(const struct aws_hpack_dec
 }
 
 void aws_hpack_decoder_update_max_table_size(struct aws_hpack_decoder *decoder, uint32_t setting_max_size) {
-    decoder->dynamic_table_protocol_max_size_setting = setting_max_size;
+    decoder->dynamic_table_protocol_max_size_setting.latest_value = setting_max_size;
+    if (setting_max_size < decoder->context.dynamic_table.size) {
+        if (!decoder->dynamic_table_protocol_max_size_setting.pending_update_in_progress) {
+            decoder->dynamic_table_protocol_max_size_setting.smallest_value_pending = setting_max_size;
+            decoder->dynamic_table_protocol_max_size_setting.pending_update_in_progress = true;
+            decoder->dynamic_table_protocol_max_size_setting.update_valid = false;
+        } else {
+            decoder->dynamic_table_protocol_max_size_setting.smallest_value_pending =
+                aws_min_u32(setting_max_size, decoder->dynamic_table_protocol_max_size_setting.smallest_value_pending);
+        }
+    }
 }
 
 /* Return a byte with the N right-most bits masked.
@@ -278,23 +289,42 @@ int aws_hpack_decode(
                     decoder->progress_entry.u.literal.prefix_size = 4;
                     decoder->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
                 }
-                if (decoder->dynamic_table_protocol_max_size_setting < decoder->context.dynamic_table.size) {
-                    /**
-                     * RFC-9113 4.3.1 An endpoint MUST treat a field block that follows an acknowledgment of the
-                     * reduction to the maximum dynamic table size as a connection error of type
-                     * COMPRESSION_ERROR if it does not start with a conformant Dynamic Table Size Update instruction.
-                     *
-                     * The protocol max will only be updated once the SETTING ACK received.
-                     */
+
+                /**
+                 * RFC-9113 4.3.1 An endpoint MUST treat a field block that follows an acknowledgment of the
+                 * reduction to the maximum dynamic table size as a connection error of type
+                 * COMPRESSION_ERROR if it does not start with a conformant Dynamic Table Size Update instruction.
+                 *
+                 * The protocol max will only be updated once the SETTING ACK received.
+                 */
+                if (decoder->dynamic_table_protocol_max_size_setting.pending_update_in_progress) {
                     if (decoder->progress_entry.state != HPACK_ENTRY_STATE_DYNAMIC_TABLE_RESIZE) {
-                        /* it will result in AWS_HTTP2_ERR_COMPRESSION_ERROR  */
-                        HPACK_LOG(
-                            ERROR,
-                            decoder,
-                            "SETTINGS_HEADER_TABLE_SIZE below the current size and other end has acknowledged the "
-                            "change, but not started with a conformant Dynamic Table Size Update instruction as "
-                            "required");
-                        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+                        decoder->dynamic_table_protocol_max_size_setting.pending_update_in_progress = false;
+
+                        if (decoder->dynamic_table_protocol_max_size_setting.received_resize_num > 2) {
+                            /* RFC-7541 4.2. the smallest maximum table size that occurs in that interval MUST be
+                             * signaled in a dynamic table size update. The final maximum size is always signaled,
+                             * resulting in at most two dynamic table size updates */
+                            HPACK_LOG(
+                                ERROR,
+                                decoder,
+                                "SETTINGS_HEADER_TABLE_SIZE below the current size and other end has acknowledged the "
+                                "change, more than two dynamic table size updates received, not a conformant resize");
+                            return aws_raise_error(AWS_ERROR_INVALID_STATE);
+                        }
+                        if (!decoder->dynamic_table_protocol_max_size_setting.update_valid) {
+                            HPACK_LOG(
+                                ERROR,
+                                decoder,
+                                "SETTINGS_HEADER_TABLE_SIZE below the current size and other end has acknowledged the "
+                                "change, but not started with a conformant Dynamic Table Size Update instruction as "
+                                "required");
+                            return aws_raise_error(AWS_ERROR_INVALID_STATE);
+                        }
+                        decoder->dynamic_table_protocol_max_size_setting.received_resize_num = 0;
+                        decoder->dynamic_table_protocol_max_size_setting.update_valid = false;
+                    } else {
+                        ++decoder->dynamic_table_protocol_max_size_setting.received_resize_num;
                     }
                 }
             } break;
@@ -430,9 +460,15 @@ int aws_hpack_decode(
                 if (!size_complete) {
                     break;
                 }
-                /* The new maximum size MUST be lower than or equal to the limit determined by the protocol using HPACK.
-                 * A value that exceeds this limit MUST be treated as a decoding error. */
-                if (*size64 > decoder->dynamic_table_protocol_max_size_setting) {
+                if (decoder->dynamic_table_protocol_max_size_setting.pending_update_in_progress) {
+                    if (*size64 <= decoder->dynamic_table_protocol_max_size_setting.smallest_value_pending) {
+                        decoder->dynamic_table_protocol_max_size_setting.update_valid = true;
+                    }
+                }
+                /* RFC-7541 6.3. The new maximum size MUST be lower than or equal to the limit determined by the
+                 * protocol using HPACK. A value that exceeds this limit MUST be treated as a decoding error. In HTTP/2,
+                 * this limit is the last value of the SETTINGS_HEADER_TABLE_SIZE parameter */
+                if (*size64 > decoder->dynamic_table_protocol_max_size_setting.latest_value) {
                     HPACK_LOG(ERROR, decoder, "Dynamic table update size is larger than the protocol setting");
                     return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
                 }

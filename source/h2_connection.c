@@ -2102,10 +2102,14 @@ static struct aws_http_stream *s_connection_make_request(
     struct aws_byte_cursor path;
     AWS_ZERO_STRUCT(path);
 
-    if (aws_http_message_get_request_method(stream->thread_data.outgoing_message, &method) ||
-        aws_http_message_get_request_path(stream->thread_data.outgoing_message, &path)) {
+    if (aws_http_message_get_request_method(stream->thread_data.outgoing_message, &method)) {
         aws_raise_error(AWS_ERROR_HTTP_REQUIRED_PSEUDO_HEADER_MISSING);
-        CONNECTION_LOG(ERROR, connection, "Cannot create request stream, the :path or :method header is missing.");
+        CONNECTION_LOG(ERROR, connection, "Cannot create request stream, the `:method` header is missing.");
+        goto error;
+    }
+    if (aws_http_message_get_request_path(stream->thread_data.outgoing_message, &path)) {
+        aws_raise_error(AWS_ERROR_HTTP_REQUIRED_PSEUDO_HEADER_MISSING);
+        CONNECTION_LOG(ERROR, connection, "Cannot create request stream, the `:path` header is missing.");
         goto error;
     }
 

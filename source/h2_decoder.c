@@ -1177,9 +1177,13 @@ static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
         }
 
         if (aws_string_eq_byte_cursor(method_string, &aws_http_method_connect)) {
-            if (scheme_string || path_string) {
-                /* RFC-9113 8.5 The ":scheme" and ":path" pseudo-header fields MUST be omitted for CONNECT method */
-                DECODER_LOG(ERROR, decoder, "CONNECT request has :path or :scheme that are must omitted.");
+            /* RFC-9113 8.5 The ":scheme" and ":path" pseudo-header fields MUST be omitted for CONNECT method */
+            if (scheme_string) {
+                DECODER_LOG(ERROR, decoder, "CONNECT request must not contain ':scheme' header");
+                goto malformed;
+            }
+            if (path_string) {
+                DECODER_LOG(ERROR, decoder, "CONNECT request must not contain ':path' header");
                 goto malformed;
             }
             if (!authority_string) {
@@ -1187,10 +1191,22 @@ static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
                 goto malformed;
             }
         } else {
-            if (!scheme_string || !path_string) {
-                /* RFC-9113 8.3.1 All HTTP/2 requests MUST include exactly one valid value for the ":method", ":scheme",
-                 * and ":path" pseudo-header fields, unless they are CONNECT requests */
-                DECODER_LOG(ERROR, decoder, "Request missing :scheme or :path, which are required to have.");
+            /* RFC-9113 8.3.1 All HTTP/2 requests MUST include exactly one valid value for the ":method", ":scheme",
+             * and ":path" pseudo-header fields, unless they are CONNECT requests */
+            if (!scheme_string) {
+                DECODER_LOGF(
+                    ERROR,
+                    decoder,
+                    "" PRInSTR " request is missing required ':scheme' header",
+                    AWS_BYTE_CURSOR_PRI(aws_byte_cursor_from_string(method_string)));
+                goto malformed;
+            }
+            if (!path_string) {
+                DECODER_LOGF(
+                    ERROR,
+                    decoder,
+                    "" PRInSTR " request is missing required ':path' header",
+                    AWS_BYTE_CURSOR_PRI(aws_byte_cursor_from_string(method_string)));
                 goto malformed;
             }
         }
@@ -1288,10 +1304,15 @@ static struct aws_h2err s_process_header_field(
         goto malformed;
     }
 
+    /* RFC9113 8.2.1  A field value MUST NOT start or end with an ASCII whitespace character (ASCII SP or HTAB, 0x20 or
+     * 0x09). */
     if (!aws_strutil_is_http_field_value(header_field->value)) {
         /**
          * RFC9113 8.2.1  HTTP/2 implementations SHOULD validate field names and values, respectively, and treat
          * messages that contain prohibited characters as malformed.
+         *
+         * Note: Field values that are not valid according to the definition of the corresponding field do not cause a
+         * request to be malformed.
          */
         DECODER_LOG(ERROR, decoder, "Invalid header field, bad value");
         DECODER_LOGF(
