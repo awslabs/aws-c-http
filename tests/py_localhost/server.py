@@ -43,7 +43,7 @@ class H2Protocol(asyncio.Protocol):
         self.stream_data = {}
         self.flow_control_futures = {}
         self.file_path = None
-        self.num_sentence_received = {}
+        self.total_bytes_received = {}
         self.raw_headers = None
         self.download_test_length = 2500000000
         self.out_bytes_per_second = 900
@@ -124,7 +124,7 @@ class H2Protocol(asyncio.Protocol):
         if method == "PUT" or method == "POST":
             self.conn.send_headers(stream_id, [(':status', '200')])
             asyncio.ensure_future(self.send_data(
-                str(self.num_sentence_received[stream_id]).encode(), stream_id))
+                str(self.total_bytes_received[stream_id]).encode(), stream_id))
         elif path == '/echo':
             self.handle_request_echo(stream_id, request_data)
         elif path == '/downloadTest':
@@ -156,11 +156,11 @@ class H2Protocol(asyncio.Protocol):
         else:
             method = stream_data.headers[':method']
             if method == "PUT" or method == "POST":
-                if stream_id in self.num_sentence_received:
-                    self.num_sentence_received[stream_id] = self.num_sentence_received[stream_id] + \
+                if stream_id in self.total_bytes_received:
+                    self.total_bytes_received[stream_id] = self.total_bytes_received[stream_id] + \
                         len(data)
                 else:
-                    self.num_sentence_received[stream_id] = len(data)
+                    self.total_bytes_received[stream_id] = len(data)
                 # update window for stream
                 if len(data) > 0:
                     self.conn.increment_flow_control_window(len(data))
