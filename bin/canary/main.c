@@ -27,7 +27,6 @@
 #include <inttypes.h>
 
 #ifdef _MSC_VER
-#    pragma warning(disable : 4996) /* Disable warnings about fopen() being insecure */
 #    pragma warning(disable : 4204) /* Declared initializers */
 #    pragma warning(disable : 4221) /* Local var in declared initializer */
 #endif
