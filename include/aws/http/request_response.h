@@ -188,6 +188,12 @@ typedef int(aws_http_on_incoming_request_done_fn)(struct aws_http_stream *stream
 typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
 
 /**
+ * Invoked when request/response stream destroy completely.
+ * This can be invoked within the same thead who release the refcount on http stream.
+ */
+typedef void(aws_http_on_stream_destroy_fn)(void *user_data);
+
+/**
  * Options for creating a stream which sends a request from the client and receives a response from the server.
  */
 struct aws_http_make_request_options {
@@ -233,6 +239,9 @@ struct aws_http_make_request_options {
      * See `aws_http_on_stream_complete_fn`.
      */
     aws_http_on_stream_complete_fn *on_complete;
+
+    /* Callback for when the request/response stream has completely destroyed. */
+    aws_http_on_stream_destroy_fn *on_destroy;
 
     /**
      * When using HTTP/2, request body data will be provided over time. The stream will only be polled for writing
@@ -290,6 +299,9 @@ struct aws_http_request_handler_options {
      * See `aws_http_on_stream_complete_fn`.
      */
     aws_http_on_stream_complete_fn *on_complete;
+
+    /* Callback for when the request/response stream has completely destroyed. */
+    aws_http_on_stream_destroy_fn *on_destroy;
 };
 
 /**

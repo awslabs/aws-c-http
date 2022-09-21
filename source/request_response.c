@@ -1070,11 +1070,18 @@ void aws_http_stream_release(struct aws_http_stream *stream) {
     if (prev_refcount == 1) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Final stream refcount released.", (void *)stream);
 
+        void *user_data = stream->user_data;
+        aws_http_on_stream_destroy_fn *on_destroy_callback = stream->on_destroy;
+
         struct aws_http_connection *owning_connection = stream->owning_connection;
         stream->vtable->destroy(stream);
 
         /* Connection needed to outlive stream, but it's free to go now */
         aws_http_connection_release(owning_connection);
+        if (on_destroy_callback) {
+            /* info user that destroy completed. */
+            on_destroy_callback(user_data);
+        }
     } else {
         AWS_ASSERT(prev_refcount != 0);
         AWS_LOGF_TRACE(
