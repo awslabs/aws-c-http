@@ -135,6 +135,14 @@ static void s_on_complete(struct aws_http_stream *stream, int error_code, void *
     aws_http_stream_get_incoming_response_status(stream, &tester->response_status);
 }
 
+static void s_on_destroy(void *user_data) {
+    struct client_stream_tester *tester = user_data;
+
+    /* Validate things are firing properly */
+    AWS_FATAL_ASSERT(!tester->destroyed);
+    tester->destroyed = true;
+}
+
 int client_stream_tester_init(
     struct client_stream_tester *tester,
     struct aws_allocator *alloc,
@@ -166,6 +174,7 @@ int client_stream_tester_init(
         .on_response_header_block_done = s_on_header_block_done,
         .on_response_body = s_on_body,
         .on_complete = s_on_complete,
+        .on_destroy = s_on_destroy,
     };
     tester->stream = aws_http_connection_make_request(options->connection, &request_options);
     ASSERT_NOT_NULL(tester->stream);
