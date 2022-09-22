@@ -377,6 +377,7 @@ add_h2_decoder_test_set(h2_decoder_err_bad_preface_from_client_3)
 
 add_test_case(h2_client_sanity_check)
 add_test_case(h2_client_stream_create)
+add_test_case(h2_client_stream_release_after_complete)
 add_test_case(h2_client_unactivated_stream_cleans_up)
 add_test_case(h2_client_connection_preface_sent)
 add_test_case(h2_client_auto_ping_ack)

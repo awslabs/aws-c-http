@@ -81,6 +81,7 @@ struct sm_tester {
 
     size_t wait_for_stream_completed_count;
     size_t stream_completed_count;
+    struct aws_atomic_var stream_destroyed_count;
     size_t stream_complete_errors;
     size_t stream_200_count;
     size_t stream_status_not_200_count;
@@ -290,6 +291,7 @@ static int s_tester_init(struct sm_tester_options *options) {
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
     s_tester.max_con_stream_remote = 100;
+    aws_atomic_init_int(&s_tester.stream_destroyed_count, 0);
 
     return AWS_OP_SUCCESS;
 }
@@ -507,6 +509,11 @@ static void s_sm_tester_on_stream_complete(struct aws_http_stream *stream, int e
     AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.lock) == AWS_OP_SUCCESS);
 }
 
+static void s_sm_tester_on_stream_destroy(void *user_data) {
+    (void)user_data;
+    aws_atomic_fetch_add(&s_tester.stream_destroyed_count, 1);
+}
+
 static int s_sm_stream_acquiring_customize_request(
     int num_streams,
     struct aws_http_make_request_options *request_options) {
@@ -548,6 +555,7 @@ static int s_sm_stream_acquiring(int num_streams) {
         .request = request,
         .user_data = &s_tester,
         .on_complete = s_sm_tester_on_stream_complete,
+        .on_destroy = s_sm_tester_on_stream_destroy,
     };
     int return_code = s_sm_stream_acquiring_customize_request(num_streams, &request_options);
     aws_http_message_release(request);
@@ -1180,6 +1188,11 @@ TEST_CASE(h2_sm_acquire_stream) {
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
     ASSERT_INT_EQUALS(num_to_acquire, s_tester.stream_200_count);
+    size_t destroyed = aws_atomic_load_int(&s_tester.stream_destroyed_count);
+    ASSERT_INT_EQUALS(0, destroyed);
+    s_release_all_streams();
+    destroyed = aws_atomic_load_int(&s_tester.stream_destroyed_count);
+    ASSERT_INT_EQUALS(num_to_acquire, destroyed);
 
     return s_tester_clean_up();
 }
