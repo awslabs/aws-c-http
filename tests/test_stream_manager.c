@@ -708,6 +708,11 @@ TEST_CASE(h2_sm_mock_connection) {
     s_drain_all_fake_connection_testing_channel();
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(num_to_acquire));
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+    size_t destroyed = aws_atomic_load_int(&s_tester.stream_destroyed_count);
+    ASSERT_INT_EQUALS(0, destroyed);
+    s_release_all_streams();
+    destroyed = aws_atomic_load_int(&s_tester.stream_destroyed_count);
+    ASSERT_INT_EQUALS(num_to_acquire, destroyed);
 
     return s_tester_clean_up();
 }
@@ -1188,11 +1193,6 @@ TEST_CASE(h2_sm_acquire_stream) {
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
     ASSERT_INT_EQUALS(num_to_acquire, s_tester.stream_200_count);
-    size_t destroyed = aws_atomic_load_int(&s_tester.stream_destroyed_count);
-    ASSERT_INT_EQUALS(0, destroyed);
-    s_release_all_streams();
-    destroyed = aws_atomic_load_int(&s_tester.stream_destroyed_count);
-    ASSERT_INT_EQUALS(num_to_acquire, destroyed);
 
     return s_tester_clean_up();
 }
