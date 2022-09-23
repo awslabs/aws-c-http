@@ -804,8 +804,15 @@ static void s_on_stream_complete(struct aws_http_stream *stream, int error_code,
         pending_stream_acquisition->options.on_complete(
             stream, error_code, pending_stream_acquisition->options.user_data);
     }
-    s_pending_stream_acquisition_destroy(pending_stream_acquisition);
     s_sm_connection_on_scheduled_stream_finishes(sm_connection, stream_manager);
+}
+
+static void s_on_stream_destroy(void *user_data) {
+    struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition = user_data;
+    if (pending_stream_acquisition->options.on_destroy) {
+        pending_stream_acquisition->options.on_destroy(pending_stream_acquisition->options.user_data);
+    }
+    s_pending_stream_acquisition_destroy(pending_stream_acquisition);
 }
 
 /* Scheduled to happen from connection's thread */
@@ -862,6 +869,7 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
         .on_response_header_block_done = s_on_incoming_header_block_done,
         .on_response_body = s_on_incoming_body,
         .on_complete = s_on_stream_complete,
+        .on_destroy = s_on_stream_destroy,
         .user_data = pending_stream_acquisition,
     };
     /* TODO: we could put the pending acquisition back to the list if the connection is not available for new request.

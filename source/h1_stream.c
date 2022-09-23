@@ -342,7 +342,8 @@ static struct aws_h1_stream *s_stream_new_common(
     aws_http_on_incoming_headers_fn *on_incoming_headers,
     aws_http_on_incoming_header_block_done_fn *on_incoming_header_block_done,
     aws_http_on_incoming_body_fn *on_incoming_body,
-    aws_http_on_stream_complete_fn on_complete) {
+    aws_http_on_stream_complete_fn *on_complete,
+    aws_http_on_stream_destroy_fn *on_destroy) {
 
     struct aws_h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h1_connection, base);
 
@@ -359,6 +360,7 @@ static struct aws_h1_stream *s_stream_new_common(
     stream->base.on_incoming_header_block_done = on_incoming_header_block_done;
     stream->base.on_incoming_body = on_incoming_body;
     stream->base.on_complete = on_complete;
+    stream->base.on_destroy = on_destroy;
 
     aws_channel_task_init(
         &stream->cross_thread_work_task, s_stream_cross_thread_work_task, stream, "http1_stream_cross_thread_work");
@@ -384,7 +386,8 @@ struct aws_h1_stream *aws_h1_stream_new_request(
         options->on_response_headers,
         options->on_response_header_block_done,
         options->on_response_body,
-        options->on_complete);
+        options->on_complete,
+        options->on_destroy);
     if (!stream) {
         return NULL;
     }
@@ -430,7 +433,8 @@ struct aws_h1_stream *aws_h1_stream_new_request_handler(const struct aws_http_re
         options->on_request_headers,
         options->on_request_header_block_done,
         options->on_request_body,
-        options->on_complete);
+        options->on_complete,
+        options->on_destroy);
     if (!stream) {
         return NULL;
     }

@@ -183,6 +183,52 @@ TEST_CASE(h2_client_stream_create) {
     return s_tester_clean_up();
 }
 
+static void s_stream_cleans_up_on_destroy(void *data) {
+    bool *destroyed = data;
+    *destroyed = true;
+}
+
+TEST_CASE(h2_client_stream_release_after_complete) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* create request */
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header headers[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
+
+    bool destroyed = false;
+    struct aws_http_make_request_options options = {
+        .self_size = sizeof(options),
+        .request = request,
+        .on_destroy = s_stream_cleans_up_on_destroy,
+        .user_data = &destroyed,
+    };
+
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &options);
+    ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
+
+    /* shutdown channel so request can be released */
+    aws_channel_shutdown(s_tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&s_tester.testing_channel));
+
+    /* release request */
+    ASSERT_FALSE(destroyed);
+    aws_http_stream_release(stream);
+    ASSERT_TRUE(destroyed);
+
+    aws_http_message_release(request);
+
+    return s_tester_clean_up();
+}
+
 TEST_CASE(h2_client_unactivated_stream_cleans_up) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
