@@ -182,8 +182,9 @@ typedef int(
 typedef int(aws_http_on_incoming_request_done_fn)(struct aws_http_stream *stream, void *user_data);
 
 /**
- * Invoked when request/response stream is complete, whether successful or unsuccessful
- * This is always invoked on the HTTP connection's event-loop thread.
+ * Invoked when request/response stream is completely destroyed.
+ * This may be invoked synchronously when aws_http_stream_release() is called.
+ * This is invoked even if the stream is never activated.
  */
 typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
 
@@ -240,7 +241,7 @@ struct aws_http_make_request_options {
      */
     aws_http_on_stream_complete_fn *on_complete;
 
-    /* Callback for when the request/response stream has completely destroyed. */
+    /* Callback for when the request/response stream is completely destroyed. */
     aws_http_on_stream_destroy_fn *on_destroy;
 
     /**
@@ -300,7 +301,7 @@ struct aws_http_request_handler_options {
      */
     aws_http_on_stream_complete_fn *on_complete;
 
-    /* Callback for when the request/response stream has completely destroyed. */
+    /* Callback for when the request/response stream is completely destroyed. */
     aws_http_on_stream_destroy_fn *on_destroy;
 };
 

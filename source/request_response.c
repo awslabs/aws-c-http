@@ -1076,12 +1076,12 @@ void aws_http_stream_release(struct aws_http_stream *stream) {
         struct aws_http_connection *owning_connection = stream->owning_connection;
         stream->vtable->destroy(stream);
 
-        /* Connection needed to outlive stream, but it's free to go now */
-        aws_http_connection_release(owning_connection);
         if (on_destroy_callback) {
             /* info user that destroy completed. */
             on_destroy_callback(user_data);
         }
+        /* Connection needed to outlive stream, but it's free to go now */
+        aws_http_connection_release(owning_connection);
     } else {
         AWS_ASSERT(prev_refcount != 0);
         AWS_LOGF_TRACE(
