@@ -241,6 +241,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     stream->base.on_incoming_header_block_done = options->on_response_header_block_done;
     stream->base.on_incoming_body = options->on_response_body;
     stream->base.on_complete = options->on_complete;
+    stream->base.on_destroy = options->on_destroy;
     stream->base.client_data = &stream->base.client_or_server_data.client;
     stream->base.client_data->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
     struct aws_byte_cursor method;

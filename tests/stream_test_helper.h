@@ -43,6 +43,8 @@ struct client_stream_tester {
 
     /* Whether connection is open when on_complete fires */
     bool on_complete_connection_is_open;
+
+    bool destroyed;
 };
 
 struct client_stream_tester_options {
