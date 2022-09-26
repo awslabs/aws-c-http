@@ -406,10 +406,6 @@ static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, v
     s_tester.alloc = allocator;
 
     size_t length = 2500000000UL;
-#ifdef AWS_OS_LINUX
-    /* TODO: dig into upload stress performance on linux */
-    length = 250000000UL;
-#endif
 
     struct aws_string *http_localhost_host = NULL;
     if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
