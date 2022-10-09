@@ -391,6 +391,13 @@ struct aws_http_client_connection_options {
      * If connection is HTTP/2 and options were not specified, default values are used.
      */
     const struct aws_http2_connection_options *http2_options;
+
+    /**
+     * Optional.
+     * Requests the channel/connection be bound to a specific event loop rather than chosen sequentially from the
+     * event loop group associated with the client bootstrap.
+     */
+    struct aws_event_loop *requested_event_loop;
 };
 
 /* Predefined settings identifiers (RFC-7540 6.5.2) */
