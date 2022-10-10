@@ -302,7 +302,7 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 
     uint16_t elg_threads = options->event_loop_group_threads;
     if (elg_threads == 0) {
-        elg_threads = 1;
+        elg_threads = 16;
     }
     tester->event_loop_group = aws_event_loop_group_new_default(tester->alloc, elg_threads, NULL);
 
