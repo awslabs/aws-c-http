@@ -42,6 +42,8 @@ struct tester_options {
     char *server_alpn_list;
     char *client_alpn_list;
     bool no_connection; /* don't connect server to client */
+    uint16_t event_loop_group_threads;
+    bool pin_event_loop;
 };
 
 /* Singleton used by tests in this file */
@@ -298,7 +300,11 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
 
-    tester->event_loop_group = aws_event_loop_group_new_default(tester->alloc, 1, NULL);
+    uint16_t elg_threads = options->event_loop_group_threads;
+    if (elg_threads == 0) {
+        elg_threads = 1;
+    }
+    tester->event_loop_group = aws_event_loop_group_new_default(tester->alloc, elg_threads, NULL);
 
     struct aws_host_resolver_default_options resolver_options = {
         .el_group = tester->event_loop_group,
@@ -360,6 +366,11 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
             aws_byte_cursor_from_c_str("localhost")));
         client_options.tls_options = &tester->client_tls_connection_options;
     }
+
+    if (options->pin_event_loop) {
+        client_options.requested_event_loop = aws_event_loop_group_get_next_loop(tester->event_loop_group);
+    }
+
     tester->client_options = client_options;
 
     tester->server_connection_num = 0;
@@ -916,3 +927,28 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
 AWS_TEST_CASE(
     connection_server_shutting_down_new_connection_setup_fail,
     s_test_connection_server_shutting_down_new_connection_setup_fail);
+
+static int s_test_connection_setup_shutdown_pinned_event_loop(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    struct tester_options options = {
+        .alloc = allocator,
+        .event_loop_group_threads = 16,
+        .pin_event_loop = true,
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, &options));
+
+    for (int i = 0; i < tester.client_connection_num; i++) {
+        struct aws_http_connection *connection = tester.client_connections[i];
+        ASSERT_PTR_EQUALS(
+            tester.client_options.requested_event_loop, aws_channel_get_event_loop(connection->channel_slot->channel));
+    }
+
+    release_all_client_connections(&tester);
+    release_all_server_connections(&tester);
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(connection_setup_shutdown_pinned_event_loop, s_test_connection_setup_shutdown_pinned_event_loop);
