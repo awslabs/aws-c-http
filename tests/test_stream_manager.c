@@ -893,6 +893,7 @@ TEST_CASE(h2_sm_mock_fetch_metric) {
     /* Acquired 1 stream, and we hold one connection, the max streams per connection is 2. */
     ASSERT_UINT_EQUALS(out_metrics.available_concurrency, 1);
     ASSERT_UINT_EQUALS(out_metrics.pending_concurrency_acquires, 0);
+    ASSERT_UINT_EQUALS(out_metrics.leased_concurrency, 1);
 
     ASSERT_SUCCESS(s_sm_stream_acquiring(1));
 
@@ -902,6 +903,7 @@ TEST_CASE(h2_sm_mock_fetch_metric) {
     aws_http2_stream_manager_fetch_metrics(s_tester.stream_manager, &out_metrics);
     ASSERT_UINT_EQUALS(out_metrics.available_concurrency, 0);
     ASSERT_UINT_EQUALS(out_metrics.pending_concurrency_acquires, 0);
+    ASSERT_UINT_EQUALS(out_metrics.leased_concurrency, 2);
 
     ASSERT_SUCCESS(s_sm_stream_acquiring(10));
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(5));
@@ -910,6 +912,7 @@ TEST_CASE(h2_sm_mock_fetch_metric) {
     aws_http2_stream_manager_fetch_metrics(s_tester.stream_manager, &out_metrics);
     ASSERT_UINT_EQUALS(out_metrics.available_concurrency, 0);
     ASSERT_UINT_EQUALS(out_metrics.pending_concurrency_acquires, 2);
+    ASSERT_UINT_EQUALS(out_metrics.leased_concurrency, 10);
 
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
     /* Still have two more streams that have not been completed */
