@@ -301,8 +301,12 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
 
-    tester->client_event_loop_group = aws_event_loop_group_new_default(tester->alloc, 16, NULL);
     tester->server_event_loop_group = aws_event_loop_group_new_default(tester->alloc, 1, NULL);
+    if (options->pin_event_loop) {
+        tester->client_event_loop_group = aws_event_loop_group_new_default(tester->alloc, 16, NULL);
+    } else {
+        tester->client_event_loop_group = aws_event_loop_group_acquire(tester->server_event_loop_group);
+    }
 
     struct aws_host_resolver_default_options resolver_options = {
         .el_group = tester->client_event_loop_group,
@@ -706,8 +710,7 @@ static int s_test_connection_customized_alpn_error_with_unknown_return_string(
     /* clean up */
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
-    int wait_result = s_tester_wait(&tester, s_tester_connection_shutdown_pred);
-    ASSERT_TRUE(wait_result == AWS_OP_SUCCESS || aws_last_error() == AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
