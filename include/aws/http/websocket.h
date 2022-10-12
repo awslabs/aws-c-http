@@ -248,6 +248,14 @@ struct aws_websocket_client_connection_options {
      * reaches 0, no further data will be received.
      */
     bool manual_window_management;
+
+    /**
+     * Optional
+     * If set, requests that a specific event loop be used to seat the connection, rather than the next one
+     * in the event loop group.  Useful for serializing all io and external events related to a client onto
+     * a single thread.
+     */
+    struct aws_event_loop *requested_event_loop;
 };
 
 /**
