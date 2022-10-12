@@ -301,6 +301,23 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
 
+    /*
+     * The current http testing framework has several issues that hinder testing event loop pinning:
+     *   (1) Server shutdown can crash with memory corruption if the server uses an event loop group with more than one
+     *   thread
+     *   (2) s_tester_wait mixes results from both client and server and once you unlink them out of the same, single-
+     *   threaded event loop, the test assumptions start breaking due to different serializations of io events.
+     *
+     * This leads to a self-defeating situation: in order to test event loop pinning we need event loop groups with
+     * many threads, but as soon as we use one, existing tests start breaking.
+     *
+     * Event loop pinning is a critical blocker for an upcoming release, so rather than trying to figure out the
+     * underlying race condition within the http testing framework (I suspect it's socket listener related), we
+     * instead add some complexity to the testing framework such that
+     *   (1) Existing tests continue to use a single event loop group with one thread
+     *   (2) The event loop pinning test uses two event loop groups, the server elg with a single thread and the
+     *   client elg with many threads to actually test pinning.
+     */
     tester->server_event_loop_group = aws_event_loop_group_new_default(tester->alloc, 1, NULL);
     if (options->pin_event_loop) {
         tester->client_event_loop_group = aws_event_loop_group_new_default(tester->alloc, 16, NULL);
