@@ -176,7 +176,7 @@ struct aws_http_connection_manager {
     /*
      * The number of all established, idle connections.  So
      * that we don't have compute the size of a linked list every time.
-     * It doesn't contribute to internal refcount as AWS_HCMCT_OPEN_CONNECTION inclues all idle connections as well.
+     * It doesn't contribute to internal refcount as AWS_HCMCT_OPEN_CONNECTION includes all idle connections as well.
      */
     size_t idle_connection_count;
 
@@ -1555,5 +1555,6 @@ void aws_http_connection_manager_fetch_metrics(
     AWS_FATAL_ASSERT(aws_mutex_lock((struct aws_mutex *)(void *)&manager->lock) == AWS_OP_SUCCESS);
     out_metrics->available_concurrency = manager->idle_connection_count;
     out_metrics->pending_concurrency_acquires = manager->pending_acquisition_count;
+    out_metrics->leased_concurrency = manager->internal_ref[AWS_HCMCT_VENDED_CONNECTION];
     AWS_FATAL_ASSERT(aws_mutex_unlock((struct aws_mutex *)(void *)&manager->lock) == AWS_OP_SUCCESS);
 }

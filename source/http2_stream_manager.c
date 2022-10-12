@@ -1231,6 +1231,7 @@ void aws_http2_stream_manager_fetch_metrics(
         out_metrics->pending_concurrency_acquires =
             stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION];
         out_metrics->available_concurrency = all_available_streams_num;
+        out_metrics->leased_concurrency = stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_OPEN_STREAM];
         s_unlock_synced_data((struct aws_http2_stream_manager *)(void *)stream_manager);
     } /* END CRITICAL SECTION */
 }
