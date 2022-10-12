@@ -474,7 +474,7 @@ add_test_case(connection_setup_shutdown_pinned_event_loop)
 add_test_case(connection_h2_prior_knowledge)
 add_test_case(connection_h2_prior_knowledge_not_work_with_tls)
 add_test_case(connection_customized_alpn)
-add_test_case(connection_customized_alpn_error_with_unknow_return_string)
+add_test_case(connection_customized_alpn_error_with_unknown_return_string)
 # These server tests occasionally fail. Resurrect if/when we get back to work on HTTP server.
 #add_test_case(connection_destroy_server_with_connection_existing)
 #add_test_case(connection_destroy_server_with_multiple_connections_existing)

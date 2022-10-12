@@ -655,7 +655,7 @@ static int s_test_connection_customized_alpn(struct aws_allocator *allocator, vo
 }
 AWS_TEST_CASE(connection_customized_alpn, s_test_connection_customized_alpn);
 
-static int s_test_connection_customized_alpn_error_with_unknow_return_string(
+static int s_test_connection_customized_alpn_error_with_unknown_return_string(
     struct aws_allocator *allocator,
     void *ctx) {
     (void)ctx;
@@ -706,14 +706,15 @@ static int s_test_connection_customized_alpn_error_with_unknow_return_string(
     /* clean up */
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
-    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
+    int wait_result = s_tester_wait(&tester, s_tester_connection_shutdown_pred);
+    ASSERT_TRUE(wait_result == AWS_OP_SUCCESS || aws_last_error() == AWS_ERROR_HTTP_CONNECTION_CLOSED);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
-    connection_customized_alpn_error_with_unknow_return_string,
-    s_test_connection_customized_alpn_error_with_unknow_return_string);
+    connection_customized_alpn_error_with_unknown_return_string,
+    s_test_connection_customized_alpn_error_with_unknown_return_string);
 
 static int s_test_connection_destroy_server_with_connection_existing(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
