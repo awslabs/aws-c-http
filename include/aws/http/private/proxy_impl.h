@@ -120,6 +120,8 @@ struct aws_http_proxy_user_data {
     aws_client_bootstrap_on_channel_event_fn *original_channel_on_shutdown;
 
     struct aws_http_proxy_config *proxy_config;
+
+    struct aws_event_loop *requested_event_loop;
 };
 
 struct aws_http_proxy_system_vtable {
