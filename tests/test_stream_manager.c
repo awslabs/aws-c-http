@@ -236,7 +236,7 @@ static int s_tester_init(struct sm_tester_options *options) {
     if (options->uri_cursor) {
         ASSERT_SUCCESS(aws_uri_init_parse(&s_tester.endpoint, alloc, options->uri_cursor));
     } else {
-        struct aws_byte_cursor default_host = aws_byte_cursor_from_c_str("https://example.com");
+        struct aws_byte_cursor default_host = aws_byte_cursor_from_c_str("https://example.com/");
         ASSERT_SUCCESS(aws_uri_init_parse(&s_tester.endpoint, alloc, &default_host));
     }
 
@@ -1186,12 +1186,9 @@ TEST_CASE(h2_sm_connection_ping) {
 /* Test that makes real streams */
 TEST_CASE(h2_sm_acquire_stream) {
     (void)ctx;
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://httpbin.org/status/200");
-
     struct sm_tester_options options = {
         .max_connections = 5,
         .alloc = allocator,
-        .uri_cursor = &uri_cursor,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
     int num_to_acquire = 5;
@@ -1206,13 +1203,10 @@ TEST_CASE(h2_sm_acquire_stream) {
 /* Test that makes real streams and trigger multiple connections to be created */
 TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
     (void)ctx;
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://httpbin.org/status/200");
-
     struct sm_tester_options options = {
         .max_connections = 5,
         .alloc = allocator,
         .max_concurrent_streams_per_connection = 5,
-        .uri_cursor = &uri_cursor,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
 
