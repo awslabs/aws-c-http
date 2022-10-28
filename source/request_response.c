@@ -28,7 +28,7 @@ bool aws_http_header_name_eq(struct aws_byte_cursor name_a, struct aws_byte_curs
 }
 
 /**
- * -- Datastructure Notes --
+ * -- Data Structure Notes --
  * Headers are stored in a linear array, rather than a hash-table of arrays.
  * The linear array was simpler to implement and may be faster due to having fewer allocations.
  * The API has been designed so we can swap out the implementation later if desired.
@@ -630,10 +630,18 @@ int aws_http_message_get_request_method(
     return aws_raise_error(error);
 }
 
+static struct aws_byte_cursor s_default_empty_path = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("/");
+
 int aws_http_message_set_request_path(struct aws_http_message *request_message, struct aws_byte_cursor path) {
     AWS_PRECONDITION(request_message);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&path));
     AWS_PRECONDITION(request_message->request_data);
+
+    /* Its valid for uri path to be empty, but http spec requires empty paths to
+    be sent as "/", so default it here. */
+    if (path.len == 0) {
+        path = s_default_empty_path;
+    }
 
     if (request_message->request_data) {
         switch (request_message->http_version) {

@@ -763,6 +763,7 @@ int aws_http_message_get_request_path(const struct aws_http_message *request_mes
 /**
  * Set the path-and-query value (request messages only).
  * The request makes its own copy of the underlying string.
+ * Note: Empty path is treated as a "/" path
  */
 AWS_HTTP_API
 int aws_http_message_set_request_path(struct aws_http_message *request_message, struct aws_byte_cursor path);
