@@ -637,15 +637,20 @@ int aws_http_message_set_request_path(struct aws_http_message *request_message, 
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&path));
     AWS_PRECONDITION(request_message->request_data);
 
+    AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Setting path " PRInSTR " with len %d", AWS_BYTE_CURSOR_PRI(path), path.len);
+
+    /* Its valid for uri path to be empty, but http spec requires empty paths to
+    be sent as "/", so default it here. */
+    if (path.len == 0) {
+        path = s_default_empty_path;
+    }
+
     if (request_message->request_data) {
         switch (request_message->http_version) {
             case AWS_HTTP_VERSION_1_1:
             {
-                /* Its valid for uri path to be empty, but http spec requires empty paths to
-                be sent as "/", so default it here. */
-                if (path.len == 0) {
-                    path = s_default_empty_path;
-                }
                 return s_set_string_from_cursor(&request_message->request_data->path, path, request_message->allocator);
             }
             case AWS_HTTP_VERSION_2:
