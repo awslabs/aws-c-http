@@ -82,7 +82,7 @@ class SimpleTests(unittest.TestCase):
         run_command(simple_get_args)
     def test_simple_get_h1(self):
         """make a simple GET request via HTTP/1.1 and make sure it succeeds"""
-        simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http1_1', 'https://httpbin.org']
+        simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http1_1', 'http://httpbin.org/status/200']
         run_command(simple_get_args)
 
     def test_simple_post_h1(self):
@@ -100,7 +100,7 @@ class SimpleTests(unittest.TestCase):
 
     def test_simple_get_h2(self):
         """make a simple GET request via HTTP2 and make sure it succeeds"""
-        simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http2', 'https://httpbin.org']
+        simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http2', 'https://httpbin.org/status/200']
         run_command(simple_get_args)
 
     def test_simple_post_h2(self):
