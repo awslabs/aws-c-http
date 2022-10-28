@@ -372,7 +372,7 @@ int aws_http2_headers_get_request_path(const struct aws_http_headers *h2_headers
 
         return AWS_OP_ERR;
     }
-        
+
     return AWS_OP_SUCCESS;
 }
 
@@ -683,14 +683,12 @@ int aws_http_message_get_request_path(
 
     if (request_message->request_data) {
         switch (request_message->http_version) {
-            case AWS_HTTP_VERSION_1_1:
-                {
-                    *out_path = request_message->request_data->path != NULL ? 
-                        aws_byte_cursor_from_string(request_message->request_data->path) :
-                        s_default_empty_path;
-                    return AWS_OP_SUCCESS;
-                }
-                break;
+            case AWS_HTTP_VERSION_1_1: {
+                *out_path = request_message->request_data->path != NULL
+                                ? aws_byte_cursor_from_string(request_message->request_data->path)
+                                : s_default_empty_path;
+                return AWS_OP_SUCCESS;
+            } break;
             case AWS_HTTP_VERSION_2:
                 return aws_http2_headers_get_request_path(request_message->headers, out_path);
             default:

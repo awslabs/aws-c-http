@@ -448,8 +448,8 @@ H1_ENCODER_TEST_CASE(h1_encoder_missing_path) {
     struct aws_http_message *request = aws_http_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
     ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET")));
-    ASSERT_SUCCESS(aws_http_message_add_header_array(request, s_typical_request_headers,
-        AWS_ARRAY_SIZE(s_typical_request_headers)));
+    ASSERT_SUCCESS(aws_http_message_add_header_array(
+        request, s_typical_request_headers, AWS_ARRAY_SIZE(s_typical_request_headers)));
 
     struct aws_linked_list chunk_list;
     aws_linked_list_init(&chunk_list);
