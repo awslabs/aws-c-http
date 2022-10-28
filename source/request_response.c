@@ -18,6 +18,8 @@
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
+static struct aws_byte_cursor s_default_empty_path = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("/");
+
 enum {
     /* Initial capacity for the aws_http_message.headers array_list. */
     AWS_HTTP_REQUEST_NUM_RESERVED_HEADERS = 16,
@@ -361,7 +363,17 @@ int aws_http2_headers_get_request_authority(
 }
 
 int aws_http2_headers_get_request_path(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_path) {
-    return aws_http_headers_get(h2_headers, aws_http_header_path, out_path);
+    if (aws_http_headers_get(h2_headers, aws_http_header_path, out_path)) {
+        if (aws_last_error() == AWS_ERROR_HTTP_HEADER_NOT_FOUND) {
+            *out_path = s_default_empty_path;
+            aws_reset_error();
+            return AWS_OP_SUCCESS;
+        }
+
+        return AWS_OP_ERR;
+    }
+        
+    return AWS_OP_SUCCESS;
 }
 
 int aws_http2_headers_get_response_status(const struct aws_http_headers *h2_headers, int *out_status_code) {
@@ -390,6 +402,12 @@ int aws_http2_headers_set_request_authority(struct aws_http_headers *h2_headers,
 }
 
 int aws_http2_headers_set_request_path(struct aws_http_headers *h2_headers, struct aws_byte_cursor path) {
+    /* Its valid for uri path to be empty, but http spec requires empty paths to
+    be sent as "/", so default it here. */
+    if (path.len == 0) {
+        path = s_default_empty_path;
+    }
+
     return aws_http_headers_set(h2_headers, aws_http_header_path, path);
 }
 
@@ -432,6 +450,12 @@ static int s_set_string_from_cursor(
     struct aws_allocator *alloc) {
 
     AWS_PRECONDITION(dst);
+
+    /* Its valid for uri path to be empty, but http spec requires empty paths to
+    be sent as "/", so default it here. */
+    if (cursor.len == 0) {
+        cursor = s_default_empty_path;
+    }
 
     /* If the cursor is empty, set dst to NULL */
     struct aws_string *new_str;
@@ -630,24 +654,15 @@ int aws_http_message_get_request_method(
     return aws_raise_error(error);
 }
 
-static struct aws_byte_cursor s_default_empty_path = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("/");
-
 int aws_http_message_set_request_path(struct aws_http_message *request_message, struct aws_byte_cursor path) {
     AWS_PRECONDITION(request_message);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&path));
     AWS_PRECONDITION(request_message->request_data);
 
-    /* Its valid for uri path to be empty, but http spec requires empty paths to
-    be sent as "/", so default it here. */
-    if (path.len == 0) {
-        path = s_default_empty_path;
-    }
-
     if (request_message->request_data) {
         switch (request_message->http_version) {
-            case AWS_HTTP_VERSION_1_1: {
+            case AWS_HTTP_VERSION_1_1:
                 return s_set_string_from_cursor(&request_message->request_data->path, path, request_message->allocator);
-            }
             case AWS_HTTP_VERSION_2:
                 return aws_http2_headers_set_request_path(request_message->headers, path);
             default:
@@ -669,8 +684,10 @@ int aws_http_message_get_request_path(
     if (request_message->request_data) {
         switch (request_message->http_version) {
             case AWS_HTTP_VERSION_1_1:
-                if (request_message->request_data->path) {
-                    *out_path = aws_byte_cursor_from_string(request_message->request_data->path);
+                {
+                    *out_path = request_message->request_data->path != NULL ? 
+                        aws_byte_cursor_from_string(request_message->request_data->path) :
+                        s_default_empty_path;
                     return AWS_OP_SUCCESS;
                 }
                 break;
