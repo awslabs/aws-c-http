@@ -804,8 +804,15 @@ static void s_on_stream_complete(struct aws_http_stream *stream, int error_code,
         pending_stream_acquisition->options.on_complete(
             stream, error_code, pending_stream_acquisition->options.user_data);
     }
-    s_pending_stream_acquisition_destroy(pending_stream_acquisition);
     s_sm_connection_on_scheduled_stream_finishes(sm_connection, stream_manager);
+}
+
+static void s_on_stream_destroy(void *user_data) {
+    struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition = user_data;
+    if (pending_stream_acquisition->options.on_destroy) {
+        pending_stream_acquisition->options.on_destroy(pending_stream_acquisition->options.user_data);
+    }
+    s_pending_stream_acquisition_destroy(pending_stream_acquisition);
 }
 
 /* Scheduled to happen from connection's thread */
@@ -882,6 +889,7 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
         .on_response_header_block_done = s_on_incoming_header_block_done,
         .on_response_body = s_on_incoming_body,
         .on_complete = s_on_stream_complete,
+        .on_destroy = s_on_stream_destroy,
         .user_data = pending_stream_acquisition,
     };
 
@@ -1241,6 +1249,7 @@ void aws_http2_stream_manager_fetch_metrics(
         out_metrics->pending_concurrency_acquires =
             stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION];
         out_metrics->available_concurrency = all_available_streams_num;
+        out_metrics->leased_concurrency = stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_OPEN_STREAM];
         s_unlock_synced_data((struct aws_http2_stream_manager *)(void *)stream_manager);
     } /* END CRITICAL SECTION */
 }

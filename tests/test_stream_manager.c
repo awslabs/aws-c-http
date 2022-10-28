@@ -81,6 +81,7 @@ struct sm_tester {
 
     size_t wait_for_stream_completed_count;
     size_t stream_completed_count;
+    struct aws_atomic_var stream_destroyed_count;
     size_t stream_complete_errors;
     size_t stream_200_count;
     size_t stream_status_not_200_count;
@@ -290,6 +291,7 @@ static int s_tester_init(struct sm_tester_options *options) {
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
     s_tester.max_con_stream_remote = 100;
+    aws_atomic_init_int(&s_tester.stream_destroyed_count, 0);
 
     return AWS_OP_SUCCESS;
 }
@@ -507,6 +509,11 @@ static void s_sm_tester_on_stream_complete(struct aws_http_stream *stream, int e
     AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.lock) == AWS_OP_SUCCESS);
 }
 
+static void s_sm_tester_on_stream_destroy(void *user_data) {
+    (void)user_data;
+    aws_atomic_fetch_add(&s_tester.stream_destroyed_count, 1);
+}
+
 static int s_sm_stream_acquiring_customize_request(
     int num_streams,
     struct aws_http_make_request_options *request_options) {
@@ -548,6 +555,7 @@ static int s_sm_stream_acquiring(int num_streams) {
         .request = request,
         .user_data = &s_tester,
         .on_complete = s_sm_tester_on_stream_complete,
+        .on_destroy = s_sm_tester_on_stream_destroy,
     };
     int return_code = s_sm_stream_acquiring_customize_request(num_streams, &request_options);
     aws_http_message_release(request);
@@ -700,6 +708,11 @@ TEST_CASE(h2_sm_mock_connection) {
     s_drain_all_fake_connection_testing_channel();
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(num_to_acquire));
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+    size_t destroyed = aws_atomic_load_int(&s_tester.stream_destroyed_count);
+    ASSERT_INT_EQUALS(0, destroyed);
+    s_release_all_streams();
+    destroyed = aws_atomic_load_int(&s_tester.stream_destroyed_count);
+    ASSERT_INT_EQUALS(num_to_acquire, destroyed);
 
     return s_tester_clean_up();
 }
@@ -877,6 +890,7 @@ TEST_CASE(h2_sm_mock_fetch_metric) {
     /* Acquired 1 stream, and we hold one connection, the max streams per connection is 2. */
     ASSERT_UINT_EQUALS(out_metrics.available_concurrency, 1);
     ASSERT_UINT_EQUALS(out_metrics.pending_concurrency_acquires, 0);
+    ASSERT_UINT_EQUALS(out_metrics.leased_concurrency, 1);
 
     ASSERT_SUCCESS(s_sm_stream_acquiring(1));
 
@@ -886,6 +900,7 @@ TEST_CASE(h2_sm_mock_fetch_metric) {
     aws_http2_stream_manager_fetch_metrics(s_tester.stream_manager, &out_metrics);
     ASSERT_UINT_EQUALS(out_metrics.available_concurrency, 0);
     ASSERT_UINT_EQUALS(out_metrics.pending_concurrency_acquires, 0);
+    ASSERT_UINT_EQUALS(out_metrics.leased_concurrency, 2);
 
     ASSERT_SUCCESS(s_sm_stream_acquiring(10));
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(5));
@@ -894,6 +909,7 @@ TEST_CASE(h2_sm_mock_fetch_metric) {
     aws_http2_stream_manager_fetch_metrics(s_tester.stream_manager, &out_metrics);
     ASSERT_UINT_EQUALS(out_metrics.available_concurrency, 0);
     ASSERT_UINT_EQUALS(out_metrics.pending_concurrency_acquires, 2);
+    ASSERT_UINT_EQUALS(out_metrics.leased_concurrency, 10);
 
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
     /* Still have two more streams that have not been completed */

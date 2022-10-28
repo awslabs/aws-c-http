@@ -1728,6 +1728,75 @@ static int s_stream_tester_init(
     return client_stream_tester_init(tester, main_tester->alloc, &options);
 }
 
+H1_CLIENT_TEST_CASE(h1_client_stream_release_after_complete) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
+    /* send response */
+    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, "HTTP/1.1 204 No Content\r\n\r\n"));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_FALSE(stream_tester.destroyed);
+
+    aws_http_stream_release(stream_tester.stream);
+    stream_tester.stream = NULL;
+    ASSERT_TRUE(stream_tester.destroyed);
+
+    /* clean up */
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_stream_release_before_complete) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+    aws_http_stream_release(stream_tester.stream);
+    stream_tester.stream = NULL;
+    ASSERT_FALSE(stream_tester.destroyed);
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
+    /* send response */
+    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, "HTTP/1.1 204 No Content\r\n\r\n"));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_TRUE(stream_tester.destroyed);
+
+    /* clean up */
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
     (void)ctx;
     struct tester tester;
@@ -3561,11 +3630,17 @@ H1_CLIENT_TEST_CASE(h1_client_close_from_on_thread_makes_not_open) {
     return AWS_OP_SUCCESS;
 }
 
+static void s_unactivated_stream_cleans_up_on_destroy(void *data) {
+    bool *destroyed = data;
+    *destroyed = true;
+}
+
 H1_CLIENT_TEST_CASE(h1_client_unactivated_stream_cleans_up) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
     ASSERT_TRUE(aws_http_connection_is_open(tester.connection));
+    bool destroyed = false;
 
     struct aws_http_message *request = aws_http_message_new_request(allocator);
     ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET")));
@@ -3574,13 +3649,17 @@ H1_CLIENT_TEST_CASE(h1_client_unactivated_stream_cleans_up) {
     struct aws_http_make_request_options options = {
         .self_size = sizeof(struct aws_http_make_request_options),
         .request = request,
+        .on_destroy = s_unactivated_stream_cleans_up_on_destroy,
+        .user_data = &destroyed,
     };
 
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &options);
     aws_http_message_release(request);
     ASSERT_NOT_NULL(stream);
     /* we do not activate, that is the test. */
+    ASSERT_FALSE(destroyed);
     aws_http_stream_release(stream);
+    ASSERT_TRUE(destroyed);
     aws_http_connection_close(tester.connection);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;

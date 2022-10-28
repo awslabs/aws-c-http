@@ -133,6 +133,7 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     user_data->original_http_on_shutdown = options->on_shutdown;
     user_data->original_channel_on_setup = on_channel_setup;
     user_data->original_channel_on_shutdown = on_channel_shutdown;
+    user_data->requested_event_loop = options->requested_event_loop;
 
     /* one and only one setup callback must be valid */
     AWS_FATAL_ASSERT((user_data->original_http_on_setup == NULL) != (user_data->original_channel_on_setup == NULL));
@@ -977,6 +978,7 @@ static int s_aws_http_client_connect_via_forwarding_proxy(const struct aws_http_
     options_copy.on_setup = s_aws_http_on_client_connection_http_forwarding_proxy_setup_fn;
     options_copy.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
     options_copy.tls_options = options->proxy_options->tls_options;
+    options_copy.requested_event_loop = options->requested_event_loop;
 
     int result = aws_http_client_connect_internal(&options_copy, s_proxy_http_request_transform);
     if (result == AWS_OP_ERR) {
@@ -1011,6 +1013,7 @@ static int s_create_tunneling_connection(struct aws_http_proxy_user_data *user_d
     connect_options.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
     connect_options.http1_options = NULL; /* ToDo */
     connect_options.http2_options = NULL; /* ToDo */
+    connect_options.requested_event_loop = user_data->requested_event_loop;
 
     int result = aws_http_client_connect(&connect_options);
     if (result == AWS_OP_ERR) {
@@ -1549,6 +1552,7 @@ int aws_http_proxy_new_socket_channel(
     http_connection_options.user_data = user_data;
     http_connection_options.on_setup = NULL;    /* use channel callbacks, not http callbacks */
     http_connection_options.on_shutdown = NULL; /* use channel callbacks, not http callbacks */
+    http_connection_options.requested_event_loop = channel_options->requested_event_loop;
 
     if (s_aws_http_client_connect_via_tunneling_proxy(
             &http_connection_options, s_http_proxied_socket_channel_setup, s_http_proxied_socket_channel_shutdown)) {

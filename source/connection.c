@@ -1088,6 +1088,7 @@ int aws_http_client_connect_internal(
         .shutdown_callback = s_client_bootstrap_on_channel_shutdown,
         .enable_read_back_pressure = options.manual_window_management,
         .user_data = http_bootstrap,
+        .requested_event_loop = options.requested_event_loop,
     };
 
     err = s_system_vtable_ptr->new_socket_channel(&channel_options);
