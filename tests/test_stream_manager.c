@@ -1288,7 +1288,7 @@ TEST_CASE(h2_sm_closing_before_connection_acquired) {
 /* Test our http2 stream manager works with prior knowledge */
 TEST_CASE(localhost_integ_h2_sm_prior_knowledge) {
     (void)ctx;
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("http://localhost:8080");
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("http://localhost:8080/");
     struct sm_tester_options options = {
         .max_connections = 100,
         .max_concurrent_streams_per_connection = 100,
