@@ -637,10 +637,6 @@ int aws_http_message_set_request_path(struct aws_http_message *request_message, 
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&path));
     AWS_PRECONDITION(request_message->request_data);
 
-    AWS_LOGF_TRACE(
-            AWS_LS_HTTP_STREAM,
-            "Setting path " PRInSTR " with len %ld", AWS_BYTE_CURSOR_PRI(path), path.len);
-
     /* Its valid for uri path to be empty, but http spec requires empty paths to
     be sent as "/", so default it here. */
     if (path.len == 0) {
