@@ -441,6 +441,29 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_not_final_encoding_put
     return AWS_OP_SUCCESS;
 }
 
+H1_ENCODER_TEST_CASE(h1_encoder_missing_path) {
+    (void)ctx;
+    s_test_init(allocator);
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET")));
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, s_typical_request_headers,
+        AWS_ARRAY_SIZE(s_typical_request_headers)));
+
+    struct aws_linked_list chunk_list;
+    aws_linked_list_init(&chunk_list);
+
+    struct aws_h1_encoder_message encoder_message;
+
+    ASSERT_SUCCESS(aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list));
+
+    aws_http_message_destroy(request);
+    aws_h1_encoder_message_clean_up(&encoder_message);
+    s_test_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
 static int s_test_bad_request(
     struct aws_allocator *allocator,
     const char *method,
@@ -501,21 +524,11 @@ H1_ENCODER_TEST_CASE(h1_encoder_rejects_missing_method) {
 
 H1_ENCODER_TEST_CASE(h1_encoder_rejects_bad_path) {
     (void)ctx;
+
     return s_test_bad_request(
         allocator,
         "GET" /*method*/,
         "/\r\n/index.html" /*path*/,
-        s_typical_request_headers /*header_array*/,
-        AWS_ARRAY_SIZE(s_typical_request_headers) /*header_count*/,
-        AWS_ERROR_HTTP_INVALID_PATH /*expected_error*/);
-}
-
-H1_ENCODER_TEST_CASE(h1_encoder_rejects_missing_path) {
-    (void)ctx;
-    return s_test_bad_request(
-        allocator,
-        "GET" /*method*/,
-        NULL /*path*/,
         s_typical_request_headers /*header_array*/,
         AWS_ARRAY_SIZE(s_typical_request_headers) /*header_count*/,
         AWS_ERROR_HTTP_INVALID_PATH /*expected_error*/);

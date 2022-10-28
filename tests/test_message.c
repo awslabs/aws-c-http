@@ -35,7 +35,8 @@ TEST_CASE(message_request_path) {
 
     /* Assert that query fails when there's no data */
     struct aws_byte_cursor get;
-    ASSERT_ERROR(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE, aws_http_message_get_request_path(request, &get));
+    ASSERT_SUCCESS(aws_http_message_get_request_path(request, &get));
+    ASSERT_CURSOR_VALUE_CSTRING_EQUALS(get, "/");
 
     /* Test simple set/get */
     char path1[] = "/";
