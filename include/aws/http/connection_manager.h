@@ -152,7 +152,7 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
 AWS_HTTP_API
 struct aws_http_connection_manager *aws_http_connection_manager_new(
     struct aws_allocator *allocator,
-    const struct aws_http_connection_manager_options *options);
+    struct aws_http_connection_manager_options *options);
 
 /*
  * Requests a connection from the manager.  The requester is notified of

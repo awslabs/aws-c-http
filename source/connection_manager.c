@@ -790,7 +790,7 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
 
 struct aws_http_connection_manager *aws_http_connection_manager_new(
     struct aws_allocator *allocator,
-    const struct aws_http_connection_manager_options *options) {
+    struct aws_http_connection_manager_options *options) {
 
     aws_http_fatal_assert_library_initialized();
 
