@@ -241,7 +241,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
         .keep_alive_interval_sec = 0,
     };
     struct aws_http_connection_monitoring_options monitor_opt = {
-        .allowable_throughput_failure_interval_seconds = 1,
+        .allowable_throughput_failure_interval_seconds = 2,
         .minimum_throughput_bytes_per_second = 1000,
     };
     struct aws_http_client_connection_options client_options = {
