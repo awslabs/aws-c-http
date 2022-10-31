@@ -409,7 +409,7 @@ static struct aws_http_message *s_build_http_request(
     } else {
         aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/"));
     }
-    
+
     if (protocol_version == AWS_HTTP_VERSION_2) {
         struct aws_http_headers *h2_headers = aws_http_message_get_headers(request);
         aws_http2_headers_set_request_scheme(h2_headers, app_ctx->uri.scheme);
