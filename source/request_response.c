@@ -18,8 +18,6 @@
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
-static struct aws_byte_cursor s_default_empty_path = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("/");
-
 enum {
     /* Initial capacity for the aws_http_message.headers array_list. */
     AWS_HTTP_REQUEST_NUM_RESERVED_HEADERS = 16,
