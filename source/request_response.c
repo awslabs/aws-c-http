@@ -645,8 +645,7 @@ int aws_http_message_set_request_path(struct aws_http_message *request_message, 
 
     if (request_message->request_data) {
         switch (request_message->http_version) {
-            case AWS_HTTP_VERSION_1_1:
-            {
+            case AWS_HTTP_VERSION_1_1: {
                 /* Its valid for uri path to be empty, but http spec requires empty paths to
                 be sent as "/", so default it here. */
                 if (path.len == 0) {
