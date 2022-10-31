@@ -67,7 +67,7 @@ add_test_case(h1_encoder_transfer_encoding_not_ending_in_chunked_put_request_hea
 add_test_case(h1_encoder_rejects_bad_method)
 add_test_case(h1_encoder_rejects_missing_method)
 add_test_case(h1_encoder_rejects_bad_path)
-add_test_case(h1_encoder_missing_path)
+add_test_case(h1_encoder_rejects_missing_path)
 add_test_case(h1_encoder_rejects_bad_header_name)
 add_test_case(h1_encoder_rejects_bad_header_value)
 
