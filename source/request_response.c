@@ -28,7 +28,7 @@ bool aws_http_header_name_eq(struct aws_byte_cursor name_a, struct aws_byte_curs
 }
 
 /**
- * -- Datastructure Notes --
+ * -- Data Structure Notes --
  * Headers are stored in a linear array, rather than a hash-table of arrays.
  * The linear array was simpler to implement and may be faster due to having fewer allocations.
  * The API has been designed so we can swap out the implementation later if desired.

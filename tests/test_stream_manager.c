@@ -530,6 +530,12 @@ static int s_sm_stream_acquiring_customize_request(
     return AWS_OP_SUCCESS;
 }
 
+static struct aws_byte_cursor s_default_empty_path = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("/");
+
+struct aws_byte_cursor s_normalize_path(struct aws_byte_cursor path) {
+    return path.len == 0 ? s_default_empty_path : path;
+}
+
 static int s_sm_stream_acquiring(int num_streams) {
     struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
     ASSERT_NOT_NULL(request);
@@ -542,7 +548,7 @@ static int s_sm_stream_acquiring(int num_streams) {
         },
         {
             .name = aws_byte_cursor_from_c_str(":path"),
-            .value = *aws_uri_path(&s_tester.endpoint),
+            .value = s_normalize_path(*aws_uri_path(&s_tester.endpoint)),
         },
         {
             .name = aws_byte_cursor_from_c_str(":authority"),
@@ -1348,7 +1354,7 @@ static int s_sm_stream_acquiring_with_body(int num_streams) {
         },
         {
             .name = aws_byte_cursor_from_c_str(":path"),
-            .value = *aws_uri_path(&s_tester.endpoint),
+            .value = s_normalize_path(*aws_uri_path(&s_tester.endpoint)),
         },
         {
             .name = aws_byte_cursor_from_c_str(":authority"),
