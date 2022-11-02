@@ -11,6 +11,7 @@
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
 #include <aws/common/log_writer.h>
+#include <aws/common/logging.h>
 #include <aws/common/string.h>
 #include <aws/common/thread.h>
 #include <aws/common/uuid.h>
@@ -42,12 +43,14 @@ struct tester_options {
     char *server_alpn_list;
     char *client_alpn_list;
     bool no_connection; /* don't connect server to client */
+    bool pin_event_loop;
 };
 
 /* Singleton used by tests in this file */
 struct tester {
     struct aws_allocator *alloc;
-    struct aws_event_loop_group *event_loop_group;
+    struct aws_event_loop_group *server_event_loop_group;
+    struct aws_event_loop_group *client_event_loop_group;
     struct aws_host_resolver *host_resolver;
     struct aws_server_bootstrap *server_bootstrap;
     struct aws_http_server *server;
@@ -239,7 +242,7 @@ static void s_client_connection_options_init_tester(
     struct aws_http_client_connection_options *client_options,
     struct tester *tester) {
     struct aws_client_bootstrap_options bootstrap_options = {
-        .event_loop_group = tester->event_loop_group,
+        .event_loop_group = tester->client_event_loop_group,
         .host_resolver = tester->host_resolver,
     };
     tester->client_bootstrap = aws_client_bootstrap_new(tester->alloc, &bootstrap_options);
@@ -298,15 +301,37 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
 
-    tester->event_loop_group = aws_event_loop_group_new_default(tester->alloc, 1, NULL);
+    /*
+     * The current http testing framework has several issues that hinder testing event loop pinning:
+     *   (1) Server shutdown can crash with memory corruption if the server uses an event loop group with more than one
+     *   thread
+     *   (2) s_tester_wait mixes results from both client and server and once you unlink them out of the same, single-
+     *   threaded event loop, the test assumptions start breaking due to different serializations of io events.
+     *
+     * This leads to a self-defeating situation: in order to test event loop pinning we need event loop groups with
+     * many threads, but as soon as we use one, existing tests start breaking.
+     *
+     * Event loop pinning is a critical blocker for an upcoming release, so rather than trying to figure out the
+     * underlying race condition within the http testing framework (I suspect it's socket listener related), we
+     * instead add some complexity to the testing framework such that
+     *   (1) Existing tests continue to use a single event loop group with one thread
+     *   (2) The event loop pinning test uses two event loop groups, the server elg with a single thread and the
+     *   client elg with many threads to actually test pinning.
+     */
+    tester->server_event_loop_group = aws_event_loop_group_new_default(tester->alloc, 1, NULL);
+    if (options->pin_event_loop) {
+        tester->client_event_loop_group = aws_event_loop_group_new_default(tester->alloc, 16, NULL);
+    } else {
+        tester->client_event_loop_group = aws_event_loop_group_acquire(tester->server_event_loop_group);
+    }
 
     struct aws_host_resolver_default_options resolver_options = {
-        .el_group = tester->event_loop_group,
+        .el_group = tester->client_event_loop_group,
         .max_entries = 8,
     };
 
     tester->host_resolver = aws_host_resolver_new_default(tester->alloc, &resolver_options);
-    tester->server_bootstrap = aws_server_bootstrap_new(tester->alloc, tester->event_loop_group);
+    tester->server_bootstrap = aws_server_bootstrap_new(tester->alloc, tester->server_event_loop_group);
     ASSERT_NOT_NULL(tester->server_bootstrap);
 
     struct aws_socket_options socket_options = {
@@ -360,6 +385,11 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
             aws_byte_cursor_from_c_str("localhost")));
         client_options.tls_options = &tester->client_tls_connection_options;
     }
+
+    if (options->pin_event_loop) {
+        client_options.requested_event_loop = aws_event_loop_group_get_next_loop(tester->client_event_loop_group);
+    }
+
     tester->client_options = client_options;
 
     tester->server_connection_num = 0;
@@ -395,7 +425,8 @@ static int s_tester_clean_up(struct tester *tester) {
     aws_server_bootstrap_release(tester->server_bootstrap);
     aws_client_bootstrap_release(tester->client_bootstrap);
     aws_host_resolver_release(tester->host_resolver);
-    aws_event_loop_group_release(tester->event_loop_group);
+    aws_event_loop_group_release(tester->client_event_loop_group);
+    aws_event_loop_group_release(tester->server_event_loop_group);
 
     aws_http_library_clean_up();
     aws_mutex_clean_up(&tester->wait_lock);
@@ -645,7 +676,7 @@ static int s_test_connection_customized_alpn(struct aws_allocator *allocator, vo
 }
 AWS_TEST_CASE(connection_customized_alpn, s_test_connection_customized_alpn);
 
-static int s_test_connection_customized_alpn_error_with_unknow_return_string(
+static int s_test_connection_customized_alpn_error_with_unknown_return_string(
     struct aws_allocator *allocator,
     void *ctx) {
     (void)ctx;
@@ -702,8 +733,8 @@ static int s_test_connection_customized_alpn_error_with_unknow_return_string(
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
-    connection_customized_alpn_error_with_unknow_return_string,
-    s_test_connection_customized_alpn_error_with_unknow_return_string);
+    connection_customized_alpn_error_with_unknown_return_string,
+    s_test_connection_customized_alpn_error_with_unknown_return_string);
 
 static int s_test_connection_destroy_server_with_connection_existing(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -856,7 +887,7 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
 
     /* get the first eventloop of tester, which will be the eventloop for server listener socket, block the listener
      * socket */
-    struct aws_event_loop *server_eventloop = aws_event_loop_group_get_loop_at(tester.event_loop_group, 0);
+    struct aws_event_loop *server_eventloop = aws_event_loop_group_get_loop_at(tester.server_event_loop_group, 0);
     struct aws_task *server_block_task = aws_mem_acquire(allocator, sizeof(struct aws_task));
     aws_task_init(server_block_task, s_block_task, &tester, "wait_a_bit");
     aws_event_loop_schedule_task_now(server_eventloop, server_block_task);
@@ -916,3 +947,27 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
 AWS_TEST_CASE(
     connection_server_shutting_down_new_connection_setup_fail,
     s_test_connection_server_shutting_down_new_connection_setup_fail);
+
+static int s_test_connection_setup_shutdown_pinned_event_loop(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    struct tester_options options = {
+        .alloc = allocator,
+        .pin_event_loop = true,
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, &options));
+
+    for (int i = 0; i < tester.client_connection_num; i++) {
+        struct aws_http_connection *connection = tester.client_connections[i];
+        ASSERT_PTR_EQUALS(
+            tester.client_options.requested_event_loop, aws_channel_get_event_loop(connection->channel_slot->channel));
+    }
+
+    release_all_client_connections(&tester);
+    release_all_server_connections(&tester);
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(connection_setup_shutdown_pinned_event_loop, s_test_connection_setup_shutdown_pinned_event_loop);

@@ -196,6 +196,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     http_options.user_data = ws_bootstrap;
     http_options.on_setup = s_ws_bootstrap_on_http_setup;
     http_options.on_shutdown = s_ws_bootstrap_on_http_shutdown;
+    http_options.requested_event_loop = options->requested_event_loop;
 
     /* Infer port, if not explicitly specified in URI */
     http_options.port = options->port;

@@ -40,6 +40,8 @@ struct aws_http_manager_metrics {
     size_t available_concurrency;
     /* The number of requests that are awaiting concurrency to be made available from the HTTP manager. */
     size_t pending_concurrency_acquires;
+    /* The number of connections (http/1.1) or streams (for h2 via. stream manager) currently vended to user. */
+    size_t leased_concurrency;
 };
 
 /*
