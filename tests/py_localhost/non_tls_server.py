@@ -10,19 +10,12 @@ import h2.config
 
 def send_response(conn, event):
     stream_id = event.stream_id
-    response_data = b"success"
 
     conn.send_headers(
         stream_id=stream_id,
         headers=[
             (':status', '200'),
-            ('content-length', str(len(response_data))),
-        ],
-    )
-    conn.send_data(
-        stream_id=stream_id,
-        data=response_data,
-        end_stream=True
+        ], end_stream=True,
     )
 
 

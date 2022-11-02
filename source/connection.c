@@ -815,9 +815,7 @@ static void s_client_bootstrap_on_channel_setup(
         struct aws_crt_statistics_handler *http_connection_monitor =
             aws_crt_statistics_handler_new_http_connection_monitor(
                 http_bootstrap->alloc, &http_bootstrap->monitoring_options);
-        if (http_connection_monitor == NULL) {
-            goto error;
-        }
+        AWS_ASSERT(http_connection_monitor);
 
         aws_channel_set_statistics_handler(channel, http_connection_monitor);
     }
@@ -1030,17 +1028,15 @@ int aws_http_client_connect_internal(
 
     struct aws_http2_setting *setting_array = NULL;
     struct aws_hash_table *alpn_string_map = NULL;
-    if (!aws_mem_acquire_many(
-            options.allocator,
-            3,
-            &http_bootstrap,
-            sizeof(struct aws_http_client_bootstrap),
-            &setting_array,
-            options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting),
-            &alpn_string_map,
-            sizeof(struct aws_hash_table))) {
-        goto error;
-    }
+    aws_mem_acquire_many(
+        options.allocator,
+        3,
+        &http_bootstrap,
+        sizeof(struct aws_http_client_bootstrap),
+        &setting_array,
+        options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting),
+        &alpn_string_map,
+        sizeof(struct aws_hash_table));
 
     AWS_ZERO_STRUCT(*http_bootstrap);
 

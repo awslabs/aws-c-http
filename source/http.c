@@ -139,6 +139,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_STREAM_MANAGER_UNEXPECTED_HTTP_VERSION,
         "Stream acquisition failed because stream manager got an unexpected version of HTTP connection"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_REQUIRED_PSEUDO_HEADER_MISSING,
+        "The required pseudo header is missing from the HTTP message."),
 };
 /* clang-format on */
 
@@ -205,7 +208,6 @@ static void s_init_str_to_enum_hash_table(
     for (int i = start_index; i < end_index; ++i) {
         int was_created = 0;
         struct aws_enum_value *enum_value = aws_mem_calloc(alloc, 1, sizeof(struct aws_enum_value));
-        AWS_FATAL_ASSERT(enum_value);
         enum_value->allocator = alloc;
         enum_value->value = i;
 

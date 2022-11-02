@@ -88,9 +88,6 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     AWS_FATAL_ASSERT(options->proxy_options != NULL);
 
     struct aws_http_proxy_user_data *user_data = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_user_data));
-    if (user_data == NULL) {
-        return NULL;
-    }
 
     user_data->allocator = allocator;
     user_data->state = AWS_PBS_SOCKET_CONNECT;
@@ -182,9 +179,6 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new_reset_clone(
     AWS_FATAL_ASSERT(old_user_data != NULL);
 
     struct aws_http_proxy_user_data *user_data = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_user_data));
-    if (user_data == NULL) {
-        return NULL;
-    }
 
     user_data->allocator = allocator;
     user_data->state = AWS_PBS_SOCKET_CONNECT;
@@ -215,8 +209,7 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new_reset_clone(
     if (old_user_data->original_tls_options) {
         /* clone tls options, but redirect user data to what we're creating */
         user_data->original_tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
-        if (user_data->original_tls_options == NULL ||
-            aws_tls_connection_options_copy(user_data->original_tls_options, old_user_data->original_tls_options)) {
+        if (aws_tls_connection_options_copy(user_data->original_tls_options, old_user_data->original_tls_options)) {
             goto on_error;
         }
 
@@ -1265,9 +1258,6 @@ static struct aws_http_proxy_config *s_aws_http_proxy_config_new(
     AWS_FATAL_ASSERT(proxy_options != NULL);
 
     struct aws_http_proxy_config *config = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_config));
-    if (config == NULL) {
-        return NULL;
-    }
 
     config->connection_type = override_proxy_connection_type;
 
@@ -1376,9 +1366,6 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_clone(
     AWS_FATAL_ASSERT(proxy_config != NULL);
 
     struct aws_http_proxy_config *config = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_config));
-    if (config == NULL) {
-        return NULL;
-    }
 
     config->connection_type = proxy_config->connection_type;
 
@@ -1479,9 +1466,6 @@ static struct aws_proxied_socket_channel_user_data *s_proxied_socket_channel_use
     struct aws_socket_channel_bootstrap_options *channel_options) {
     struct aws_proxied_socket_channel_user_data *user_data =
         aws_mem_calloc(allocator, 1, sizeof(struct aws_proxied_socket_channel_user_data));
-    if (user_data == NULL) {
-        return NULL;
-    }
 
     user_data->allocator = allocator;
     user_data->original_setup_callback = channel_options->setup_callback;

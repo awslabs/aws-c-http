@@ -103,9 +103,19 @@ struct aws_hpack_decoder {
 
     struct aws_hpack_context context;
 
-    /* TODO: check the new (RFC 9113 - 4.3.1) to make sure we did it right */
-    /* SETTINGS_HEADER_TABLE_SIZE from http2 */
-    size_t dynamic_table_protocol_max_size_setting;
+    /* SETTINGS_HEADER_TABLE_SIZE from http2. */
+    struct {
+        size_t latest_value;             /* The latest setting from http2  */
+        uint32_t smallest_value_pending; /* The smallest setting during the pending update time. Only valid when
+                                            pending_update is true. */
+        bool pending_update_in_progress; /* True when the settings was received that smaller than the current dynamic
+                                    table size but not received a regular entry yet, assume the update is still in
+                                    progress. */
+        bool update_valid; /* True when the update should happen and no *conformant* Dynamic table resize was received
+                                yet, which is at least one resize smaller than the smallest value received during the
+                                time. */
+        size_t received_resize_num; /* The continuous number of dynamic table resize received during pending. */
+    } dynamic_table_protocol_max_size_setting;
 
     /* PRO TIP: Don't union progress_integer and progress_string together, since string_decode calls integer_decode */
     struct hpack_progress_integer {

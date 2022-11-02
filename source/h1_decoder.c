@@ -108,9 +108,6 @@ static int s_cat(struct aws_h1_decoder *decoder, struct aws_byte_cursor to_appen
         } while (new_size < (buffer->len + to_append.len));
 
         uint8_t *new_data = aws_mem_acquire(buffer->allocator, new_size);
-        if (!new_data) {
-            return AWS_OP_ERR;
-        }
 
         if (buffer->buffer != NULL) {
             memcpy(new_data, buffer->buffer, buffer->len);
@@ -726,11 +723,7 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
 struct aws_h1_decoder *aws_h1_decoder_new(struct aws_h1_decoder_params *params) {
     AWS_ASSERT(params);
 
-    struct aws_h1_decoder *decoder = aws_mem_acquire(params->alloc, sizeof(struct aws_h1_decoder));
-    if (!decoder) {
-        return NULL;
-    }
-    AWS_ZERO_STRUCT(*decoder);
+    struct aws_h1_decoder *decoder = aws_mem_calloc(params->alloc, 1, sizeof(struct aws_h1_decoder));
 
     decoder->alloc = params->alloc;
     decoder->user_data = params->user_data;

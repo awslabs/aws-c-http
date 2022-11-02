@@ -4,8 +4,6 @@
  */
 #include <aws/http/private/hpack.h>
 
-/* #TODO test empty strings */
-
 /* #TODO remove all OOM error handling in HTTP/2 & HPACK. make functions void if possible */
 
 /* RFC-7540 6.5.2 */
@@ -317,9 +315,6 @@ static int s_dynamic_table_resize_buffer(struct aws_hpack_context *context, size
 
     /* Allocate the new buffer */
     new_buffer = aws_mem_calloc(context->allocator, new_max_elements, sizeof(struct aws_http_header));
-    if (!new_buffer) {
-        return AWS_OP_ERR;
-    }
 
     /* Don't bother copying data if old buffer was of size 0 */
     if (AWS_UNLIKELY(context->dynamic_table.num_elements == 0)) {
@@ -406,8 +401,13 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
 
     /* If for whatever reason this new header is bigger than the total table size, burn everything to the ground. */
     if (AWS_UNLIKELY(header_size > context->dynamic_table.max_size)) {
-        /* #TODO handle this. It's not an error. It should simply result in an empty table RFC-7541 4.4 */
-        goto error;
+        /* RFC-7541 4.4 an attempt to add an entry larger than the maximum size causes the table to be emptied of all
+         * existing entries and results in an empty table */
+        HPACK_LOG(TRACE, context, "Emptying dynamic table due to large header");
+        if (s_dynamic_table_shrink(context, 0)) {
+            goto error;
+        }
+        return AWS_OP_SUCCESS;
     }
 
     /* Rotate out headers until there's room for the new header (this function will return immediately if nothing needs
@@ -444,16 +444,12 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     /* Put the header at the "front" of the table */
     struct aws_http_header *table_header = s_dynamic_table_get(context, 0);
 
-    /* TODO:: We can optimize this with ring buffer. */
     /* allocate memory for the name and value, which will be deallocated whenever the entry is evicted from the table or
      * the table is cleaned up. We keep the pointer in the name pointer of each entry */
     const size_t buf_memory_size = header->name.len + header->value.len;
 
     if (buf_memory_size) {
         uint8_t *buf_memory = aws_mem_acquire(context->allocator, buf_memory_size);
-        if (!buf_memory) {
-            return AWS_OP_ERR;
-        }
         struct aws_byte_buf buf = aws_byte_buf_from_empty_array(buf_memory, buf_memory_size);
         /* Copy header, then backup strings into our own allocation */
         *table_header = *header;

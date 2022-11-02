@@ -830,9 +830,17 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
         (void *)pending_stream_acquisition,
         (void *)sm_connection->connection);
     bool is_shutting_down = false;
+    bool connection_new_requests_allowed = aws_http_connection_new_requests_allowed(sm_connection->connection);
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
         is_shutting_down = stream_manager->synced_data.state != AWS_H2SMST_READY;
+        if (!is_shutting_down && !connection_new_requests_allowed) {
+            /* Push the pending stream acquisition back to the list instead of failing it. */
+            pending_stream_acquisition->sm_connection = NULL;
+            aws_linked_list_push_back(
+                &stream_manager->synced_data.pending_stream_acquisitions, &pending_stream_acquisition->node);
+            s_sm_count_increase_synced(stream_manager, AWS_SMCT_PENDING_ACQUISITION, 1);
+        }
         s_sm_count_decrease_synced(stream_manager, AWS_SMCT_PENDING_MAKE_REQUESTS, 1);
         /* The stream has not open yet, but we increase the count here, if anything fails, the count will be decreased
          */
@@ -862,6 +870,18 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
         error_code = AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN;
         goto error;
     }
+    if (!connection_new_requests_allowed) {
+        STREAM_MANAGER_LOGF(
+            DEBUG,
+            stream_manager,
+            "acquisition:%p was assigned to be executed from connection:%p, however, connection is not available now, "
+            "put it back to the list waiting for it to be picked up by other connection.",
+            (void *)pending_stream_acquisition,
+            (void *)sm_connection->connection);
+        s_sm_connection_on_scheduled_stream_finishes(sm_connection, stream_manager);
+        return;
+    }
+
     struct aws_http_make_request_options request_options = {
         .self_size = sizeof(request_options),
         .request = pending_stream_acquisition->request,
@@ -872,8 +892,6 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
         .on_destroy = s_on_stream_destroy,
         .user_data = pending_stream_acquisition,
     };
-    /* TODO: we could put the pending acquisition back to the list if the connection is not available for new request.
-     */
 
     struct aws_http_stream *stream = aws_http_connection_make_request(sm_connection->connection, &request_options);
     if (!stream) {

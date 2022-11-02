@@ -304,9 +304,6 @@ static struct aws_h2_connection *s_connection_new(
     AWS_PRECONDITION(http2_options);
 
     struct aws_h2_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct aws_h2_connection));
-    if (!connection) {
-        return NULL;
-    }
     connection->base.vtable = &s_h2_connection_vtable;
     connection->base.alloc = alloc;
     connection->base.channel_handler.vtable = &s_h2_connection_vtable.channel_handler_vtable;
@@ -420,9 +417,7 @@ static struct aws_h2_connection *s_connection_new(
         http2_options->num_initial_settings,
         http2_options->on_initial_settings_completed,
         NULL /* user_data is set later... */);
-    if (!connection->thread_data.init_pending_settings) {
-        goto error;
-    }
+    AWS_ASSERT(connection->thread_data.init_pending_settings);
     /* We enqueue the inital settings when handler get installed */
     return connection;
 
@@ -511,15 +506,13 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     size_t settings_storage_size = sizeof(struct aws_http2_setting) * num_settings;
     struct aws_h2_pending_settings *pending_settings;
     void *settings_storage;
-    if (!aws_mem_acquire_many(
-            allocator,
-            2,
-            &pending_settings,
-            sizeof(struct aws_h2_pending_settings),
-            &settings_storage,
-            settings_storage_size)) {
-        return NULL;
-    }
+    aws_mem_acquire_many(
+        allocator,
+        2,
+        &pending_settings,
+        sizeof(struct aws_h2_pending_settings),
+        &settings_storage,
+        settings_storage_size);
 
     AWS_ZERO_STRUCT(*pending_settings);
     /* We buffer the settings up, incase the caller has freed them when the ACK arrives */
@@ -542,9 +535,7 @@ static struct aws_h2_pending_ping *s_new_pending_ping(
     aws_http2_on_ping_complete_fn *on_completed) {
 
     struct aws_h2_pending_ping *pending_ping = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_pending_ping));
-    if (!pending_ping) {
-        return NULL;
-    }
+
     if (optional_opaque_data) {
         memcpy(pending_ping->opaque_data, optional_opaque_data->ptr, AWS_HTTP2_PING_DATA_SIZE);
     }
@@ -1410,9 +1401,6 @@ static struct aws_h2err s_decoder_on_settings(
     struct aws_http2_setting *callback_array = NULL;
     if (num_settings) {
         callback_array = aws_mem_acquire(connection->base.alloc, num_settings * sizeof(struct aws_http2_setting));
-        if (!callback_array) {
-            return aws_h2err_from_last_error();
-        }
     }
     size_t callback_array_num = 0;
 
@@ -2082,9 +2070,6 @@ static struct aws_http_stream *s_connection_make_request(
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(client_connection, struct aws_h2_connection, base);
 
-    /* #TODO: http/2-ify the request (ex: add ":method" header). Should we mutate a copy or the original? Validate?
-     *  Or just pass pointer to headers struct and let encoder transform it while encoding? */
-
     struct aws_h2_stream *stream = aws_h2_stream_new_request(client_connection, options);
     if (!stream) {
         CONNECTION_LOGF(
@@ -2112,8 +2097,28 @@ static struct aws_http_stream *s_connection_make_request(
             aws_error_name(aws_last_error()));
         goto error;
     }
+    struct aws_byte_cursor method;
+    AWS_ZERO_STRUCT(method);
+    struct aws_byte_cursor path;
+    AWS_ZERO_STRUCT(path);
 
-    AWS_H2_STREAM_LOG(DEBUG, stream, "Created HTTP/2 request stream"); /* #TODO: print method & path */
+    if (aws_http_message_get_request_method(stream->thread_data.outgoing_message, &method)) {
+        aws_raise_error(AWS_ERROR_HTTP_REQUIRED_PSEUDO_HEADER_MISSING);
+        CONNECTION_LOG(ERROR, connection, "Cannot create request stream, the `:method` header is missing.");
+        goto error;
+    }
+    if (aws_http_message_get_request_path(stream->thread_data.outgoing_message, &path)) {
+        aws_raise_error(AWS_ERROR_HTTP_REQUIRED_PSEUDO_HEADER_MISSING);
+        CONNECTION_LOG(ERROR, connection, "Cannot create request stream, the `:path` header is missing.");
+        goto error;
+    }
+
+    AWS_H2_STREAM_LOGF(
+        DEBUG,
+        stream,
+        "Created HTTP/2 request stream, method: " PRInSTR ". path: " PRInSTR "",
+        AWS_BYTE_CURSOR_PRI(method),
+        AWS_BYTE_CURSOR_PRI(path));
     return &stream->base;
 
 error:
@@ -2263,9 +2268,7 @@ static int s_connection_change_settings(
 
     struct aws_h2_pending_settings *pending_settings =
         s_new_pending_settings(connection->base.alloc, settings_array, num_settings, on_completed, user_data);
-    if (!pending_settings) {
-        return AWS_OP_ERR;
-    }
+    AWS_ASSERT(pending_settings);
     struct aws_h2_frame *settings_frame =
         aws_h2_frame_new_settings(connection->base.alloc, settings_array, num_settings, false /*ACK*/);
     if (!settings_frame) {
@@ -2818,15 +2821,18 @@ static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_
     struct aws_h2_connection *connection = handler->impl;
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
-    /* TODO: Need update the way we calculate statistics, to account for user-controlled pauses.
-     * If user is adding chunks 1 by 1, there can naturally be a gap in the upload.
-     * If the user lets the stream-window go to zero, there can naturally be a gap in the download. */
     uint64_t now_ns = 0;
     if (aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns)) {
         return;
     }
 
     if (!aws_linked_list_empty(&connection->thread_data.outgoing_streams_list)) {
+        /**
+         * For stream flow control stall and writing to stream over time, the stream will be removed from the
+         * outgoing_streams_list.
+         * For connection level flow control, as there could be streams waiting for response, we cannot mark the
+         * connection is inactive.
+         */
         s_add_time_measurement_to_stats(
             connection->thread_data.outgoing_timestamp_ns,
             now_ns,
@@ -2834,6 +2840,7 @@ static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_
 
         connection->thread_data.outgoing_timestamp_ns = now_ns;
     }
+
     if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) != 0) {
         s_add_time_measurement_to_stats(
             connection->thread_data.incoming_timestamp_ns,
@@ -2842,6 +2849,9 @@ static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_
 
         connection->thread_data.incoming_timestamp_ns = now_ns;
     } else {
+        /**
+         * was inactive as no stream has data to write or waiting for data from the other side.
+         */
         connection->thread_data.stats.was_inactive = true;
     }
 

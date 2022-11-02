@@ -814,25 +814,22 @@ TEST_CASE(h2_sm_mock_connections_closed_before_request_made) {
     struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
     aws_http_connection_close(fake_connection->connection);
     ASSERT_SUCCESS(s_sm_stream_acquiring(1));
-    s_drain_all_fake_connection_testing_channel();
+    /* The new stream should trigger a new connection to be created and complete from the new connection */
+    s_drain_all_fake_connection_testing_channel();      /* Trigger the acquisition of new connection */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(2)); /* wait for the new connection */
+    s_drain_all_fake_connection_testing_channel();      /* Wait for the tasks assigned to the new connection */
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(3));
-    /* ASSERT new one failed. */
-    ASSERT_INT_EQUALS(1, s_tester.acquiring_stream_errors);
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, s_tester.error_code);
-    /* Reset errors */
-    s_tester.acquiring_stream_errors = 0;
-    s_tester.error_code = 0;
-    s_drain_all_fake_connection_testing_channel();
+    /* ASSERT no failure. */
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
 
-    /* As long as the connection finishes shutting down, we can still make more requests from new connection. */
+    /* we can still make more requests from new connection. */
     ASSERT_SUCCESS(s_sm_stream_acquiring(2));
-    /* waiting for one fake connection made */
-    ASSERT_SUCCESS(s_wait_on_fake_connection_count(2));
+
     s_drain_all_fake_connection_testing_channel();
     /* No error happens */
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
-    /* We made 4 streams successfully */
-    ASSERT_INT_EQUALS(4, aws_array_list_length(&s_tester.streams));
+    /* We made 5 streams successfully */
+    ASSERT_INT_EQUALS(5, aws_array_list_length(&s_tester.streams));
 
     /* Finish all the opening streams */
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
@@ -1311,7 +1308,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
     (void)ctx;
     struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/echo");
     struct aws_http_connection_monitoring_options monitor_opt = {
-        .allowable_throughput_failure_interval_seconds = 1,
+        .allowable_throughput_failure_interval_seconds = 2,
         .minimum_throughput_bytes_per_second = 1000,
     };
     enum aws_log_level log_level = AWS_LOG_LEVEL_DEBUG;
@@ -1328,8 +1325,8 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
     int num_to_acquire = 500 * 100;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
-    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
-    ASSERT_TRUE((int)s_tester.stream_200_count == num_to_acquire);
+    ASSERT_INT_EQUALS((int)s_tester.acquiring_stream_errors, 0);
+    ASSERT_INT_EQUALS((int)s_tester.stream_200_count, num_to_acquire);
 
     return s_tester_clean_up();
 }
@@ -1339,7 +1336,7 @@ static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws
     (void)stream;
     struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.allocator, data);
     size_t num_received = (uint32_t)atoi((const char *)content_length_header_str->bytes);
-    AWS_FATAL_ASSERT(s_tester.length_sent == num_received);
+    ASSERT_UINT_EQUALS(s_tester.length_sent, num_received);
     aws_string_destroy(content_length_header_str);
 
     return AWS_OP_SUCCESS;
@@ -1431,7 +1428,7 @@ TEST_CASE(localhost_integ_h2_sm_connection_monitor_kill_slow_connection) {
     (void)ctx;
     struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/slowConnTest");
     struct aws_http_connection_monitoring_options monitor_opt = {
-        .allowable_throughput_failure_interval_seconds = 1,
+        .allowable_throughput_failure_interval_seconds = 2,
         .minimum_throughput_bytes_per_second = 1000,
     };
     struct sm_tester_options options = {

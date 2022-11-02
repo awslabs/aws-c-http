@@ -1156,6 +1156,60 @@ static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
     if (has_request_pseudoheaders) {
         /* Request header-block. */
         current_block->block_type = AWS_HTTP_HEADER_BLOCK_MAIN;
+        const struct aws_string *method_string = current_block->pseudoheader_values[PSEUDOHEADER_METHOD];
+        const struct aws_string *scheme_string = current_block->pseudoheader_values[PSEUDOHEADER_SCHEME];
+        const struct aws_string *authority_string = current_block->pseudoheader_values[PSEUDOHEADER_AUTHORITY];
+        const struct aws_string *path_string = current_block->pseudoheader_values[PSEUDOHEADER_PATH];
+
+        if (!method_string) {
+            DECODER_LOG(ERROR, decoder, "Request is missing :method.");
+            goto malformed;
+        }
+
+        if (!aws_strutil_is_http_token(aws_byte_cursor_from_string(method_string))) {
+            DECODER_LOG(ERROR, decoder, "Request method is invalid.");
+            DECODER_LOGF(
+                DEBUG,
+                decoder,
+                "Bad method is: '" PRInSTR "'",
+                AWS_BYTE_CURSOR_PRI(aws_byte_cursor_from_string(method_string)));
+            goto malformed;
+        }
+
+        if (aws_string_eq_byte_cursor(method_string, &aws_http_method_connect)) {
+            /* RFC-9113 8.5 The ":scheme" and ":path" pseudo-header fields MUST be omitted for CONNECT method */
+            if (scheme_string) {
+                DECODER_LOG(ERROR, decoder, "CONNECT request must not contain ':scheme' header");
+                goto malformed;
+            }
+            if (path_string) {
+                DECODER_LOG(ERROR, decoder, "CONNECT request must not contain ':path' header");
+                goto malformed;
+            }
+            if (!authority_string) {
+                DECODER_LOG(ERROR, decoder, "CONNECT request is missing :authority.");
+                goto malformed;
+            }
+        } else {
+            /* RFC-9113 8.3.1 All HTTP/2 requests MUST include exactly one valid value for the ":method", ":scheme",
+             * and ":path" pseudo-header fields, unless they are CONNECT requests */
+            if (!scheme_string) {
+                DECODER_LOGF(
+                    ERROR,
+                    decoder,
+                    "" PRInSTR " request is missing required ':scheme' header",
+                    AWS_BYTE_CURSOR_PRI(aws_byte_cursor_from_string(method_string)));
+                goto malformed;
+            }
+            if (!path_string) {
+                DECODER_LOGF(
+                    ERROR,
+                    decoder,
+                    "" PRInSTR " request is missing required ':path' header",
+                    AWS_BYTE_CURSOR_PRI(aws_byte_cursor_from_string(method_string)));
+                goto malformed;
+            }
+        }
 
     } else if (has_response_pseudoheaders) {
         /* Response header block. */
@@ -1198,9 +1252,6 @@ static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
 
         current_block->block_type = AWS_HTTP_HEADER_BLOCK_TRAILING;
     }
-
-    /* #TODO RFC-7540 8.1.2.3 & 8.3 Validate request has correct pseudoheaders. Note different rules for CONNECT */
-    /* #TODO validate pseudoheader values. each one has its own special rules */
 
     /* Finally, deliver header-fields via callback */
     for (size_t i = 0; i < PSEUDOHEADER_COUNT; ++i) {
@@ -1250,6 +1301,26 @@ static struct aws_h2err s_process_header_field(
     const struct aws_byte_cursor name = header_field->name;
     if (name.len == 0) {
         DECODER_LOG(ERROR, decoder, "Header name is blank");
+        goto malformed;
+    }
+
+    /* RFC9113 8.2.1  A field value MUST NOT start or end with an ASCII whitespace character (ASCII SP or HTAB, 0x20 or
+     * 0x09). */
+    if (!aws_strutil_is_http_field_value(header_field->value)) {
+        /**
+         * RFC9113 8.2.1  HTTP/2 implementations SHOULD validate field names and values, respectively, and treat
+         * messages that contain prohibited characters as malformed.
+         *
+         * Note: Field values that are not valid according to the definition of the corresponding field do not cause a
+         * request to be malformed.
+         */
+        DECODER_LOG(ERROR, decoder, "Invalid header field, bad value");
+        DECODER_LOGF(
+            DEBUG,
+            decoder,
+            "Bad header field is: \"" PRInSTR ": " PRInSTR "\"",
+            AWS_BYTE_CURSOR_PRI(header_field->name),
+            AWS_BYTE_CURSOR_PRI(header_field->value));
         goto malformed;
     }
 
@@ -1326,8 +1397,6 @@ static struct aws_h2err s_process_header_field(
             }
         }
 
-        /* #TODO Validate characters used in header_field->value */
-
         switch (name_enum) {
             case AWS_HTTP_HEADER_COOKIE:
                 /* for a header cookie, we will not fire callback until we concatenate them all, let's store it at the
@@ -1360,7 +1429,18 @@ static struct aws_h2err s_process_header_field(
                     AWS_BYTE_CURSOR_PRI(name));
                 goto malformed;
             } break;
-
+            case AWS_HTTP_HEADER_TE: {
+                /* the TE header field, which MAY be present in an HTTP/2 request; when it is, it MUST NOT contain any
+                 * value other than "trailers" (RFC9113 8.2.2) */
+                if (!aws_byte_cursor_eq_c_str(&header_field->value, "trailers")) {
+                    DECODER_LOGF(
+                        ERROR,
+                        decoder,
+                        "TE header has value:'" PRInSTR "', not allowed in HTTP/2",
+                        AWS_BYTE_CURSOR_PRI(header_field->value));
+                    goto malformed;
+                }
+            } break;
             case AWS_HTTP_HEADER_CONTENT_LENGTH:
                 if (current_block->body_headers_forbidden) {
                     /* The content-length are forbidden */
@@ -1525,12 +1605,6 @@ static struct aws_h2err s_state_fn_header_block_entry(struct aws_h2_decoder *dec
     }
 
     /* Finished decoding HPACK entry! */
-
-    /* #TODO Enforces dynamic table resize rules from RFC-7541 4.2
-     * If dynamic table size changed via SETTINGS frame, next header-block must start with DYNAMIC_TABLE_RESIZE entry.
-     * Is it illegal to receive a resize entry at other times? */
-
-    /* #TODO The TE header field ... MUST NOT contain any value other than "trailers" */
 
     if (result.type == AWS_HPACK_DECODE_T_HEADER_FIELD) {
         const struct aws_http_header *header_field = &result.data.header_field;

@@ -235,7 +235,7 @@ static int s_do_http_monitoring_test(
 }
 
 static struct aws_http_connection_monitoring_options s_test_options = {
-    .allowable_throughput_failure_interval_seconds = 1,
+    .allowable_throughput_failure_interval_seconds = 2,
     .minimum_throughput_bytes_per_second = 1000,
 };
 
@@ -1052,15 +1052,13 @@ static struct aws_crt_statistics_handler *s_aws_crt_statistics_handler_new_http_
     struct aws_crt_statistics_handler *handler = NULL;
     struct mock_http_connection_monitor_impl *impl = NULL;
 
-    if (!aws_mem_acquire_many(
-            allocator,
-            2,
-            &handler,
-            sizeof(struct aws_crt_statistics_handler),
-            &impl,
-            sizeof(struct mock_http_connection_monitor_impl))) {
-        return NULL;
-    }
+    aws_mem_acquire_many(
+        allocator,
+        2,
+        &handler,
+        sizeof(struct aws_crt_statistics_handler),
+        &impl,
+        sizeof(struct mock_http_connection_monitor_impl));
 
     AWS_ZERO_STRUCT(*handler);
     AWS_ZERO_STRUCT(*impl);

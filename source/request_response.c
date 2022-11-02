@@ -111,9 +111,6 @@ static int s_http_headers_add_header_impl(
     /* Store our own copy of the strings.
      * We put the name and value into the same allocation. */
     uint8_t *strmem = aws_mem_acquire(headers->alloc, total_len);
-    if (!strmem) {
-        return AWS_OP_ERR;
-    }
 
     struct aws_byte_buf strbuf = aws_byte_buf_from_empty_array(strmem, total_len);
     aws_byte_buf_append_and_update(&strbuf, &header_copy.name);
@@ -141,8 +138,6 @@ int aws_http_headers_add_header(struct aws_http_headers *headers, const struct a
     bool front = false;
     if (pseudo && aws_http_headers_count(headers)) {
         struct aws_http_header last_header;
-        /* TODO: instead if checking the last header, maybe we can add the pseudo headers to the end of the existing
-         * pseudo headers, which needs to insert to the middle of the array list. */
         AWS_ZERO_STRUCT(last_header);
         aws_http_headers_get_index(headers, aws_http_headers_count(headers) - 1, &last_header);
         front = !aws_strutil_is_http_pseudo_header_name(last_header.name);
