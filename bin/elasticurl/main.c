@@ -442,7 +442,7 @@ static struct aws_http_message *s_build_http_request(
         if (data_len > 0) {
             char content_length[64];
             AWS_ZERO_ARRAY(content_length);
-            sprintf(content_length, "%" PRIi64, data_len);
+            snprintf(content_length, sizeof(content_length), "%" PRIi64, data_len);
             struct aws_http_header content_length_header = {
                 .name = aws_byte_cursor_from_c_str("content-length"),
                 .value = aws_byte_cursor_from_c_str(content_length),
