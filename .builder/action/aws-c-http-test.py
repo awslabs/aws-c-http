@@ -32,6 +32,7 @@ class AWSCHttpTest(Builder.Action):
             # consumer
             os.chdir('../../aws-c-http')
 
-        actions.append(['ctest', '--output-on-failure'])
+        for i in range(10):
+            actions.append(['ctest', '--output-on-failure'])
 
         return Builder.Script(actions, name='aws-c-http-test')
