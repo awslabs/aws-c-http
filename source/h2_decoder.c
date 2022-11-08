@@ -126,7 +126,7 @@ static enum pseudoheader_name s_header_to_pseudoheader_name(enum aws_http_header
  **********************************************************************************************************************/
 
 typedef struct aws_h2err(state_fn)(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input);
-struct decoder_state {
+struct h2_decoder_state {
     state_fn *fn;
     uint32_t bytes_required;
     const char *name;
@@ -135,7 +135,7 @@ struct decoder_state {
 #define DEFINE_STATE(_name, _bytes_required)                                                                           \
     static state_fn s_state_fn_##_name;                                                                                \
     enum { s_state_##_name##_requires_##_bytes_required##_bytes = _bytes_required };                                   \
-    static const struct decoder_state s_state_##_name = {                                                              \
+    static const struct h2_decoder_state s_state_##_name = {                                                           \
         .fn = s_state_fn_##_name,                                                                                      \
         .bytes_required = s_state_##_name##_requires_##_bytes_required##_bytes,                                        \
         .name = #_name,                                                                                                \
@@ -171,7 +171,7 @@ DEFINE_STATE(frame_unknown, 0);
 DEFINE_STATE(connection_preface_string, 1); /* requires 1 byte but may consume more */
 
 /* Helper for states that need to transition to frame-type states */
-static const struct decoder_state *s_state_frames[AWS_H2_FRAME_TYPE_COUNT] = {
+static const struct h2_decoder_state *s_state_frames[AWS_H2_FRAME_TYPE_COUNT] = {
     [AWS_H2_FRAME_T_DATA] = &s_state_frame_data,
     [AWS_H2_FRAME_T_HEADERS] = &s_state_frame_headers,
     [AWS_H2_FRAME_T_PRIORITY] = &s_state_frame_priority,
@@ -196,7 +196,7 @@ struct aws_h2_decoder {
     struct aws_hpack_decoder hpack;
     bool is_server;
     struct aws_byte_buf scratch;
-    const struct decoder_state *state;
+    const struct h2_decoder_state *state;
     bool state_changed;
 
     /* HTTP/2 connection preface must be first thing received (RFC-7540 3.5):
@@ -454,7 +454,7 @@ handle_error:
  * State functions
  **********************************************************************************************************************/
 
-static struct aws_h2err s_decoder_switch_state(struct aws_h2_decoder *decoder, const struct decoder_state *state) {
+static struct aws_h2err s_decoder_switch_state(struct aws_h2_decoder *decoder, const struct h2_decoder_state *state) {
     /* Ensure payload is big enough to enter next state.
      * If this fails, then the payload length we received is too small for this frame type.
      * (ex: a RST_STREAM frame with < 4 bytes) */
