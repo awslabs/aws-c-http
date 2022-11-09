@@ -12,7 +12,8 @@
     ],
     "downstream": [
         { "name": "aws-c-auth" },
-        { "name": "aws-c-mqtt" }
+        { "name": "aws-c-mqtt" },
+        { "name": "aws-c-s3" }
     ],
     "test_steps": [
         "aws-c-http-test",
