@@ -931,7 +931,6 @@ int aws_validate_http_client_connection_options(const struct aws_http_client_con
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-
     return AWS_OP_SUCCESS;
 }
 
@@ -1032,14 +1031,14 @@ int aws_http_client_connect_internal(
     struct aws_http2_setting *setting_array = NULL;
     struct aws_hash_table *alpn_string_map = NULL;
     aws_mem_acquire_many(
-            options.allocator,
-            3,
-            &http_bootstrap,
-            sizeof(struct aws_http_client_bootstrap),
-            &setting_array,
-            options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting),
-            &alpn_string_map,
-            sizeof(struct aws_hash_table));
+        options.allocator,
+        3,
+        &http_bootstrap,
+        sizeof(struct aws_http_client_bootstrap),
+        &setting_array,
+        options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting),
+        &alpn_string_map,
+        sizeof(struct aws_hash_table));
 
     AWS_ZERO_STRUCT(*http_bootstrap);
 

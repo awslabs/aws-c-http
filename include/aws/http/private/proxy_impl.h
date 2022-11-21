@@ -106,7 +106,7 @@ struct aws_http_proxy_user_data {
     bool prior_knowledge_http2;
     struct aws_http1_connection_options original_http1_options;
     struct aws_http2_connection_options original_http2_options; /* allocated with userdata */
-    struct aws_hash_table *alpn_string_map;            /* allocated with userdata */
+    struct aws_hash_table *alpn_string_map;                     /* allocated with userdata */
 
     /*
      * setup/shutdown callbacks.  We enforce via fatal assert that either the http callbacks are supplied or

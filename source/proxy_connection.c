@@ -7,8 +7,8 @@
 
 #include <aws/common/encoding.h>
 #include <aws/common/environment.h>
-#include <aws/common/string.h>
 #include <aws/common/hash_table.h>
+#include <aws/common/string.h>
 #include <aws/http/connection_manager.h>
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/proxy.h>
@@ -108,14 +108,14 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     struct aws_hash_table *alpn_string_map = NULL;
     struct aws_http_proxy_user_data *user_data = NULL;
     aws_mem_acquire_many(
-            options.allocator,
-            3,
-            &user_data,
-            sizeof(struct aws_http_proxy_user_data),
-            &setting_array,
-            options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting),
-            &alpn_string_map,
-            sizeof(struct aws_hash_table));
+        options.allocator,
+        3,
+        &user_data,
+        sizeof(struct aws_http_proxy_user_data),
+        &setting_array,
+        options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting),
+        &alpn_string_map,
+        sizeof(struct aws_hash_table));
     AWS_ZERO_STRUCT(*user_data);
 
     user_data->allocator = allocator;
@@ -222,14 +222,14 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new_reset_clone(
     struct aws_hash_table *alpn_string_map = NULL;
     struct aws_http_proxy_user_data *user_data = NULL;
     aws_mem_acquire_many(
-            allocator,
-            3,
-            &user_data,
-            sizeof(struct aws_http_proxy_user_data),
-            &setting_array,
-            old_user_data->original_http2_options.num_initial_settings * sizeof(struct aws_http2_setting),
-            &alpn_string_map,
-            sizeof(struct aws_hash_table));
+        allocator,
+        3,
+        &user_data,
+        sizeof(struct aws_http_proxy_user_data),
+        &setting_array,
+        old_user_data->original_http2_options.num_initial_settings * sizeof(struct aws_http2_setting),
+        &alpn_string_map,
+        sizeof(struct aws_hash_table));
 
     AWS_ZERO_STRUCT(*user_data);
     user_data->allocator = allocator;
@@ -275,7 +275,6 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new_reset_clone(
         }
         user_data->alpn_string_map = alpn_string_map;
     }
-
 
     user_data->original_http_on_setup = old_user_data->original_http_on_setup;
     user_data->original_http_on_shutdown = old_user_data->original_http_on_shutdown;
