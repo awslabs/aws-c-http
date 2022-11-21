@@ -1433,12 +1433,13 @@ static int s_get_tls_options_from_proxy_test_type(
     return AWS_OP_SUCCESS;
 }
 
-static int s_proxy_integration_test_helper(
+static int s_proxy_integration_test_helper_general(
     struct aws_allocator *allocator,
     enum proxy_test_type proxy_test_type,
     enum aws_http_proxy_authentication_type auth_type,
     bool use_env,
-    bool configured_tls) {
+    bool configured_tls,
+    bool h2) {
     aws_http_library_init(allocator);
     struct proxy_integration_configurations configs;
     AWS_ZERO_STRUCT(configs);
@@ -1475,6 +1476,18 @@ static int s_proxy_integration_test_helper(
         .proxy_options = use_env ? NULL : &proxy_options,
         .use_tls = s_get_use_tls_from_proxy_test_type(proxy_test_type),
     };
+
+    if (h2) {
+        struct aws_http2_setting settings_array[] = {
+            {
+                .id = AWS_HTTP2_SETTINGS_ENABLE_PUSH,
+                .value = 0,
+            },
+        };
+        options.http2 = true;
+        options.initial_settings_array = settings_array;
+        options.num_initial_settings = AWS_ARRAY_SIZE(settings_array);
+    }
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
@@ -1525,6 +1538,20 @@ static int s_proxy_integration_test_helper(
     aws_http_library_clean_up();
 
     return AWS_OP_SUCCESS;
+}
+
+static int s_proxy_integration_test_helper(
+    struct aws_allocator *allocator,
+    enum proxy_test_type proxy_test_type,
+    enum aws_http_proxy_authentication_type auth_type,
+    bool use_env,
+    bool configured_tls) {
+    if (s_proxy_integration_test_helper_general(
+            allocator, proxy_test_type, auth_type, use_env, configured_tls, false)) {
+        return AWS_OP_ERR;
+    }
+    return s_proxy_integration_test_helper_general(
+        allocator, proxy_test_type, auth_type, use_env, configured_tls, true);
 }
 
 static int s_test_connection_manager_proxy_integration_forwarding_proxy_no_auth(
