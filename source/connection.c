@@ -887,7 +887,7 @@ static void s_client_bootstrap_on_channel_shutdown(
     aws_http_client_bootstrap_destroy(http_bootstrap);
 }
 
-static int s_validate_http_client_connection_options(const struct aws_http_client_connection_options *options) {
+int aws_validate_http_client_connection_options(const struct aws_http_client_connection_options *options) {
     if (options->self_size == 0) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, self size not initialized");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -925,6 +925,12 @@ static int s_validate_http_client_connection_options(const struct aws_http_clien
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, invalid monitoring options");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
+
+    if (options->prior_knowledge_http2 && options->tls_options) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: HTTP/2 prior knowledge only works with cleartext TCP.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
 
     return AWS_OP_SUCCESS;
 }
@@ -998,11 +1004,6 @@ int aws_http_client_connect_internal(
 
     /* make copy of options, and add defaults for missing optional structs */
     struct aws_http_client_connection_options options = *orig_options;
-    if (options.prior_knowledge_http2 && options.tls_options) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: HTTP/2 prior knowledge only works with cleartext TCP.");
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-    }
-
     struct aws_http1_connection_options default_http1_options;
     AWS_ZERO_STRUCT(default_http1_options);
     if (options.http1_options == NULL) {
@@ -1016,7 +1017,7 @@ int aws_http_client_connect_internal(
     }
 
     /* validate options */
-    if (s_validate_http_client_connection_options(&options)) {
+    if (aws_validate_http_client_connection_options(&options)) {
         goto error;
     }
 
@@ -1030,7 +1031,7 @@ int aws_http_client_connect_internal(
 
     struct aws_http2_setting *setting_array = NULL;
     struct aws_hash_table *alpn_string_map = NULL;
-    if (!aws_mem_acquire_many(
+    aws_mem_acquire_many(
             options.allocator,
             3,
             &http_bootstrap,
@@ -1038,9 +1039,7 @@ int aws_http_client_connect_internal(
             &setting_array,
             options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting),
             &alpn_string_map,
-            sizeof(struct aws_hash_table))) {
-        goto error;
-    }
+            sizeof(struct aws_hash_table));
 
     AWS_ZERO_STRUCT(*http_bootstrap);
 
