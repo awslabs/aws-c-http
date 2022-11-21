@@ -104,11 +104,6 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
         options.http2_options = &default_http2_options;
     }
 
-    /* validate options */
-    if (aws_validate_http_client_connection_options(&options)) {
-        return NULL;
-    }
-
     struct aws_http2_setting *setting_array = NULL;
     struct aws_hash_table *alpn_string_map = NULL;
     struct aws_http_proxy_user_data *user_data = NULL;
