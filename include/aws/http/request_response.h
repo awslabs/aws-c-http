@@ -207,7 +207,7 @@ struct aws_http_make_request_options {
     /**
      * Definition for outgoing request.
      * Required.
-     * This object must stay alive at least until on_complete is called.
+     * The request will be kept alive via refcounting until the request completes.
      */
     struct aws_http_message *request;
 

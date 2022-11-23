@@ -169,7 +169,7 @@ struct aws_websocket_client_connection_options {
 
     /**
      * Required.
-     * The request must outlive the handshake process (it will be safe to release in on_connection_setup())
+     * The request will be kept alive via refcounting until the handshake completes.
      * Suggestion: create via aws_http_message_new_websocket_handshake_request()
      *
      * The method MUST be set to GET.
