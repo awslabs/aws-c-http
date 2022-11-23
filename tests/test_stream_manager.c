@@ -530,6 +530,12 @@ static int s_sm_stream_acquiring_customize_request(
     return AWS_OP_SUCCESS;
 }
 
+static struct aws_byte_cursor s_default_empty_path = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("/");
+
+struct aws_byte_cursor s_normalize_path(struct aws_byte_cursor path) {
+    return path.len == 0 ? s_default_empty_path : path;
+}
+
 static int s_sm_stream_acquiring(int num_streams) {
     struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
     ASSERT_NOT_NULL(request);
@@ -542,7 +548,7 @@ static int s_sm_stream_acquiring(int num_streams) {
         },
         {
             .name = aws_byte_cursor_from_c_str(":path"),
-            .value = *aws_uri_path(&s_tester.endpoint),
+            .value = s_normalize_path(*aws_uri_path(&s_tester.endpoint)),
         },
         {
             .name = aws_byte_cursor_from_c_str(":authority"),
@@ -1305,12 +1311,12 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
     (void)ctx;
     struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/echo");
     struct aws_http_connection_monitoring_options monitor_opt = {
-        .allowable_throughput_failure_interval_seconds = 1,
+        .allowable_throughput_failure_interval_seconds = 2,
         .minimum_throughput_bytes_per_second = 1000,
     };
     enum aws_log_level log_level = AWS_LOG_LEVEL_DEBUG;
     struct sm_tester_options options = {
-        .max_connections = 100,
+        .max_connections = 50,
         .max_concurrent_streams_per_connection = 100,
         .connection_ping_period_ms = 100 * AWS_TIMESTAMP_MILLIS,
         .alloc = allocator,
@@ -1319,11 +1325,11 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
         .log_level = &log_level,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
-    int num_to_acquire = 500 * 100;
-    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+    size_t num_to_acquire = 500 * 100;
+    ASSERT_SUCCESS(s_sm_stream_acquiring((int)num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
-    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
-    ASSERT_TRUE((int)s_tester.stream_200_count == num_to_acquire);
+    ASSERT_UINT_EQUALS(s_tester.acquiring_stream_errors, 0);
+    ASSERT_UINT_EQUALS(s_tester.stream_200_count, num_to_acquire);
 
     return s_tester_clean_up();
 }
@@ -1351,7 +1357,7 @@ static int s_sm_stream_acquiring_with_body(int num_streams) {
         },
         {
             .name = aws_byte_cursor_from_c_str(":path"),
-            .value = *aws_uri_path(&s_tester.endpoint),
+            .value = s_normalize_path(*aws_uri_path(&s_tester.endpoint)),
         },
         {
             .name = aws_byte_cursor_from_c_str(":authority"),
@@ -1404,18 +1410,10 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
     s_tester.length_sent = 2000;
     int num_to_acquire = 500 * 100;
 
-#ifdef AWS_OS_LINUX
-    /* Using Python hyper h2 server frame work, met a weird upload performance issue on Linux. Our client against nginx
-     * platform has not met the same issue. We assume it's because the server framework implementation. Use lower
-     * number of linux
-     */
-    num_to_acquire = 500;
-#endif
-
     ASSERT_SUCCESS(s_sm_stream_acquiring_with_body(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
-    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
-    ASSERT_TRUE((int)s_tester.stream_200_count == num_to_acquire);
+    ASSERT_UINT_EQUALS(s_tester.acquiring_stream_errors, 0);
+    ASSERT_UINT_EQUALS(s_tester.stream_200_count, num_to_acquire);
 
     return s_tester_clean_up();
 }

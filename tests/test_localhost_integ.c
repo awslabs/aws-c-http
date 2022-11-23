@@ -22,10 +22,6 @@
 
 #include "h2_test_helper.h"
 
-#ifdef _MSC_VER
-#    pragma warning(disable : 4996) /* Disable warnings about sprintf() being insecure */
-#endif
-
 static int s_tester_on_headers(
     struct aws_http_stream *stream,
     enum aws_http_header_block header_block,
@@ -241,7 +237,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
         .keep_alive_interval_sec = 0,
     };
     struct aws_http_connection_monitoring_options monitor_opt = {
-        .allowable_throughput_failure_interval_seconds = 1,
+        .allowable_throughput_failure_interval_seconds = 2,
         .minimum_throughput_bytes_per_second = 1000,
     };
     struct aws_http_client_connection_options client_options = {
@@ -332,10 +328,10 @@ static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool comp
             aws_device_random_u64(&random_64_bit_num);
 
             size_t headers = (size_t)random_64_bit_num % headers_pool_size;
-            sprintf(test_header_str, "crttest-%zu", headers);
+            snprintf(test_header_str, sizeof(test_header_str), "crttest-%zu", headers);
             char test_value_str[256];
             size_t value = (size_t)random_64_bit_num % values_pool_size;
-            sprintf(test_value_str, "value-%zu", value);
+            snprintf(test_value_str, sizeof(test_value_str), "value-%zu", value);
 
             struct aws_http_header request_header = {
                 .compression =
