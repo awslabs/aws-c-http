@@ -1803,3 +1803,10 @@ static int s_test_connection_manager_proxy_integration_tunneling_proxy_https_bas
 AWS_TEST_CASE(
     connection_manager_proxy_integration_tunneling_proxy_https_basic_auth_env,
     s_test_connection_manager_proxy_integration_tunneling_proxy_https_basic_auth_env);
+
+static int s_test_h1_proxy_h2_host_tunneling_double_tls_no_auth(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper_general(
+        allocator, TUNNELING_DOUBLE_TLS, AWS_HPAT_NONE, false /*use_env*/, false /*configured_tls*/, true /*h2*/);
+}
+AWS_TEST_CASE(h1_proxy_h2_host_tunneling_double_tls_no_auth, s_test_h1_proxy_h2_host_tunneling_double_tls_no_auth);
