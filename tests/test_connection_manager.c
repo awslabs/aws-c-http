@@ -178,16 +178,18 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     };
 
     aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, options->allocator);
+    aws_tls_ctx_options_set_verify_peer(&tester->tls_ctx_options, false);
     if (options->http2) {
         ASSERT_SUCCESS(aws_tls_ctx_options_set_alpn_list(&tester->tls_ctx_options, "h2"));
     }
 
     tester->tls_ctx = aws_tls_client_ctx_new(options->allocator, &tester->tls_ctx_options);
-
     ASSERT_NOT_NULL(tester->tls_ctx);
 
     struct aws_byte_cursor server_name = aws_byte_cursor_from_c_str("www.google.com");
+
     aws_tls_connection_options_init_from_ctx(&tester->tls_connection_options, tester->tls_ctx);
+
     aws_tls_connection_options_set_server_name(&tester->tls_connection_options, options->allocator, &server_name);
 
     tester->verify_proxy_options = options->proxy_options;
@@ -1546,12 +1548,8 @@ static int s_proxy_integration_test_helper(
     enum aws_http_proxy_authentication_type auth_type,
     bool use_env,
     bool configured_tls) {
-    // if (s_proxy_integration_test_helper_general(
-    //         allocator, proxy_test_type, auth_type, use_env, configured_tls, false)) {
-    //     return AWS_OP_ERR;
-    // }
     return s_proxy_integration_test_helper_general(
-        allocator, proxy_test_type, auth_type, use_env, configured_tls, true);
+        allocator, proxy_test_type, auth_type, use_env, configured_tls, false);
 }
 
 static int s_test_connection_manager_proxy_integration_forwarding_proxy_no_auth(

@@ -28,7 +28,6 @@ AWS_STATIC_STRING_FROM_LITERAL(s_proxy_connection_header_name, "Proxy-Connection
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_connection_header_value, "Keep-Alive");
 AWS_STATIC_STRING_FROM_LITERAL(s_options_method, "OPTIONS");
 AWS_STATIC_STRING_FROM_LITERAL(s_star_path, "*");
-AWS_STATIC_STRING_FROM_LITERAL(s_http_scheme, "http");
 
 AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var, "HTTP_PROXY");
 AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var_low, "http_proxy");
@@ -463,7 +462,7 @@ static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_pr
     struct aws_byte_buf path_buffer;
     AWS_ZERO_STRUCT(path_buffer);
 
-    if (aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("CONNECT"))) {
+    if (aws_http_message_set_request_method(request, aws_http_method_connect)) {
         goto on_error;
     }
 
@@ -954,7 +953,7 @@ int aws_http_rewrite_uri_for_proxy_request(
     /* now rebuild the uri with scheme, host and port subbed in from the original connection options */
     struct aws_uri_builder_options target_uri_builder;
     AWS_ZERO_STRUCT(target_uri_builder);
-    target_uri_builder.scheme = aws_byte_cursor_from_string(s_http_scheme);
+    target_uri_builder.scheme = aws_http_scheme_http;
     target_uri_builder.path = *actual_path_cursor;
     target_uri_builder.host_name = aws_byte_cursor_from_string(proxy_user_data->original_host);
     target_uri_builder.port = proxy_user_data->original_port;
@@ -1050,6 +1049,7 @@ static int s_aws_http_client_connect_via_forwarding_proxy(const struct aws_http_
     options_copy.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
     options_copy.tls_options = options->proxy_options->tls_options;
     options_copy.requested_event_loop = options->requested_event_loop;
+    options_copy.prior_knowledge_http2 = false; /* ToDo, expose the protocol specific config for proxy connection. */
 
     int result = aws_http_client_connect_internal(&options_copy, s_proxy_http_request_transform);
     if (result == AWS_OP_ERR) {
@@ -1082,8 +1082,8 @@ static int s_create_tunneling_connection(struct aws_http_proxy_user_data *user_d
     connect_options.user_data = user_data;
     connect_options.on_setup = s_aws_http_on_client_connection_http_tunneling_proxy_setup_fn;
     connect_options.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
-    connect_options.http1_options = &user_data->original_http1_options;
-    connect_options.http2_options = &user_data->original_http2_options;
+    connect_options.http1_options = NULL; /* ToDo, expose the protocol specific config for proxy connection. */
+    connect_options.http2_options = NULL; /* ToDo */
     connect_options.requested_event_loop = user_data->requested_event_loop;
 
     int result = aws_http_client_connect(&connect_options);

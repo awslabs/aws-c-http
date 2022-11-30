@@ -527,6 +527,8 @@ if (ENABLE_PROXY_INTEGRATION_TESTS)
     add_net_test_case(connection_manager_proxy_integration_tunneling_proxy_http_basic_auth_env)
     add_net_test_case(connection_manager_proxy_integration_tunneling_proxy_https_basic_auth)
     add_net_test_case(connection_manager_proxy_integration_tunneling_proxy_https_basic_auth_env)
+
+    add_net_test_case(h1_proxy_h2_host_tunneling_double_tls_no_auth)
 endif()
 
 add_test_case(h1_server_sanity_check)
