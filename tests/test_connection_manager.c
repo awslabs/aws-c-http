@@ -1448,7 +1448,6 @@ static int s_get_tls_options_from_proxy_test_type(
         /* create a default tls options */
         aws_tls_ctx_options_init_default_client(&tls_ctx_options, allocator);
         aws_tls_ctx_options_set_verify_peer(&tls_ctx_options, false);
-        aws_tls_ctx_options_set_alpn_list(&tls_ctx_options, "h2;http/1.1");
         tls_ctx = aws_tls_client_ctx_new(allocator, &tls_ctx_options);
         aws_tls_ctx_options_clean_up(&tls_ctx_options);
         if (!tls_ctx) {
