@@ -1193,6 +1193,9 @@ struct proxy_integration_configurations {
     struct aws_string *tls_cert_path;
     struct aws_string *tls_key_path;
     struct aws_string *tls_root_cert_path;
+    struct aws_string *https_proxy_host_h2;
+    struct aws_string *https_proxy_port_h2;
+    struct aws_string *https_proxy_url_h2;
 };
 
 enum proxy_test_type {
@@ -1218,6 +1221,9 @@ AWS_STATIC_STRING_FROM_LITERAL(s_basic_auth_password_env_var, "AWS_TEST_BASIC_AU
 AWS_STATIC_STRING_FROM_LITERAL(s_tls_cert_path_env_var, "AWS_TEST_TLS_CERT_PATH");
 AWS_STATIC_STRING_FROM_LITERAL(s_tls_key_path_env_var, "AWS_TEST_TLS_KEY_PATH");
 AWS_STATIC_STRING_FROM_LITERAL(s_tls_root_cert_path_env_var, "AWS_TEST_TLS_ROOT_CERT_PATH");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_host_h2_env_var, "AWS_TEST_HTTPS_H2_PROXY_HOST");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_port_h2_env_var, "AWS_TEST_HTTPS_H2_PROXY_PORT");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_url_h2_env_var, "AWS_TEST_HTTPS_H2_PROXY_URL");
 
 static int s_get_proxy_environment_configurations(
     struct aws_allocator *allocator,
@@ -1279,6 +1285,18 @@ static int s_get_proxy_environment_configurations(
         configs->tls_root_cert_path == NULL) {
         return AWS_OP_ERR;
     }
+    if (aws_get_environment_value(allocator, s_https_proxy_host_h2_env_var, &configs->https_proxy_host_h2) ||
+        configs->https_proxy_host_h2 == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_https_proxy_port_h2_env_var, &configs->https_proxy_port_h2) ||
+        configs->https_proxy_port_h2 == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_https_proxy_url_h2_env_var, &configs->https_proxy_url_h2) ||
+        configs->https_proxy_url_h2 == NULL) {
+        return AWS_OP_ERR;
+    }
     return AWS_OP_SUCCESS;
 }
 
@@ -1297,6 +1315,9 @@ static void s_proxy_environment_configurations_clean_up(struct proxy_integration
     aws_string_destroy(configs->tls_cert_path);
     aws_string_destroy(configs->tls_key_path);
     aws_string_destroy(configs->tls_root_cert_path);
+    aws_string_destroy(configs->https_proxy_host_h2);
+    aws_string_destroy(configs->https_proxy_port_h2);
+    aws_string_destroy(configs->https_proxy_url_h2);
 }
 
 static int s_response_status_code = 0;
@@ -1353,9 +1374,12 @@ static void s_aws_http_on_stream_complete_proxy_test(struct aws_http_stream *str
 static struct aws_byte_cursor s_get_proxy_host_for_test(
     struct proxy_integration_configurations *configs,
     enum proxy_test_type proxy_test_type,
-    enum aws_http_proxy_authentication_type auth_type) {
+    enum aws_http_proxy_authentication_type auth_type,
+    bool h2) {
     struct aws_string *host_string;
-    if (auth_type == AWS_HPAT_BASIC) {
+    if (h2) {
+        host_string = configs->https_proxy_host_h2;
+    } else if (auth_type == AWS_HPAT_BASIC) {
         host_string = configs->http_proxy_basic_host;
     } else if (proxy_test_type == TUNNELING_DOUBLE_TLS) {
         host_string = configs->https_proxy_host;
@@ -1364,12 +1388,16 @@ static struct aws_byte_cursor s_get_proxy_host_for_test(
     }
     return aws_byte_cursor_from_string(host_string);
 }
+
 static uint16_t s_get_proxy_port_for_test(
     struct proxy_integration_configurations *configs,
     enum proxy_test_type proxy_test_type,
-    enum aws_http_proxy_authentication_type auth_type) {
+    enum aws_http_proxy_authentication_type auth_type,
+    bool h2) {
     struct aws_string *port_string;
-    if (auth_type == AWS_HPAT_BASIC) {
+    if (h2) {
+        port_string = configs->https_proxy_port_h2;
+    } else if (auth_type == AWS_HPAT_BASIC) {
         port_string = configs->http_proxy_basic_port;
     } else if (proxy_test_type == TUNNELING_DOUBLE_TLS) {
         port_string = configs->https_proxy_port;
@@ -1420,6 +1448,7 @@ static int s_get_tls_options_from_proxy_test_type(
         /* create a default tls options */
         aws_tls_ctx_options_init_default_client(&tls_ctx_options, allocator);
         aws_tls_ctx_options_set_verify_peer(&tls_ctx_options, false);
+        aws_tls_ctx_options_set_alpn_list(&tls_ctx_options, "h2;http/1.1");
         tls_ctx = aws_tls_client_ctx_new(allocator, &tls_ctx_options);
         aws_tls_ctx_options_clean_up(&tls_ctx_options);
         if (!tls_ctx) {
@@ -1453,10 +1482,10 @@ static int s_proxy_integration_test_helper_general(
         allocator,
         proxy_test_type,
         &proxy_tls_options,
-        s_get_proxy_host_for_test(&configs, proxy_test_type, auth_type)));
+        s_get_proxy_host_for_test(&configs, proxy_test_type, auth_type, h2)));
     struct aws_http_proxy_options proxy_options = {
-        .host = s_get_proxy_host_for_test(&configs, proxy_test_type, auth_type),
-        .port = s_get_proxy_port_for_test(&configs, proxy_test_type, auth_type),
+        .host = s_get_proxy_host_for_test(&configs, proxy_test_type, auth_type, h2),
+        .port = s_get_proxy_port_for_test(&configs, proxy_test_type, auth_type, h2),
         .connection_type = s_get_proxy_connection_type_for_test(proxy_test_type),
         .tls_options = proxy_test_type == TUNNELING_DOUBLE_TLS ? &proxy_tls_options : NULL,
         .auth_type = auth_type,
