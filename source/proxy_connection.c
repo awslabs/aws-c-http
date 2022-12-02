@@ -449,11 +449,7 @@ static void s_aws_http_proxy_user_data_shutdown(struct aws_http_proxy_user_data 
     aws_http_connection_release(http_connection);
 }
 
-/*
- * Builds the CONNECT request issued after proxy connection establishment, during the creation of
- * tls-enabled proxy connections.
- */
-static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
+static struct aws_http_message *s_build_h1_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
     struct aws_http_message *request = aws_http_message_new_request(user_data->allocator);
     if (request == NULL) {
         return NULL;
@@ -525,6 +521,90 @@ on_error:
     aws_http_message_destroy(request);
 
     return NULL;
+}
+
+static struct aws_http_message *s_build_h2_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
+    struct aws_http_message *request = aws_http2_message_new_request(user_data->allocator);
+    if (request == NULL) {
+        return NULL;
+    }
+    struct aws_http_headers *headers = aws_http_message_get_headers(request);
+
+    struct aws_byte_buf path_buffer;
+    AWS_ZERO_STRUCT(path_buffer);
+
+    if (aws_http2_headers_set_request_method(request, aws_http_method_connect)) {
+        goto on_error;
+    }
+
+    if (aws_byte_buf_init(&path_buffer, user_data->allocator, user_data->original_host->len + 10)) {
+        goto on_error;
+    }
+
+    struct aws_byte_cursor host_cursor = aws_byte_cursor_from_string(user_data->original_host);
+    if (aws_byte_buf_append(&path_buffer, &host_cursor)) {
+        goto on_error;
+    }
+
+    struct aws_byte_cursor colon_cursor = aws_byte_cursor_from_c_str(":");
+    if (aws_byte_buf_append(&path_buffer, &colon_cursor)) {
+        goto on_error;
+    }
+
+    char port_str[20] = "\0";
+    snprintf(port_str, sizeof(port_str), "%d", (int)user_data->original_port);
+    struct aws_byte_cursor port_cursor = aws_byte_cursor_from_c_str(port_str);
+    if (aws_byte_buf_append(&path_buffer, &port_cursor)) {
+        goto on_error;
+    }
+
+    struct aws_byte_cursor path_cursor = aws_byte_cursor_from_array(path_buffer.buffer, path_buffer.len);
+
+    if (aws_http2_headers_set_request_authority(headers, path_cursor)) {
+        goto on_error;
+    }
+
+    struct aws_http_header keep_alive_header = {
+        .name = aws_byte_cursor_from_string(s_proxy_connection_header_name),
+        .value = aws_byte_cursor_from_string(s_proxy_connection_header_value),
+    };
+    if (aws_http_message_add_header(request, keep_alive_header)) {
+        goto on_error;
+    }
+
+    aws_byte_buf_clean_up(&path_buffer);
+
+    return request;
+
+on_error:
+
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_CONNECTION,
+        "(%p) TLS proxy connection failed to build CONNECT request with error %d(%s)",
+        (void *)user_data->proxy_connection,
+        aws_last_error(),
+        aws_error_str(aws_last_error()));
+
+    aws_byte_buf_clean_up(&path_buffer);
+    aws_http_message_destroy(request);
+
+    return NULL;
+}
+/*
+ * Builds the CONNECT request issued after proxy connection establishment, during the creation of
+ * tls-enabled proxy connections.
+ */
+static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
+    struct aws_http_connection *proxy_connection = user_data->proxy_connection;
+    switch (proxy_connection->http_version) {
+        case AWS_HTTP_VERSION_1_1:
+            return s_build_h1_proxy_connect_request(user_data);
+        case AWS_HTTP_VERSION_2:
+            return s_build_h2_proxy_connect_request(user_data);
+        default:
+            aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
+            return NULL;
+    }
 }
 
 static int s_aws_http_on_incoming_body_tunnel_proxy(
