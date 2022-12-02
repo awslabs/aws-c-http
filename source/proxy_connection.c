@@ -261,8 +261,10 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new_reset_clone(
         user_data->original_tls_options->user_data = user_data;
     }
 
-    if (aws_http_alpn_map_init_copy(allocator, &user_data->alpn_string_map, &old_user_data->alpn_string_map)) {
-        goto on_error;
+    if (aws_hash_table_get_entry_count(&old_user_data->alpn_string_map) > 0) {
+        if (aws_http_alpn_map_init_copy(allocator, &user_data->alpn_string_map, &old_user_data->alpn_string_map)) {
+            goto on_error;
+        }
     }
 
     user_data->original_http_on_setup = old_user_data->original_http_on_setup;
