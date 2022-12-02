@@ -969,6 +969,15 @@ int aws_http_alpn_map_init_copy(
     struct aws_allocator *allocator,
     struct aws_hash_table *dest,
     struct aws_hash_table *src) {
+    if (!src) {
+        AWS_ZERO_STRUCT(*dest);
+        return AWS_OP_SUCCESS;
+    }
+    if (!src->p_impl) {
+        AWS_ZERO_STRUCT(*dest);
+        return AWS_OP_SUCCESS;
+    }
+
     if (aws_http_alpn_map_init(allocator, dest)) {
         return AWS_OP_ERR;
     }
