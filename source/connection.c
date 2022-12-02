@@ -887,7 +887,7 @@ static void s_client_bootstrap_on_channel_shutdown(
     aws_http_client_bootstrap_destroy(http_bootstrap);
 }
 
-int aws_validate_http_client_connection_options(const struct aws_http_client_connection_options *options) {
+int s_validate_http_client_connection_options(const struct aws_http_client_connection_options *options) {
     if (options->self_size == 0) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, self size not initialized");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -1016,7 +1016,7 @@ int aws_http_client_connect_internal(
     }
 
     /* validate options */
-    if (aws_validate_http_client_connection_options(&options)) {
+    if (s_validate_http_client_connection_options(&options)) {
         goto error;
     }
 

@@ -52,9 +52,8 @@ void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data
     if (user_data == NULL) {
         return;
     }
-    if (user_data->alpn_string_map) {
-        aws_hash_table_clean_up(user_data->alpn_string_map);
-    }
+    aws_hash_table_clean_up(&user_data->alpn_string_map);
+
     /*
      * For tunneling connections, this is now internal and never surfaced to the user, so it's our responsibility
      * to clean up the last reference.
@@ -104,17 +103,14 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     }
 
     struct aws_http2_setting *setting_array = NULL;
-    struct aws_hash_table *alpn_string_map = NULL;
     struct aws_http_proxy_user_data *user_data = NULL;
     aws_mem_acquire_many(
         options.allocator,
-        3,
+        2,
         &user_data,
         sizeof(struct aws_http_proxy_user_data),
         &setting_array,
-        options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting),
-        &alpn_string_map,
-        sizeof(struct aws_hash_table));
+        options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting));
     AWS_ZERO_STRUCT(*user_data);
 
     user_data->allocator = allocator;
@@ -158,10 +154,9 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     }
 
     if (options.alpn_string_map) {
-        if (aws_http_alpn_map_init_copy(options.allocator, alpn_string_map, options.alpn_string_map)) {
+        if (aws_http_alpn_map_init_copy(options.allocator, &user_data->alpn_string_map, options.alpn_string_map)) {
             goto on_error;
         }
-        user_data->alpn_string_map = alpn_string_map;
     }
 
     user_data->original_http_on_setup = options.on_setup;
@@ -218,17 +213,14 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new_reset_clone(
     AWS_FATAL_ASSERT(old_user_data != NULL);
 
     struct aws_http2_setting *setting_array = NULL;
-    struct aws_hash_table *alpn_string_map = NULL;
     struct aws_http_proxy_user_data *user_data = NULL;
     aws_mem_acquire_many(
         allocator,
-        3,
+        2,
         &user_data,
         sizeof(struct aws_http_proxy_user_data),
         &setting_array,
-        old_user_data->original_http2_options.num_initial_settings * sizeof(struct aws_http2_setting),
-        &alpn_string_map,
-        sizeof(struct aws_hash_table));
+        old_user_data->original_http2_options.num_initial_settings * sizeof(struct aws_http2_setting));
 
     AWS_ZERO_STRUCT(*user_data);
     user_data->allocator = allocator;
@@ -268,11 +260,9 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new_reset_clone(
 
         user_data->original_tls_options->user_data = user_data;
     }
-    if (old_user_data->alpn_string_map) {
-        if (aws_http_alpn_map_init_copy(allocator, alpn_string_map, old_user_data->alpn_string_map)) {
-            goto on_error;
-        }
-        user_data->alpn_string_map = alpn_string_map;
+
+    if (aws_http_alpn_map_init_copy(allocator, &user_data->alpn_string_map, &old_user_data->alpn_string_map)) {
+        goto on_error;
     }
 
     user_data->original_http_on_setup = old_user_data->original_http_on_setup;

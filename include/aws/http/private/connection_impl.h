@@ -140,8 +140,6 @@ struct aws_http_client_bootstrap {
     struct aws_http_connection *connection;
 };
 
-int aws_validate_http_client_connection_options(const struct aws_http_client_connection_options *options);
-
 AWS_EXTERN_C_BEGIN
 AWS_HTTP_API
 void aws_http_client_bootstrap_destroy(struct aws_http_client_bootstrap *bootstrap);
