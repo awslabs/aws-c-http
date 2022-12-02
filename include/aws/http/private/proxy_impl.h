@@ -8,6 +8,7 @@
 
 #include <aws/http/http.h>
 
+#include <aws/common/hash_table.h>
 #include <aws/http/connection.h>
 #include <aws/http/proxy.h>
 #include <aws/http/status_code.h>
