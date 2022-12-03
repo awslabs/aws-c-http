@@ -132,7 +132,7 @@ struct aws_websocket_client_connection_options {
 
     /**
      * Required.
-     * Must outlive the connection.
+     * The connection keeps the bootstrap alive via ref-counting.
      */
     struct aws_client_bootstrap *bootstrap;
 
@@ -144,8 +144,8 @@ struct aws_websocket_client_connection_options {
 
     /**
      * Optional.
-     * aws_websocket_client_connect() deep-copies all contents except the `aws_tls_ctx`,
-     * which must outlive the the connection.
+     * aws_websocket_client_connect() deep-copies all contents,
+     * and keeps the `aws_tls_ctx` alive via ref-counting.
      */
     const struct aws_tls_connection_options *tls_options;
 
@@ -169,7 +169,7 @@ struct aws_websocket_client_connection_options {
 
     /**
      * Required.
-     * The request will be kept alive via refcounting until the handshake completes.
+     * The request will be kept alive via ref-counting until the handshake completes.
      * Suggestion: create via aws_http_message_new_websocket_handshake_request()
      *
      * The method MUST be set to GET.

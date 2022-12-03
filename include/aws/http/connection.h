@@ -256,7 +256,7 @@ struct aws_http_client_connection_options {
 
     /**
      * Required.
-     * Must outlive the connection.
+     * The connection keeps the bootstrap alive via ref-counting.
      */
     struct aws_client_bootstrap *bootstrap;
 
@@ -279,8 +279,8 @@ struct aws_http_client_connection_options {
 
     /**
      * Optional.
-     * aws_http_client_connect() deep-copies all contents except the `aws_tls_ctx`,
-     * which must outlive the the connection.
+     * aws_http_client_connect() deep-copies all contents,
+     * and keeps `aws_tls_ctx` alive via ref-counting.
      */
     const struct aws_tls_connection_options *tls_options;
 
