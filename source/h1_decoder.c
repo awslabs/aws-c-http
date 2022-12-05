@@ -89,43 +89,6 @@ static bool s_scan_for_crlf(struct aws_h1_decoder *decoder, struct aws_byte_curs
     return false;
 }
 
-static int s_cat(struct aws_h1_decoder *decoder, struct aws_byte_cursor to_append) {
-    struct aws_byte_buf *buffer = &decoder->scratch_space;
-    int op = AWS_OP_ERR;
-    if (buffer->buffer != NULL) {
-        if ((aws_byte_buf_append(buffer, &to_append) == AWS_OP_SUCCESS)) {
-            op = AWS_OP_SUCCESS;
-        }
-    }
-
-    if (op != AWS_OP_SUCCESS) {
-        size_t new_size = buffer->capacity ? buffer->capacity : 128;
-        do {
-            new_size <<= 1;      /* new_size *= 2 */
-            if (new_size == 0) { /* check for overflow */
-                return aws_raise_error(AWS_ERROR_OOM);
-            }
-        } while (new_size < (buffer->len + to_append.len));
-
-        uint8_t *new_data = aws_mem_acquire(buffer->allocator, new_size);
-        if (!new_data) {
-            return AWS_OP_ERR;
-        }
-
-        if (buffer->buffer != NULL) {
-            memcpy(new_data, buffer->buffer, buffer->len);
-        }
-
-        aws_mem_release(buffer->allocator, buffer->buffer);
-        buffer->capacity = new_size;
-        buffer->buffer = new_data;
-
-        return aws_byte_buf_append(buffer, &to_append);
-    }
-
-    return op;
-}
-
 /* This state consumes an entire line, then calls a linestate_fn to process the line. */
 static int s_state_getline(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input) {
     /* If preceding runs of this state failed to find CRLF, their data is stored in the scratch_space
@@ -140,8 +103,7 @@ static int s_state_getline(struct aws_h1_decoder *decoder, struct aws_byte_curso
 
     bool use_scratch = !found_crlf | has_prev_data;
     if (AWS_UNLIKELY(use_scratch)) {
-        int err = s_cat(decoder, line);
-        if (err) {
+        if (aws_byte_buf_append_dynamic(&decoder->scratch_space, &line)) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Internal buffer write failed with error code %d (%s)",
