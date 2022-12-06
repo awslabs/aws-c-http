@@ -650,6 +650,25 @@ TEST_CASE(websocket_handler_sanity_check) {
     return AWS_OP_SUCCESS;
 }
 
+TEST_CASE(websocket_handler_refcounting) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* acquire() and then release() a refcount. The websocket should not shut down yet */
+    ASSERT_PTR_EQUALS(tester.websocket, aws_websocket_acquire(tester.websocket));
+    ASSERT_NULL(aws_websocket_release(tester.websocket));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    ASSERT_FALSE(tester.testing_channel.channel_shutdown_completed);
+
+    /* should be safe to call release() on NULL */
+    aws_websocket_release(NULL);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 static int s_websocket_handler_send_frame_common(struct aws_allocator *allocator, bool on_thread) {
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
