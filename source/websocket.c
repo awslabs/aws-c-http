@@ -379,7 +379,8 @@ static void s_websocket_on_refcount_zero(void *user_data) {
     struct aws_websocket *websocket = user_data;
     AWS_ASSERT(websocket->channel_slot);
 
-    AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Websocket ref-count is zero, shut down if necessary.", (void *)websocket);
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_WEBSOCKET, "id=%p: Websocket ref-count is zero, shut down if necessary.", (void *)websocket);
 
     /* Channel might already be shut down, but make sure */
     s_schedule_channel_shutdown(websocket, AWS_ERROR_SUCCESS);
