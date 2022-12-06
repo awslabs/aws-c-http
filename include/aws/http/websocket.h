@@ -366,11 +366,9 @@ struct aws_websocket *aws_websocket_acquire(struct aws_websocket *websocket);
  * This function may be called from any thread.
  *
  * It is safe to pass NULL, nothing will happen.
- *
- * @return Always returns NULL.
  */
 AWS_HTTP_API
-struct aws_websocket *aws_websocket_release(struct aws_websocket *websocket);
+void aws_websocket_release(struct aws_websocket *websocket);
 
 /**
  * Close the websocket connection.

@@ -365,14 +365,13 @@ struct aws_websocket *aws_websocket_acquire(struct aws_websocket *websocket) {
     return websocket;
 }
 
-struct aws_websocket *aws_websocket_release(struct aws_websocket *websocket) {
+void aws_websocket_release(struct aws_websocket *websocket) {
     if (!websocket) {
-        return NULL;
+        return;
     }
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Releasing websocket ref-count.", (void *)websocket);
     aws_ref_count_release(&websocket->ref_count);
-    return NULL;
 }
 
 static void s_websocket_on_refcount_zero(void *user_data) {

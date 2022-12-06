@@ -657,7 +657,7 @@ TEST_CASE(websocket_handler_refcounting) {
 
     /* acquire() and then release() a refcount. The websocket should not shut down yet */
     ASSERT_PTR_EQUALS(tester.websocket, aws_websocket_acquire(tester.websocket));
-    ASSERT_NULL(aws_websocket_release(tester.websocket));
+    aws_websocket_release(tester.websocket);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     ASSERT_FALSE(tester.testing_channel.channel_shutdown_completed);
