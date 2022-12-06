@@ -9,6 +9,7 @@
 #include <aws/common/device_random.h>
 #include <aws/common/encoding.h>
 #include <aws/common/mutex.h>
+#include <aws/common/ref_count.h>
 #include <aws/http/private/websocket_decoder.h>
 #include <aws/http/private/websocket_encoder.h>
 #include <aws/http/request_response.h>
@@ -41,6 +42,7 @@ struct outgoing_frame {
 
 struct aws_websocket {
     struct aws_allocator *alloc;
+    struct aws_ref_count ref_count;
     struct aws_channel_handler channel_handler;
     struct aws_channel_slot *channel_slot;
     size_t initial_window_size;
@@ -137,9 +139,6 @@ struct aws_websocket {
 
         /* Mirrors variable from thread_data */
         bool is_midchannel_handler;
-
-        /* Whether aws_websocket_release() has been called */
-        bool is_released;
     } synced_data;
 };
 
@@ -168,6 +167,7 @@ static int s_handler_shutdown(
 static size_t s_handler_initial_window_size(struct aws_channel_handler *handler);
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
+static void s_websocket_on_refcount_zero(void *user_data);
 
 static int s_encoder_stream_outgoing_payload(struct aws_byte_buf *out_buf, void *user_data);
 
@@ -271,6 +271,7 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
     }
 
     websocket->alloc = options->allocator;
+    aws_ref_count_init(&websocket->ref_count, websocket, s_websocket_on_refcount_zero);
     websocket->channel_handler.vtable = &s_channel_handler_vtable;
     websocket->channel_handler.alloc = options->allocator;
     websocket->channel_handler.impl = websocket;
@@ -357,30 +358,28 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     aws_mem_release(websocket->alloc, websocket);
 }
 
+struct aws_websocket *aws_websocket_acquire(struct aws_websocket *websocket) {
+    AWS_PRECONDITION(websocket);
+    AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Acquiring websocket ref-count.", (void *)websocket);
+    aws_ref_count_acquire(&websocket->ref_count);
+    return websocket;
+}
+
 void aws_websocket_release(struct aws_websocket *websocket) {
-    AWS_ASSERT(websocket);
-    AWS_ASSERT(websocket->channel_slot);
-
-    bool was_already_released;
-
-    /* BEGIN CRITICAL SECTION */
-    s_lock_synced_data(websocket);
-    if (websocket->synced_data.is_released) {
-        was_already_released = true;
-    } else {
-        was_already_released = false;
-        websocket->synced_data.is_released = true;
-    }
-    s_unlock_synced_data(websocket);
-    /* END CRITICAL SECTION */
-
-    if (was_already_released) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_WEBSOCKET, "id=%p: Ignoring multiple calls to websocket release.", (void *)websocket);
+    if (!websocket) {
         return;
     }
 
-    AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Websocket released, shut down if necessary.", (void *)websocket);
+    AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Releasing websocket ref-count.", (void *)websocket);
+    aws_ref_count_release(&websocket->ref_count);
+}
+
+static void s_websocket_on_refcount_zero(void *user_data) {
+    struct aws_websocket *websocket = user_data;
+    AWS_ASSERT(websocket->channel_slot);
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_WEBSOCKET, "id=%p: Websocket ref-count is zero, shut down if necessary.", (void *)websocket);
 
     /* Channel might already be shut down, but make sure */
     s_schedule_channel_shutdown(websocket, AWS_ERROR_SUCCESS);
@@ -420,26 +419,6 @@ int aws_websocket_convert_to_midchannel_handler(struct aws_websocket *websocket)
             "id=%p: Cannot convert to midchannel handler in the middle of an incoming frame.",
             (void *)websocket);
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
-    }
-
-    bool was_released = false;
-
-    /* BEGIN CRITICAL SECTION */
-    s_lock_synced_data(websocket);
-    if (websocket->synced_data.is_released) {
-        was_released = true;
-    } else {
-        websocket->synced_data.is_midchannel_handler = true;
-    }
-    s_unlock_synced_data(websocket);
-    /* END CRITICAL SECTION */
-
-    if (was_released) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_WEBSOCKET,
-            "id=%p: Cannot convert websocket to midchannel handler because it was already released.",
-            (void *)websocket);
-        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
     }
 
     websocket->thread_data.is_midchannel_handler = true;

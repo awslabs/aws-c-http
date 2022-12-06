@@ -351,11 +351,21 @@ AWS_HTTP_API
 int aws_websocket_client_connect(const struct aws_websocket_client_connection_options *options);
 
 /**
+ * Increment the websocket's ref-count, preventing it from being destroyed.
+ * @return Always returns the same pointer that is passed in.
+ */
+AWS_HTTP_API
+struct aws_websocket *aws_websocket_acquire(struct aws_websocket *websocket);
+
+/**
+ * Decrement the websocket's ref-count.
+ * When the ref-count reaches zero, the connection will shut down, if it hasn't already.
  * Users must release the websocket when they are done with it.
  * The websocket's memory cannot be reclaimed until this is done.
- * If the websocket connection was not already shutting down, it will be shut down.
  * Callbacks may continue firing after this is called, with "shutdown" being the final callback.
  * This function may be called from any thread.
+ *
+ * It is safe to pass NULL, nothing will happen.
  */
 AWS_HTTP_API
 void aws_websocket_release(struct aws_websocket *websocket);
