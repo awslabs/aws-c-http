@@ -437,11 +437,7 @@ static void s_aws_http_proxy_user_data_shutdown(struct aws_http_proxy_user_data 
     aws_http_connection_release(http_connection);
 }
 
-/*
- * Builds the CONNECT request issued after proxy connection establishment, during the creation of
- * tls-enabled proxy connections.
- */
-static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
+static struct aws_http_message *s_build_h1_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
     struct aws_http_message *request = aws_http_message_new_request(user_data->allocator);
     if (request == NULL) {
         return NULL;
@@ -513,6 +509,21 @@ on_error:
     aws_http_message_destroy(request);
 
     return NULL;
+}
+
+/*
+ * Builds the CONNECT request issued after proxy connection establishment, during the creation of
+ * tls-enabled proxy connections.
+ */
+static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
+    struct aws_http_connection *proxy_connection = user_data->proxy_connection;
+    switch (proxy_connection->http_version) {
+        case AWS_HTTP_VERSION_1_1:
+            return s_build_h1_proxy_connect_request(user_data);
+        default:
+            aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
+            return NULL;
+    }
 }
 
 static int s_aws_http_on_incoming_body_tunnel_proxy(
