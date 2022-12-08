@@ -19,7 +19,7 @@ phases:
       - aws s3 cp s3://aws-crt-test-stuff/setup_proxy_test_env.sh /tmp/setup_proxy_test_env.sh
       - chmod a+xr /tmp/setup_proxy_test_env.sh
       - python3 -c "from urllib.request import urlretrieve; urlretrieve('$BUILDER_HOST/$BUILDER_SOURCE/$BUILDER_VERSION/builder.pyz', 'builder.pyz')"
-      - python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_PROXY_INTEGRATION_TESTS=ON
+      - python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_PROXY_INTEGRATION_TESTS=ON --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON
   post_build:
     commands:
       - echo Build completed on `date`

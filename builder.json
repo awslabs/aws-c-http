@@ -18,5 +18,6 @@
     "test_steps": [
         "aws-c-http-test",
         ["{python}", "{source_dir}/integration-testing/http_client_test.py", "{install_dir}/bin/elasticurl{exe}"]
-    ]
+    ],
+    "pre_build_steps": ["local-server-setup"]
 }
