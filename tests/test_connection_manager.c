@@ -870,7 +870,7 @@ static int s_test_connection_manager_proxy_setup_shutdown(struct aws_allocator *
 
     struct aws_http_proxy_options proxy_options = {
         .host = aws_byte_cursor_from_c_str("127.0.0.1"),
-        .port = 8080,
+        .port = 3280,
     };
 
     struct cm_tester_options options = {

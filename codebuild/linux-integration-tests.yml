@@ -23,3 +23,5 @@ phases:
   post_build:
     commands:
       - echo Build completed on `date`
+      - curl -Os https://uploader.codecov.io/latest/linux/codecov
+      - chmod +x codecov

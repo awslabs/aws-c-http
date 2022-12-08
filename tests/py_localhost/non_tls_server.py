@@ -49,7 +49,7 @@ def handle(sock):
 
 sock = socket.socket()
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-sock.bind(('0.0.0.0', 8080))
+sock.bind(('0.0.0.0', 3280))
 sock.listen(5)
 
 while True:
