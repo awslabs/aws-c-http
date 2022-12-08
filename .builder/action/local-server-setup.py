@@ -25,8 +25,12 @@ class LocalServerSetup(Builder.Action):
         # install dependency for mock server.
         # Okay to fail, and if it faile, you will know when you enable the localhost test.
         # We don't need it to success on every platform we have
-        self.env.shell.exec(python_path,
-                            '-m', 'pip', 'install', 'h2', check=False)
+        result = self.env.shell.exec(python_path,
+                                     '-m', 'pip', 'install', 'h2')
+        if result.returncode != 0:
+            print(
+                "Python HTTP/2 local failed to setup.", file=sys.stderr)
+            return
 
         base_dir = os.path.dirname(os.path.realpath(__file__))
         dir = os.path.join(base_dir, "..", "..", "tests", "py_localhost")
