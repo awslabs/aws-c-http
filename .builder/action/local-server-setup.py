@@ -22,12 +22,11 @@ class LocalServerSetup(Builder.Action):
     def run(self, env):
         self.env = env
         python_path = sys.executable
-        # install dependency for mock server
+        # install dependency for mock server.
+        # Okay to fail, and if it faile, you will know when you enable the localhost test.
+        # We don't need it to success on every platform we have
         self.env.shell.exec(python_path,
-                            '-m', 'pip', 'install', 'h2', check=True)
-        # check the deps can be import correctly
-        self.env.shell.exec(python_path,
-                            '-c', 'import h2', check=True)
+                            '-m', 'pip', 'install', 'h2', check=False)
 
         base_dir = os.path.dirname(os.path.realpath(__file__))
         dir = os.path.join(base_dir, "..", "..", "tests", "py_localhost")
