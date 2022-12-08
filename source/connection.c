@@ -887,7 +887,7 @@ static void s_client_bootstrap_on_channel_shutdown(
     aws_http_client_bootstrap_destroy(http_bootstrap);
 }
 
-static int s_validate_http_client_connection_options(const struct aws_http_client_connection_options *options) {
+int s_validate_http_client_connection_options(const struct aws_http_client_connection_options *options) {
     if (options->self_size == 0) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, self size not initialized");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -923,6 +923,11 @@ static int s_validate_http_client_connection_options(const struct aws_http_clien
 
     if (options->monitoring_options && !aws_http_connection_monitoring_options_is_valid(options->monitoring_options)) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, invalid monitoring options");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (options->prior_knowledge_http2 && options->tls_options) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: HTTP/2 prior knowledge only works with cleartext TCP.");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
@@ -964,6 +969,15 @@ int aws_http_alpn_map_init_copy(
     struct aws_allocator *allocator,
     struct aws_hash_table *dest,
     struct aws_hash_table *src) {
+    if (!src) {
+        AWS_ZERO_STRUCT(*dest);
+        return AWS_OP_SUCCESS;
+    }
+    if (!src->p_impl) {
+        AWS_ZERO_STRUCT(*dest);
+        return AWS_OP_SUCCESS;
+    }
+
     if (aws_http_alpn_map_init(allocator, dest)) {
         return AWS_OP_ERR;
     }
@@ -998,11 +1012,6 @@ int aws_http_client_connect_internal(
 
     /* make copy of options, and add defaults for missing optional structs */
     struct aws_http_client_connection_options options = *orig_options;
-    if (options.prior_knowledge_http2 && options.tls_options) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: HTTP/2 prior knowledge only works with cleartext TCP.");
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-    }
-
     struct aws_http1_connection_options default_http1_options;
     AWS_ZERO_STRUCT(default_http1_options);
     if (options.http1_options == NULL) {
@@ -1030,17 +1039,15 @@ int aws_http_client_connect_internal(
 
     struct aws_http2_setting *setting_array = NULL;
     struct aws_hash_table *alpn_string_map = NULL;
-    if (!aws_mem_acquire_many(
-            options.allocator,
-            3,
-            &http_bootstrap,
-            sizeof(struct aws_http_client_bootstrap),
-            &setting_array,
-            options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting),
-            &alpn_string_map,
-            sizeof(struct aws_hash_table))) {
-        goto error;
-    }
+    aws_mem_acquire_many(
+        options.allocator,
+        3,
+        &http_bootstrap,
+        sizeof(struct aws_http_client_bootstrap),
+        &setting_array,
+        options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting),
+        &alpn_string_map,
+        sizeof(struct aws_hash_table));
 
     AWS_ZERO_STRUCT(*http_bootstrap);
 
