@@ -155,7 +155,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     ws_bootstrap->websocket_frame_begin_callback = options->on_incoming_frame_begin;
     ws_bootstrap->websocket_frame_payload_callback = options->on_incoming_frame_payload;
     ws_bootstrap->websocket_frame_complete_callback = options->on_incoming_frame_complete;
-    ws_bootstrap->handshake_request = options->handshake_request;
+    ws_bootstrap->handshake_request = aws_http_message_acquire(options->handshake_request);
     ws_bootstrap->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
 
     /* Pre-allocate space for response headers */
@@ -242,6 +242,7 @@ static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_boo
         return;
     }
 
+    aws_http_message_release(ws_bootstrap->handshake_request);
     aws_array_list_clean_up(&ws_bootstrap->response_headers);
     aws_byte_buf_clean_up(&ws_bootstrap->response_storage);
 
