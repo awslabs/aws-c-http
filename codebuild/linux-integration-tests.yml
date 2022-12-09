@@ -16,7 +16,7 @@ phases:
   build:
     commands:
       - echo Build started on `date`
-      - aws s3 cp s3://aws-crt-test-stuff/setup_proxy_test_env.sh /tmp/setup_proxy_test_env.sh
+      - aws s3 cp s3://aws-crt-test-stuff/setup_proxy_test_env_h2.sh /tmp/setup_proxy_test_env.sh
       - chmod a+xr /tmp/setup_proxy_test_env.sh
       # playaround with the builder
       - git clone -b add-gcc-cover https://github.com/awslabs/aws-crt-builder.git

@@ -7,6 +7,7 @@
 
 #include <aws/common/encoding.h>
 #include <aws/common/environment.h>
+#include <aws/common/hash_table.h>
 #include <aws/common/string.h>
 #include <aws/http/connection_manager.h>
 #include <aws/http/private/connection_impl.h>
@@ -27,7 +28,6 @@ AWS_STATIC_STRING_FROM_LITERAL(s_proxy_connection_header_name, "Proxy-Connection
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_connection_header_value, "Keep-Alive");
 AWS_STATIC_STRING_FROM_LITERAL(s_options_method, "OPTIONS");
 AWS_STATIC_STRING_FROM_LITERAL(s_star_path, "*");
-AWS_STATIC_STRING_FROM_LITERAL(s_http_scheme, "http");
 
 AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var, "HTTP_PROXY");
 AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var_low, "http_proxy");
@@ -52,6 +52,7 @@ void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data
     if (user_data == NULL) {
         return;
     }
+    aws_hash_table_clean_up(&user_data->alpn_string_map);
 
     /*
      * For tunneling connections, this is now internal and never surfaced to the user, so it's our responsibility
@@ -81,36 +82,56 @@ void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data
 
 struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     struct aws_allocator *allocator,
-    const struct aws_http_client_connection_options *options,
+    const struct aws_http_client_connection_options *orig_options,
     aws_client_bootstrap_on_channel_event_fn *on_channel_setup,
     aws_client_bootstrap_on_channel_event_fn *on_channel_shutdown) {
 
-    AWS_FATAL_ASSERT(options->proxy_options != NULL);
+    AWS_FATAL_ASSERT(orig_options->proxy_options != NULL);
+    /* make copy of options, and add defaults for missing optional structs */
+    struct aws_http_client_connection_options options = *orig_options;
 
-    struct aws_http_proxy_user_data *user_data = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_user_data));
-    if (user_data == NULL) {
-        return NULL;
+    struct aws_http1_connection_options default_http1_options;
+    AWS_ZERO_STRUCT(default_http1_options);
+    if (options.http1_options == NULL) {
+        options.http1_options = &default_http1_options;
     }
+
+    struct aws_http2_connection_options default_http2_options;
+    AWS_ZERO_STRUCT(default_http2_options);
+    if (options.http2_options == NULL) {
+        options.http2_options = &default_http2_options;
+    }
+
+    struct aws_http2_setting *setting_array = NULL;
+    struct aws_http_proxy_user_data *user_data = NULL;
+    aws_mem_acquire_many(
+        options.allocator,
+        2,
+        &user_data,
+        sizeof(struct aws_http_proxy_user_data),
+        &setting_array,
+        options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting));
+    AWS_ZERO_STRUCT(*user_data);
 
     user_data->allocator = allocator;
     user_data->state = AWS_PBS_SOCKET_CONNECT;
     user_data->error_code = AWS_ERROR_SUCCESS;
     user_data->connect_status_code = AWS_HTTP_STATUS_CODE_UNKNOWN;
-    user_data->original_bootstrap = aws_client_bootstrap_acquire(options->bootstrap);
-    if (options->socket_options != NULL) {
-        user_data->original_socket_options = *options->socket_options;
+    user_data->original_bootstrap = aws_client_bootstrap_acquire(options.bootstrap);
+    if (options.socket_options != NULL) {
+        user_data->original_socket_options = *options.socket_options;
     }
-    user_data->original_manual_window_management = options->manual_window_management;
-    user_data->original_initial_window_size = options->initial_window_size;
+    user_data->original_manual_window_management = options.manual_window_management;
+    user_data->original_initial_window_size = options.initial_window_size;
 
-    user_data->original_host = aws_string_new_from_cursor(allocator, &options->host_name);
+    user_data->original_host = aws_string_new_from_cursor(allocator, &options.host_name);
     if (user_data->original_host == NULL) {
         goto on_error;
     }
 
-    user_data->original_port = options->port;
+    user_data->original_port = options.port;
 
-    user_data->proxy_config = aws_http_proxy_config_new_from_connection_options(allocator, options);
+    user_data->proxy_config = aws_http_proxy_config_new_from_connection_options(allocator, &options);
     if (user_data->proxy_config == NULL) {
         goto on_error;
     }
@@ -121,22 +142,27 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
         goto on_error;
     }
 
-    if (options->tls_options) {
+    if (options.tls_options) {
         /* clone tls options, but redirect user data to what we're creating */
         user_data->original_tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
         if (user_data->original_tls_options == NULL ||
-            aws_tls_connection_options_copy(user_data->original_tls_options, options->tls_options)) {
+            aws_tls_connection_options_copy(user_data->original_tls_options, options.tls_options)) {
             goto on_error;
         }
 
         user_data->original_tls_options->user_data = user_data;
     }
 
-    user_data->original_http_on_setup = options->on_setup;
-    user_data->original_http_on_shutdown = options->on_shutdown;
+    if (aws_http_alpn_map_init_copy(options.allocator, &user_data->alpn_string_map, options.alpn_string_map)) {
+        goto on_error;
+    }
+
+    user_data->original_http_on_setup = options.on_setup;
+    user_data->original_http_on_shutdown = options.on_shutdown;
     user_data->original_channel_on_setup = on_channel_setup;
     user_data->original_channel_on_shutdown = on_channel_shutdown;
-    user_data->requested_event_loop = options->requested_event_loop;
+    user_data->requested_event_loop = options.requested_event_loop;
+    user_data->prior_knowledge_http2 = options.prior_knowledge_http2;
 
     /* one and only one setup callback must be valid */
     AWS_FATAL_ASSERT((user_data->original_http_on_setup == NULL) != (user_data->original_channel_on_setup == NULL));
@@ -150,14 +176,17 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     AWS_FATAL_ASSERT(
         (user_data->original_channel_on_setup == NULL) == (user_data->original_channel_on_shutdown == NULL));
 
-    user_data->original_user_data = options->user_data;
+    user_data->original_user_data = options.user_data;
+    user_data->original_http1_options = *options.http1_options;
+    user_data->original_http2_options = *options.http2_options;
 
-    struct aws_http1_connection_options default_options;
-    AWS_ZERO_STRUCT(default_options);
-    if (options->http1_options) {
-        user_data->original_http1_options = *options->http1_options;
-    } else {
-        user_data->original_http1_options = default_options;
+    /* keep a copy of the settings array if it's not NULL */
+    if (options.http2_options->num_initial_settings > 0) {
+        memcpy(
+            setting_array,
+            options.http2_options->initial_settings_array,
+            options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting));
+        user_data->original_http2_options.initial_settings_array = setting_array;
     }
 
     return user_data;
@@ -181,11 +210,17 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new_reset_clone(
 
     AWS_FATAL_ASSERT(old_user_data != NULL);
 
-    struct aws_http_proxy_user_data *user_data = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_user_data));
-    if (user_data == NULL) {
-        return NULL;
-    }
+    struct aws_http2_setting *setting_array = NULL;
+    struct aws_http_proxy_user_data *user_data = NULL;
+    aws_mem_acquire_many(
+        allocator,
+        2,
+        &user_data,
+        sizeof(struct aws_http_proxy_user_data),
+        &setting_array,
+        old_user_data->original_http2_options.num_initial_settings * sizeof(struct aws_http2_setting));
 
+    AWS_ZERO_STRUCT(*user_data);
     user_data->allocator = allocator;
     user_data->state = AWS_PBS_SOCKET_CONNECT;
     user_data->error_code = AWS_ERROR_SUCCESS;
@@ -194,6 +229,7 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new_reset_clone(
     user_data->original_socket_options = old_user_data->original_socket_options;
     user_data->original_manual_window_management = old_user_data->original_manual_window_management;
     user_data->original_initial_window_size = old_user_data->original_initial_window_size;
+    user_data->prior_knowledge_http2 = old_user_data->prior_knowledge_http2;
 
     user_data->original_host = aws_string_new_from_string(allocator, old_user_data->original_host);
     if (user_data->original_host == NULL) {
@@ -223,11 +259,26 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new_reset_clone(
         user_data->original_tls_options->user_data = user_data;
     }
 
+    if (aws_http_alpn_map_init_copy(allocator, &user_data->alpn_string_map, &old_user_data->alpn_string_map)) {
+        goto on_error;
+    }
+
     user_data->original_http_on_setup = old_user_data->original_http_on_setup;
     user_data->original_http_on_shutdown = old_user_data->original_http_on_shutdown;
     user_data->original_channel_on_setup = old_user_data->original_channel_on_setup;
     user_data->original_channel_on_shutdown = old_user_data->original_channel_on_shutdown;
     user_data->original_user_data = old_user_data->original_user_data;
+    user_data->original_http1_options = old_user_data->original_http1_options;
+    user_data->original_http2_options = old_user_data->original_http2_options;
+
+    /* keep a copy of the settings array if it's not NULL */
+    if (old_user_data->original_http2_options.num_initial_settings > 0) {
+        memcpy(
+            setting_array,
+            old_user_data->original_http2_options.initial_settings_array,
+            old_user_data->original_http2_options.num_initial_settings * sizeof(struct aws_http2_setting));
+        user_data->original_http2_options.initial_settings_array = setting_array;
+    }
 
     return user_data;
 
@@ -386,11 +437,7 @@ static void s_aws_http_proxy_user_data_shutdown(struct aws_http_proxy_user_data 
     aws_http_connection_release(http_connection);
 }
 
-/*
- * Builds the CONNECT request issued after proxy connection establishment, during the creation of
- * tls-enabled proxy connections.
- */
-static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
+static struct aws_http_message *s_build_h1_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
     struct aws_http_message *request = aws_http_message_new_request(user_data->allocator);
     if (request == NULL) {
         return NULL;
@@ -399,7 +446,7 @@ static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_pr
     struct aws_byte_buf path_buffer;
     AWS_ZERO_STRUCT(path_buffer);
 
-    if (aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("CONNECT"))) {
+    if (aws_http_message_set_request_method(request, aws_http_method_connect)) {
         goto on_error;
     }
 
@@ -462,6 +509,21 @@ on_error:
     aws_http_message_destroy(request);
 
     return NULL;
+}
+
+/*
+ * Builds the CONNECT request issued after proxy connection establishment, during the creation of
+ * tls-enabled proxy connections.
+ */
+static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
+    struct aws_http_connection *proxy_connection = user_data->proxy_connection;
+    switch (proxy_connection->http_version) {
+        case AWS_HTTP_VERSION_1_1:
+            return s_build_h1_proxy_connect_request(user_data);
+        default:
+            aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
+            return NULL;
+    }
 }
 
 static int s_aws_http_on_incoming_body_tunnel_proxy(
@@ -545,12 +607,12 @@ static int s_aws_http_apply_http_connection_to_proxied_channel(struct aws_http_p
         false,
         context->original_tls_options != NULL,
         context->original_manual_window_management,
-        false, /* prior_knowledge_http2 */
+        context->prior_knowledge_http2,
         context->original_initial_window_size,
-        NULL, /* alpn_string_map */
+        context->alpn_string_map.p_impl == NULL ? NULL : &context->alpn_string_map,
         &context->original_http1_options,
-        NULL,
-        context->original_user_data); /* TODO: support http2 options */
+        &context->original_http2_options,
+        context->original_user_data);
     if (connection == NULL) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
@@ -890,7 +952,7 @@ int aws_http_rewrite_uri_for_proxy_request(
     /* now rebuild the uri with scheme, host and port subbed in from the original connection options */
     struct aws_uri_builder_options target_uri_builder;
     AWS_ZERO_STRUCT(target_uri_builder);
-    target_uri_builder.scheme = aws_byte_cursor_from_string(s_http_scheme);
+    target_uri_builder.scheme = aws_http_scheme_http;
     target_uri_builder.path = *actual_path_cursor;
     target_uri_builder.host_name = aws_byte_cursor_from_string(proxy_user_data->original_host);
     target_uri_builder.port = proxy_user_data->original_port;
@@ -986,6 +1048,7 @@ static int s_aws_http_client_connect_via_forwarding_proxy(const struct aws_http_
     options_copy.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
     options_copy.tls_options = options->proxy_options->tls_options;
     options_copy.requested_event_loop = options->requested_event_loop;
+    options_copy.prior_knowledge_http2 = false; /* ToDo, expose the protocol specific config for proxy connection. */
 
     int result = aws_http_client_connect_internal(&options_copy, s_proxy_http_request_transform);
     if (result == AWS_OP_ERR) {
@@ -1018,7 +1081,7 @@ static int s_create_tunneling_connection(struct aws_http_proxy_user_data *user_d
     connect_options.user_data = user_data;
     connect_options.on_setup = s_aws_http_on_client_connection_http_tunneling_proxy_setup_fn;
     connect_options.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
-    connect_options.http1_options = NULL; /* ToDo */
+    connect_options.http1_options = NULL; /* ToDo, expose the protocol specific config for proxy connection. */
     connect_options.http2_options = NULL; /* ToDo */
     connect_options.requested_event_loop = user_data->requested_event_loop;
 

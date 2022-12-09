@@ -8,6 +8,7 @@
 
 #include <aws/http/http.h>
 
+#include <aws/common/hash_table.h>
 #include <aws/http/connection.h>
 #include <aws/http/proxy.h>
 #include <aws/http/status_code.h>
@@ -103,8 +104,11 @@ struct aws_http_proxy_user_data {
     struct aws_socket_options original_socket_options;
     bool original_manual_window_management;
     size_t original_initial_window_size;
+    bool prior_knowledge_http2;
     struct aws_http1_connection_options original_http1_options;
-
+    struct aws_http2_connection_options
+        original_http2_options; /* the resource within options are allocated with userdata */
+    struct aws_hash_table alpn_string_map;
     /*
      * setup/shutdown callbacks.  We enforce via fatal assert that either the http callbacks are supplied or
      * the channel callbacks are supplied but never both.
