@@ -22,9 +22,9 @@ class LocalServerSetup(Builder.Action):
     def run(self, env):
         self.env = env
         python_path = sys.executable
-        # install dependency for mock server.
-        # Okay to fail, and if it faile, you will know when you enable the localhost test.
-        # We don't need it to success on every platform we have
+        # Install dependency for mock server.
+        # Okay to fail, and if it fails, you will know when you enable the localhost tests.
+        # We don't need it to succeed on every platform we have.
         result = self.env.shell.exec(python_path,
                                      '-m', 'pip', 'install', 'h2')
         if result.returncode != 0:
