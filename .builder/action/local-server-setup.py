@@ -13,7 +13,7 @@ import atexit
 class LocalServerSetup(Builder.Action):
     """
     Set up this machine for running the local h2 server test.
-    To run the local server related test, use `-cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON` from builder.
+    To run the local server related test, use `--cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON` from builder.
     Not running local server tests for every CI as it takes a while.
 
     This action should be run in the 'pre_build_steps' or 'build_steps' stage.
@@ -29,7 +29,8 @@ class LocalServerSetup(Builder.Action):
                                      '-m', 'pip', 'install', 'h2')
         if result.returncode != 0:
             print(
-                "Python HTTP/2 local failed to setup.", file=sys.stderr)
+                "Could not install python HTTP/2 server." +
+                " The localhost integration tests will fail if you run them.", file=sys.stderr)
             return
 
         base_dir = os.path.dirname(os.path.realpath(__file__))
