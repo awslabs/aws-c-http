@@ -39,8 +39,6 @@ class LocalServerSetup(Builder.Action):
         p_server = subprocess.Popen([python_path, "server.py"])
         p_non_tls_server = subprocess.Popen([python_path, "non_tls_server.py"])
 
-        print("something to make different")
-
         @atexit.register
         def close_local_server():
             p_server.terminate()
