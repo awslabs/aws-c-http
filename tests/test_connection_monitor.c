@@ -16,10 +16,6 @@
 #include <aws/testing/aws_test_harness.h>
 #include <aws/testing/io_testing_channel.h>
 
-#ifdef _MSC_VER
-#    pragma warning(disable : 4996) /* Disable warnings about sprintf() being insecure */
-#endif
-
 static int s_test_http_connection_monitor_options_is_valid(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     (void)allocator;
@@ -1115,7 +1111,7 @@ static void s_add_outgoing_stream(struct test_http_stats_event *event) {
     AWS_FATAL_ASSERT(event->request_body_size <= MAX_BODY_SIZE);
     if (event->request_body_size > 0) {
         char cl_buffer[256];
-        sprintf(cl_buffer, "%zu", event->request_body_size);
+        snprintf(cl_buffer, sizeof(cl_buffer), "%zu", event->request_body_size);
 
         struct aws_http_header content_length_header = {
             .name = aws_byte_cursor_from_c_str("content-length"),

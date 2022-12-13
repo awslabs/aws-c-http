@@ -633,7 +633,6 @@ TEST_CASE(h2_client_stream_with_h1_request_message) {
         DEFINE_HEADER(":authority", "example.com"),
         DEFINE_HEADER(":path", "/"),
         DEFINE_HEADER("accept", "*/*"),
-        DEFINE_HEADER("host", "example.com"),
         DEFINE_HEADER("content-length", "5"),
     };
     struct aws_http_headers *expected_headers = aws_http_headers_new(allocator);
@@ -686,7 +685,6 @@ TEST_CASE(h2_client_stream_with_cookies_headers) {
         DEFINE_HEADER(":authority", "example.com"),
         DEFINE_HEADER(":path", "/"),
         DEFINE_HEADER("accept", "*/*"),
-        DEFINE_HEADER("host", "example.com"),
         DEFINE_HEADER("cookie", "a=b; c=d; e=f"),
     };
     struct aws_http_headers *expected_headers = aws_http_headers_new(allocator);

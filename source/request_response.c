@@ -989,6 +989,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
             case AWS_HTTP_HEADER_UPGRADE:
             case AWS_HTTP_HEADER_KEEP_ALIVE:
             case AWS_HTTP_HEADER_PROXY_CONNECTION:
+            case AWS_HTTP_HEADER_HOST:
                 /**
                  * An intermediary transforming an HTTP/1.x message to HTTP/2 MUST remove connection-specific header
                  * fields as discussed in Section 7.6.1 of [HTTP]. (RFC=9113 8.2.2)

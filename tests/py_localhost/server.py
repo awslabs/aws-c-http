@@ -313,7 +313,7 @@ ssl_context.set_alpn_protocols(["h2"])
 
 loop = asyncio.new_event_loop()
 # Each client connection will create a new protocol instance
-coro = loop.create_server(H2Protocol, '127.0.0.1', 8443, ssl=ssl_context)
+coro = loop.create_server(H2Protocol, '127.0.0.1', 3443, ssl=ssl_context)
 server = loop.run_until_complete(coro)
 
 # Serve requests until Ctrl+C is pressed

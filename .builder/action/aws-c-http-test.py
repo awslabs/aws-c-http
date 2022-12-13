@@ -33,5 +33,7 @@ class AWSCHttpTest(Builder.Action):
             os.chdir('../../aws-c-http')
 
         actions.append(['ctest', '--output-on-failure'])
+        # generate the test coverage report whenever possible, will be ignored by ctest if there is no test coverage data available.
+        actions.append(['ctest', '-T', 'coverage'])
 
         return Builder.Script(actions, name='aws-c-http-test')
