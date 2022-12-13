@@ -35,7 +35,7 @@
     { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
 
 /* TODO: Make those configurable from cmd line */
-const struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("http://localhost:8080/");
+const struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("http://localhost:3280/");
 const int rate_secs = 30; /* Time interval to collect data */
 const int streams_per_connection = 20;
 const int max_connections = 8;
