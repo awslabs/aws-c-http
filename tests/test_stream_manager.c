@@ -242,7 +242,7 @@ static int s_tester_init(struct sm_tester_options *options) {
 
     bool use_tls = true;
     uint16_t port = 443;
-    if (!s_tester.endpoint.scheme.len && (s_tester.endpoint.port == 80 || s_tester.endpoint.port == 8080)) {
+    if (!s_tester.endpoint.scheme.len && (s_tester.endpoint.port == 80 || s_tester.endpoint.port == 3280)) {
         use_tls = false;
     } else {
         if (aws_byte_cursor_eq_c_str_ignore_case(&s_tester.endpoint.scheme, "http")) {
@@ -1288,7 +1288,7 @@ TEST_CASE(h2_sm_closing_before_connection_acquired) {
 /* Test our http2 stream manager works with prior knowledge */
 TEST_CASE(localhost_integ_h2_sm_prior_knowledge) {
     (void)ctx;
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("http://localhost:8080");
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("http://localhost:3280");
     struct sm_tester_options options = {
         .max_connections = 100,
         .max_concurrent_streams_per_connection = 100,
@@ -1309,7 +1309,7 @@ TEST_CASE(localhost_integ_h2_sm_prior_knowledge) {
 /* Test that makes tons of real streams against local host */
 TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
     (void)ctx;
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/echo");
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:3443/echo");
     struct aws_http_connection_monitoring_options monitor_opt = {
         .allowable_throughput_failure_interval_seconds = 2,
         .minimum_throughput_bytes_per_second = 1000,
@@ -1398,7 +1398,7 @@ static int s_sm_stream_acquiring_with_body(int num_streams) {
 /* Test that makes tons of real streams with body against local host */
 TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
     (void)ctx;
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/upload_test");
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:3443/upload_test");
     struct sm_tester_options options = {
         .max_connections = 100,
         .max_concurrent_streams_per_connection = 100,
@@ -1421,7 +1421,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
 /* Test that connection monitor works properly with HTTP/2 stream manager */
 TEST_CASE(localhost_integ_h2_sm_connection_monitor_kill_slow_connection) {
     (void)ctx;
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/slowConnTest");
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:3443/slowConnTest");
     struct aws_http_connection_monitoring_options monitor_opt = {
         .allowable_throughput_failure_interval_seconds = 1,
         .minimum_throughput_bytes_per_second = 1000,

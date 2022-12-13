@@ -27,6 +27,9 @@ static void s_frame_init(
 }
 
 static void s_frame_clean_up(struct h2_decoded_frame *frame) {
+    if (!frame) {
+        return;
+    }
     aws_http_headers_release(frame->headers);
     aws_array_list_clean_up(&frame->settings);
     aws_byte_buf_clean_up(&frame->data);

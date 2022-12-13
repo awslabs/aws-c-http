@@ -119,8 +119,8 @@ static void s_cm_tester_on_cm_shutdown_complete(void *user_data) {
 
     aws_mutex_lock(&tester->lock);
     tester->is_shutdown_complete = true;
-    aws_mutex_unlock(&tester->lock);
     aws_condition_variable_notify_one(&tester->signal);
+    aws_mutex_unlock(&tester->lock);
 }
 
 static struct aws_event_loop *s_new_event_loop(
@@ -872,7 +872,7 @@ static int s_test_connection_manager_proxy_setup_shutdown(struct aws_allocator *
 
     struct aws_http_proxy_options proxy_options = {
         .host = aws_byte_cursor_from_c_str("127.0.0.1"),
-        .port = 8080,
+        .port = 3280,
     };
 
     struct cm_tester_options options = {
@@ -1367,8 +1367,8 @@ static void s_aws_http_on_stream_complete_proxy_test(struct aws_http_stream *str
 
     aws_mutex_lock(&tester->lock);
     tester->proxy_request_complete = true;
-    aws_mutex_unlock(&tester->lock);
     aws_condition_variable_notify_one(&tester->signal);
+    aws_mutex_unlock(&tester->lock);
 }
 
 static struct aws_byte_cursor s_get_proxy_host_for_test(
