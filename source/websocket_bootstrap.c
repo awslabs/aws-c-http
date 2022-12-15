@@ -29,6 +29,7 @@ static const struct aws_websocket_client_bootstrap_system_vtable s_default_syste
     .aws_http_stream_activate = aws_http_stream_activate,
     .aws_http_stream_release = aws_http_stream_release,
     .aws_http_stream_get_connection = aws_http_stream_get_connection,
+    .aws_http_stream_update_window = aws_http_stream_update_window,
     .aws_http_stream_get_incoming_response_status = aws_http_stream_get_incoming_response_status,
     .aws_websocket_handler_new = aws_websocket_handler_new,
 };
@@ -93,6 +94,10 @@ static int s_ws_bootstrap_on_handshake_response_headers(
 static int s_ws_bootstrap_on_handshake_response_header_block_done(
     struct aws_http_stream *stream,
     enum aws_http_header_block header_block,
+    void *user_data);
+static int s_ws_bootstrap_on_handshake_response_body(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
     void *user_data);
 static void s_ws_bootstrap_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data);
 
@@ -188,10 +193,19 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     http_options.socket_options = options->socket_options;
     http_options.tls_options = options->tls_options;
     http_options.proxy_options = options->proxy_options;
-    http_options.initial_window_size = 1024; /* Adequate space for response data to trickle in */
 
-    /* TODO: websockets has issues if back-pressure is disabled on the whole channel. This should be fixed. */
-    http_options.manual_window_management = true;
+    if (options->manual_window_management) {
+        http_options.manual_window_management = true;
+
+        /* Give HTTP handler enough window to comfortably receive the handshake response.
+         *
+         * If the upgrade is unsuccessful, the HTTP window will shrink as the response body is received.
+         * In this case, we'll keep incrementing the window back to its original size so data keeps arriving.
+         *
+         * If the upgrade is successful, then the websocket handler is installed, and
+         * the HTTP handler will take over its own window management. */
+        http_options.initial_window_size = 1024;
+    }
 
     http_options.user_data = ws_bootstrap;
     http_options.on_setup = s_ws_bootstrap_on_http_setup;
@@ -309,6 +323,7 @@ static void s_ws_bootstrap_on_http_setup(struct aws_http_connection *http_connec
         .user_data = ws_bootstrap,
         .on_response_headers = s_ws_bootstrap_on_handshake_response_headers,
         .on_response_header_block_done = s_ws_bootstrap_on_handshake_response_header_block_done,
+        .on_response_body = s_ws_bootstrap_on_handshake_response_body,
         .on_complete = s_ws_bootstrap_on_stream_complete,
     };
 
@@ -542,6 +557,26 @@ error:
     s_ws_bootstrap_cancel_setup_due_to_err(ws_bootstrap, http_connection, aws_last_error());
     /* Returning error stops HTTP from processing any further data */
     return AWS_OP_ERR;
+}
+
+/**
+ * Invoked as we receive the body of a failed response.
+ * This is never invoked if the handshake succeeds.
+ */
+static int s_ws_bootstrap_on_handshake_response_body(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    void *user_data) {
+
+    struct aws_websocket_client_bootstrap *ws_bootstrap = user_data;
+
+    /* If we're managing the read window...
+     * bump the HTTP window back to its starting size, so that we keep receiving the whole response. */
+    if (ws_bootstrap->manual_window_update) {
+        s_system_vtable->aws_http_stream_update_window(stream, data->len);
+    }
+
+    return AWS_OP_SUCCESS;
 }
 
 static void s_ws_bootstrap_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {

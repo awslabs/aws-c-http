@@ -271,6 +271,7 @@ static bool s_on_incoming_frame_complete(
 static void s_set_readpush_frames(struct tester *tester, struct readpush_frame *frames, size_t num_frames) {
     tester->readpush_frames = frames;
     tester->num_readpush_frames = num_frames;
+    tester->readpush_frame_index = 0;
     for (size_t i = 0; i < num_frames; ++i) {
         struct readpush_frame *frame = &frames[i];
         frame->cursor = frame->payload;
@@ -1719,37 +1720,12 @@ TEST_CASE(websocket_handler_read_halts_if_complete_fn_returns_false) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(websocket_handler_window_reopens_by_default) {
-    (void)ctx;
-    struct tester tester;
-    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-
-    struct readpush_frame pushing = {
-        .payload = aws_byte_cursor_from_c_str("Tore open the shutters and threw up the sash."),
-        .def =
-            {
-                .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
-                .fin = true,
-            },
-    };
-
-    s_set_readpush_frames(&tester, &pushing, 1);
-    ASSERT_SUCCESS(s_do_readpush_all(&tester));
-
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    uint64_t total_frame_size = aws_websocket_frame_encoded_size(&pushing.def);
-    ASSERT_UINT_EQUALS(total_frame_size, testing_channel_last_window_update(&tester.testing_channel));
-
-    ASSERT_SUCCESS(s_tester_clean_up(&tester));
-    return AWS_OP_SUCCESS;
-}
-
 static int s_window_manual_increment_common(struct aws_allocator *allocator, bool on_thread) {
     struct tester tester;
     s_tester_options.manual_window_update = true;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
+    /* Push "data" frame to websocket */
     struct readpush_frame pushing = {
         .payload = aws_byte_cursor_from_c_str("Shrink, then open"),
         .def =
@@ -1777,6 +1753,21 @@ static int s_window_manual_increment_common(struct aws_allocator *allocator, boo
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     ASSERT_UINT_EQUALS(pushing.def.payload_length, testing_channel_last_window_update(&tester.testing_channel));
 
+    /* Now push a control frame, and ensure the window automatically re-opens by the whole amount */
+    struct readpush_frame pushing_control_frame = {
+        .payload = aws_byte_cursor_from_c_str("free data"),
+        .def = {.opcode = AWS_WEBSOCKET_OPCODE_PONG, .fin = true},
+    };
+
+    s_set_readpush_frames(&tester, &pushing_control_frame, 1);
+    ASSERT_SUCCESS(s_do_readpush_all(&tester));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    ASSERT_UINT_EQUALS(
+        aws_websocket_frame_encoded_size(&pushing_control_frame.def),
+        testing_channel_last_window_update(&tester.testing_channel));
+
+    /* Done */
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
