@@ -252,7 +252,7 @@ struct aws_websocket_client_connection_options {
      *
      * If this is false, no backpressure is applied and frames will arrive as fast as possible.
      *
-     * If this is false, then whenever the read window reaches 0 you will stop receiving data.
+     * If this is true, then whenever the read window reaches 0 you will stop receiving data.
      * The websocket's `initial_window_size` determines the starting size of the read window.
      * The read window will shrink as the payload from "data" frames (TEXT, BINARY, and CONTINUATION) is received.
      * The payload of "control" frames (CLOSE, PING, PONG) do not affect the read window.
