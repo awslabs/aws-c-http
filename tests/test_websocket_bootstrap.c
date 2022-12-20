@@ -30,6 +30,7 @@ static struct aws_http_stream *s_mock_http_connection_make_request(
 static int s_mock_http_stream_activate(struct aws_http_stream *stream);
 static void s_mock_http_stream_release(struct aws_http_stream *stream);
 static struct aws_http_connection *s_mock_http_stream_get_connection(const struct aws_http_stream *stream);
+static void s_mock_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 static int s_mock_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status);
 static struct aws_websocket *s_mock_websocket_handler_new(const struct aws_websocket_handler_options *options);
 
@@ -42,6 +43,7 @@ static const struct aws_websocket_client_bootstrap_system_vtable s_mock_system_v
     .aws_http_stream_activate = s_mock_http_stream_activate,
     .aws_http_stream_release = s_mock_http_stream_release,
     .aws_http_stream_get_connection = s_mock_http_stream_get_connection,
+    .aws_http_stream_update_window = s_mock_http_stream_update_window,
     .aws_http_stream_get_incoming_response_status = s_mock_http_stream_get_incoming_response_status,
     .aws_websocket_handler_new = s_mock_websocket_handler_new,
 };
@@ -112,6 +114,9 @@ static struct tester {
 
     bool websocket_shutdown_invoked;
     int websocket_shutdown_error_code;
+
+    /* Track the sum of all calls to aws_http_stream_update_window() */
+    size_t window_increment_total;
 } s_tester;
 
 static int s_tester_init(struct aws_allocator *alloc) {
@@ -306,6 +311,13 @@ static struct aws_http_connection *s_mock_http_stream_get_connection(const struc
     AWS_FATAL_ASSERT(!s_tester.http_connection_release_called);
     AWS_FATAL_ASSERT(!s_tester.http_stream_release_called);
     return s_mock_http_connection;
+}
+
+static void s_mock_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
+    AWS_FATAL_ASSERT(stream == s_mock_stream);
+    AWS_FATAL_ASSERT(!s_tester.http_connection_release_called);
+    AWS_FATAL_ASSERT(!s_tester.http_stream_release_called);
+    s_tester.window_increment_total += increment_size;
 }
 
 static int s_mock_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status) {

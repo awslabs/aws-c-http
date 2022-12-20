@@ -1238,6 +1238,9 @@ static int s_handler_process_read_message(
     struct aws_byte_cursor cursor = aws_byte_cursor_from_buf(&message->message_data);
     int err;
 
+    /* At the end of this function we'll bump the window back up by this amount.
+     * We start off assuming we'll re-open the window by the whole amount,
+     * but this number will go down if we process any payload data that ought to shrink the window */
     websocket->thread_data.incoming_message_window_update = message->message_data.len;
 
     AWS_LOGF_TRACE(
@@ -1382,15 +1385,16 @@ static int s_decoder_on_user_payload(struct aws_websocket *websocket, struct aws
         return aws_raise_error(AWS_ERROR_HTTP_CALLBACK_FAILURE);
     }
 
-    /* If user reduced window_update_size, reduce how much the websocket will update its window */
-    if (websocket->manual_window_update) {
-        size_t reduce = data.len;
+    /* If this is a "data" frame's payload, let the window shrink */
+    if (aws_websocket_is_data_frame(websocket->thread_data.current_incoming_frame->opcode) &&
+        websocket->manual_window_update) {
+
         websocket->thread_data.incoming_message_window_update -= data.len;
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_WEBSOCKET,
-            "id=%p: Incoming payload callback changed window update size, window will shrink by %zu.",
+            "id=%p: The read window is shrinking by %zu due to incoming payload from 'data' frame.",
             (void *)websocket,
-            reduce);
+            data.len);
     }
 
     return AWS_OP_SUCCESS;
@@ -1604,6 +1608,14 @@ static void s_increment_read_window_task(struct aws_channel_task *task, void *ar
 void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t size) {
     if (size == 0) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Ignoring window increment of size 0.", (void *)websocket);
+        return;
+    }
+
+    if (!websocket->manual_window_update) {
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Ignoring window increment. Manual window management (aka read backpressure) is not enabled.",
+            (void *)websocket);
         return;
     }
 
