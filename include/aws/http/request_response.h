@@ -694,8 +694,9 @@ struct aws_http_message *aws_http2_message_new_response(struct aws_allocator *al
  * Create an HTTP/2 message from HTTP/1.1 message.
  * pseudo headers will be created from the context and added to the headers of new message.
  * Normal headers will be copied to the headers of new message.
- * Note: if `host` exist, it will stay and `:authority` will be added using the information.
- * `:scheme` is default to be "https". If a different scheme wants to be used, create the HTTP/2 message directly
+ * Note:
+ *  - if `host` exist, it will be removed and `:authority` will be added using the information.
+ *  - `:scheme` always defaults to "https". To use a different scheme create the HTTP/2 message directly
  */
 AWS_HTTP_API
 struct aws_http_message *aws_http2_message_new_from_http1(
@@ -939,6 +940,14 @@ int aws_http_message_erase_header(struct aws_http_message *message, size_t index
  *
  * Tip for language bindings: Do not bind the `options` struct. Use something more natural for your language,
  * such as Builder Pattern in Java, or Python's ability to take many optional arguments by name.
+ *
+ * Note: The header of the request will be sent as it is when the message to send protocol matches the protocol of the
+ * connection.
+ *  - No `user-agent` will be added.
+ *  - No security check will be enforced. eg: `referer` header privacy should be enforced by the user-agent who adds the
+ *      header
+ *  - When HTTP/1 message sent on HTTP/2 connection, `aws_http2_message_new_from_http1` will be applied under the hood.
+ *  - When HTTP/2 message sent on HTTP/1 connection, no change will be made.
  */
 AWS_HTTP_API
 struct aws_http_stream *aws_http_connection_make_request(
