@@ -97,6 +97,17 @@ typedef bool(aws_websocket_on_incoming_frame_begin_fn)(
  * Payload data will not be valid after this call, so copy if necessary.
  * The payload data is always unmasked at this point.
  *
+ * NOTE: If you created the websocket with `manual_window_management` set true, you must maintain the read window.
+ * Whenever the read window reaches 0, you will stop receiving anything.
+ * The websocket's `initial_window_size` determines the starting size of the read window.
+ * The read window shrinks as you receive the payload from "data" frames (TEXT, BINARY, and CONTINUATION).
+ * Use aws_websocket_increment_read_window() to increment the window again and keep frames flowing.
+ * Maintain a larger window to keep up high throughput.
+ * You only need to worry about the payload from "data" frames.
+ * The websocket automatically increments the window to account for any
+ * other incoming bytes, including other parts of a frame (opcode, payload-length, etc)
+ * and the payload of other frame types (PING, PONG, CLOSE).
+ *
  * Return true to proceed normally. If false is returned, the websocket will read no further data,
  * the frame will complete with an error-code, and the connection will close.
  */
@@ -186,8 +197,8 @@ struct aws_websocket_client_connection_options {
     struct aws_http_message *handshake_request;
 
     /**
-     * Initial window size for websocket.
-     * Required.
+     * Initial size of the websocket's read window.
+     * Ignored unless `manual_window_management` is true.
      * Set to 0 to prevent any incoming websocket frames until aws_websocket_increment_read_window() is called.
      */
     size_t initial_window_size;
@@ -241,11 +252,17 @@ struct aws_websocket_client_connection_options {
     /**
      * Set to true to manually manage the read window size.
      *
-     * If this is false, the connection will maintain a constant window size.
+     * If this is false, no backpressure is applied and frames will arrive as fast as possible.
      *
-     * If this is true, the caller must manually increment the window size using aws_websocket_increment_read_window().
-     * If the window is not incremented, it will shrink by the amount of payload data received. If the window size
-     * reaches 0, no further data will be received.
+     * If this is true, then whenever the read window reaches 0 you will stop receiving anything.
+     * The websocket's `initial_window_size` determines the starting size of the read window.
+     * The read window shrinks as you receive the payload from "data" frames (TEXT, BINARY, and CONTINUATION).
+     * Use aws_websocket_increment_read_window() to increment the window again and keep frames flowing.
+     * Maintain a larger window to keep up high throughput.
+     * You only need to worry about the payload from "data" frames.
+     * The websocket automatically increments the window to account for any
+     * other incoming bytes, including other parts of a frame (opcode, payload-length, etc)
+     * and the payload of other frame types (PING, PONG, CLOSE).
      */
     bool manual_window_management;
 
@@ -390,10 +407,21 @@ AWS_HTTP_API
 int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_websocket_send_frame_options *options);
 
 /**
- * Manually increment the read window.
- * The read window shrinks as payload data is received, and reading stops when its size reaches 0.
- * Note that the read window can also be controlled from the aws_websocket_on_incoming_frame_payload_fn(),
- * callback, by manipulating the `out_increment_window` argument.
+ * Manually increment the read window to keep frames flowing.
+ *
+ * If the websocket was created with `manual_window_management` set true,
+ * then whenever the read window reaches 0 you will stop receiving data.
+ * The websocket's `initial_window_size` determines the starting size of the read window.
+ * The read window shrinks as you receive the payload from "data" frames (TEXT, BINARY, and CONTINUATION).
+ * Use aws_websocket_increment_read_window() to increment the window again and keep frames flowing.
+ * Maintain a larger window to keep up high throughput.
+ * You only need to worry about the payload from "data" frames.
+ * The websocket automatically increments the window to account for any
+ * other incoming bytes, including other parts of a frame (opcode, payload-length, etc)
+ * and the payload of other frame types (PING, PONG, CLOSE).
+ *
+ * If the websocket was created with `manual_window_management` set false, this function does nothing.
+ *
  * This function may be called from any thread.
  */
 AWS_HTTP_API
