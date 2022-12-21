@@ -37,27 +37,34 @@ enum aws_websocket_opcode {
 #define AWS_WEBSOCKET_CLOSE_TIMEOUT 1000000000 // nanos -> 1 sec
 
 /**
- * Called when websocket setup is complete.
- * An error_code of zero indicates that setup was completely successful.
- * Called exactly once on the websocket's event-loop thread.
+ * Data passed to the websocket on_connection_setup callback.
  *
- * websocket: if successful, a valid pointer to the websocket, otherwise NULL.
- * error_code: the operation was completely successful if this value is zero.
- * handshake_response_status: The response status code of the HTTP handshake, 101 if successful,
- *                            -1 if the connection failed before a response was received.
- * handshake_response_header_array: Headers from the HTTP handshake response.
- *                            May be NULL if num_handshake_response_headers is 0.
- *                            Copy if necessary, this memory becomes invalid once the callback completes.
- * num_handshake_response_headers: Number of entries in handshake_response_header_array.
- *                            May be 0 if the response did not complete, or was invalid.
+ * An error_code of zero indicates that setup was completely successful.
+ * You own the websocket pointer now and must call aws_websocket_release() when you are done with it.
+ * You can inspect the response headers, if you're interested.
+ *
+ * A non-zero error_code indicates that setup failed.
+ * The websocket pointer will be NULL.
+ * If the server sent a response, you can inspect its status-code, headers, and body,
+ * but this data will NULL if setup failed before a full response could be received.
+ * If you wish to persist data from the response make a deep copy.
+ * The response data becomes invalid once the callback completes.
  */
-typedef void(aws_websocket_on_connection_setup_fn)(
-    struct aws_websocket *websocket,
-    int error_code,
-    int handshake_response_status,
-    const struct aws_http_header *handshake_response_header_array,
-    size_t num_handshake_response_headers,
-    void *user_data);
+struct aws_websocket_on_connection_setup_data {
+    int error_code;
+    struct aws_websocket *websocket;
+    const int *handshake_response_status;
+    const struct aws_http_headers *handshake_response_headers;
+    const struct aws_byte_cursor *handshake_response_body;
+};
+
+/**
+ * Called when websocket setup is complete.
+ * Called exactly once on the websocket's event-loop thread.
+ * See `aws_websocket_on_connection_setup_data`.
+ */
+typedef void(
+    aws_websocket_on_connection_setup_fn)(const struct aws_websocket_on_connection_setup_data *data, void *user_data);
 
 /**
  * Called when the websocket has finished shutting down.

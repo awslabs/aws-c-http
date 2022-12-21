@@ -152,32 +152,20 @@ static int s_tester_clean_up(void) {
 static bool s_headers_eq(
     const struct aws_http_header *headers_a,
     size_t num_headers_a,
-    const struct aws_http_header *headers_b,
-    size_t num_headers_b) {
+    const struct aws_http_headers *headers_b) {
 
-    if (num_headers_a != num_headers_b) {
+    if (num_headers_a != aws_http_headers_count(headers_b)) {
         return false;
     }
 
-    for (size_t a_i = 0; a_i < num_headers_a; ++a_i) {
-        struct aws_http_header a = headers_a[a_i];
+    for (size_t i = 0; i < num_headers_a; ++i) {
+        struct aws_http_header a = headers_a[i];
+        struct aws_http_header b;
+        aws_http_headers_get_index(headers_b, i, &b);
 
-        bool found_match = false;
-
-        for (size_t b_i = 0; b_i < num_headers_b; ++b_i) {
-            struct aws_http_header b = headers_b[b_i];
-
-            if (aws_byte_cursor_eq_ignore_case(&a.name, &b.name) &&
-                aws_byte_cursor_eq_ignore_case(&a.value, &b.value)) {
-
-                found_match = true;
-                break;
-            }
-        }
-
-        if (!found_match) {
+        if (!aws_byte_cursor_eq_ignore_case(&a.name, &b.name) || !aws_byte_cursor_eq(&a.value, &b.value)) {
             printf(
-                "Failed to find header '" PRInSTR ": " PRInSTR "'\n",
+                "Header did not match '" PRInSTR ": " PRInSTR "'\n",
                 AWS_BYTE_CURSOR_PRI(a.name),
                 AWS_BYTE_CURSOR_PRI(a.value));
             return false;
@@ -348,33 +336,28 @@ static struct aws_websocket *s_mock_websocket_handler_new(const struct aws_webso
     return s_mock_websocket;
 }
 
-static void s_on_websocket_setup(
-    struct aws_websocket *websocket,
-    int error_code,
-    int handshake_response_status,
-    const struct aws_http_header *handshake_response_header_array,
-    size_t num_handshake_response_headers,
-    void *user_data) {
+static void s_on_websocket_setup(const struct aws_websocket_on_connection_setup_data *data, void *user_data) {
 
-    if (error_code) {
-        AWS_FATAL_ASSERT(!websocket);
+    if (data->error_code) {
+        AWS_FATAL_ASSERT(!data->websocket);
     } else {
-        AWS_FATAL_ASSERT(websocket == s_mock_websocket);
+        AWS_FATAL_ASSERT(data->websocket == s_mock_websocket);
 
         /* Check that headers passed by mock response carry through. */
         AWS_FATAL_ASSERT(s_headers_eq(
             s_tester.handshake_response_headers,
             s_tester.num_handshake_response_headers,
-            handshake_response_header_array,
-            num_handshake_response_headers));
+            data->handshake_response_headers));
 
-        AWS_FATAL_ASSERT(handshake_response_status == 101);
+        AWS_FATAL_ASSERT(*data->handshake_response_status == 101);
+
+        AWS_FATAL_ASSERT(data->handshake_response_body == NULL);
     }
 
     AWS_FATAL_ASSERT(user_data == &s_tester);
 
     s_tester.websocket_setup_invoked = true;
-    s_tester.websocket_setup_error_code = error_code;
+    s_tester.websocket_setup_error_code = data->error_code;
 
     /* Don't need the request anymore */
     aws_http_message_destroy(s_tester.handshake_request);
@@ -462,7 +445,8 @@ static int s_drive_websocket_connect(int *out_error_code) {
     /* Headers arrive, HTTP connection ends if callback returns error */
     if (s_tester.http_stream_on_response_headers(
             s_mock_stream,
-            AWS_HTTP_HEADER_BLOCK_MAIN,
+            s_tester.fail_at_step == BOOT_STEP_VALIDATE_RESPONSE_STATUS ? AWS_HTTP_HEADER_BLOCK_MAIN
+                                                                        : AWS_HTTP_HEADER_BLOCK_INFORMATIONAL,
             s_tester.handshake_response_headers,
             s_tester.num_handshake_response_headers,
             s_tester.http_stream_user_data)) {
@@ -478,7 +462,11 @@ static int s_drive_websocket_connect(int *out_error_code) {
     }
 
     /* Headers are done, HTTP connection ends if error returned */
-    if (s_tester.http_stream_on_response_header_block_done(s_mock_stream, false, s_tester.http_stream_user_data)) {
+    if (s_tester.http_stream_on_response_header_block_done(
+            s_mock_stream,
+            s_tester.fail_at_step == BOOT_STEP_VALIDATE_RESPONSE_STATUS ? AWS_HTTP_HEADER_BLOCK_MAIN
+                                                                        : AWS_HTTP_HEADER_BLOCK_INFORMATIONAL,
+            s_tester.http_stream_user_data)) {
         s_complete_http_stream_and_connection(aws_last_error());
         goto finishing_checks;
     }
@@ -600,7 +588,7 @@ TEST_CASE(websocket_boot_fail_before_response_headers) {
 }
 
 TEST_CASE(websocket_boot_fail_before_response_headers_done) {
-    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_HEADERS);
+    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_HEADERS_DONE);
 }
 
 TEST_CASE(websocket_boot_fail_at_response_status) {
