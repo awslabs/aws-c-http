@@ -275,12 +275,12 @@ static void s_ws_bootstrap_invoke_setup_callback(struct aws_websocket_client_boo
         response_status_ptr = &ws_bootstrap->response_status;
 
         num_response_headers = aws_http_headers_count(ws_bootstrap->response_headers);
-        if (num_response_headers > 0) {
-            response_header_array =
-                aws_mem_calloc(ws_bootstrap->alloc, num_response_headers, sizeof(struct aws_http_header));
-            for (size_t i = 0; i < num_response_headers; ++i) {
-                aws_http_headers_get_index(ws_bootstrap->response_headers, i, &response_header_array[i]);
-            }
+
+        response_header_array =
+            aws_mem_calloc(ws_bootstrap->alloc, aws_max_size(1, num_response_headers), sizeof(struct aws_http_header));
+
+        for (size_t i = 0; i < num_response_headers; ++i) {
+            aws_http_headers_get_index(ws_bootstrap->response_headers, i, &response_header_array[i]);
         }
 
         if (ws_bootstrap->got_full_response_body) {
