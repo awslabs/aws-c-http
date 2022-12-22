@@ -166,16 +166,16 @@ static int s_tester_clean_up(void) {
 static bool s_headers_eq(
     const struct aws_http_header *headers_a,
     size_t num_headers_a,
-    const struct aws_http_headers *headers_b) {
+    const struct aws_http_header *headers_b,
+    size_t num_headers_b) {
 
-    if (num_headers_a != aws_http_headers_count(headers_b)) {
+    if (num_headers_a != num_headers_b) {
         return false;
     }
 
     for (size_t i = 0; i < num_headers_a; ++i) {
         struct aws_http_header a = headers_a[i];
-        struct aws_http_header b;
-        aws_http_headers_get_index(headers_b, i, &b);
+        struct aws_http_header b = headers_b[i];
 
         if (!aws_byte_cursor_eq_ignore_case(&a.name, &b.name) || !aws_byte_cursor_eq(&a.value, &b.value)) {
             printf(
@@ -371,18 +371,19 @@ static void s_on_websocket_setup(const struct aws_websocket_on_connection_setup_
         AWS_FATAL_ASSERT(*data->handshake_response_status == s_tester.handshake_response_status);
 
         /* If we're reporting a status code, we should also be reporting the headers */
-        AWS_FATAL_ASSERT(data->handshake_response_headers != NULL);
+        AWS_FATAL_ASSERT(data->handshake_response_header_array != NULL);
     }
 
-    if (data->handshake_response_headers) {
+    if (data->handshake_response_header_array) {
         s_tester.websocket_setup_had_response_headers = true;
         AWS_FATAL_ASSERT(s_headers_eq(
             s_tester.handshake_response_headers,
             s_tester.num_handshake_response_headers,
-            data->handshake_response_headers));
+            data->handshake_response_header_array,
+            data->num_handshake_response_headers));
 
         /* If we're reporting headers, we should also be reporting the status code */
-        AWS_FATAL_ASSERT(data->handshake_response_headers != NULL);
+        AWS_FATAL_ASSERT(data->handshake_response_status != NULL);
     }
 
     if (data->handshake_response_body) {
@@ -391,7 +392,7 @@ static void s_on_websocket_setup(const struct aws_websocket_on_connection_setup_
 
         /* If we're reporting the body, we should also be reporting the headers and status code */
         AWS_FATAL_ASSERT(data->handshake_response_status != NULL);
-        AWS_FATAL_ASSERT(data->handshake_response_headers != NULL);
+        AWS_FATAL_ASSERT(data->handshake_response_header_array != NULL);
     }
 
     AWS_FATAL_ASSERT(user_data == &s_tester);

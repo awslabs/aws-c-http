@@ -54,7 +54,8 @@ struct aws_websocket_on_connection_setup_data {
     int error_code;
     struct aws_websocket *websocket;
     const int *handshake_response_status;
-    const struct aws_http_headers *handshake_response_headers;
+    const struct aws_http_header *handshake_response_header_array;
+    size_t num_handshake_response_headers;
     const struct aws_byte_cursor *handshake_response_body;
 };
 
@@ -64,7 +65,7 @@ struct aws_websocket_on_connection_setup_data {
  * See `aws_websocket_on_connection_setup_data`.
  */
 typedef void(
-    aws_websocket_on_connection_setup_fn)(const struct aws_websocket_on_connection_setup_data *data, void *user_data);
+    aws_websocket_on_connection_setup_fn)(const struct aws_websocket_on_connection_setup_data *setup, void *user_data);
 
 /**
  * Called when the websocket has finished shutting down.

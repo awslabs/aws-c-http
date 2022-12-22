@@ -266,13 +266,22 @@ static void s_ws_bootstrap_invoke_setup_callback(struct aws_websocket_client_boo
 
     /* Report things about the response, if we received them */
     int *response_status_ptr = NULL;
-    const struct aws_http_headers *response_headers_ptr = NULL;
+    struct aws_http_header *response_header_array = NULL;
+    size_t num_response_headers = 0;
     struct aws_byte_cursor *response_body_ptr = NULL;
     struct aws_byte_cursor response_body_cursor = {.len = 0};
 
     if (ws_bootstrap->got_full_response_headers) {
         response_status_ptr = &ws_bootstrap->response_status;
-        response_headers_ptr = ws_bootstrap->response_headers;
+
+        num_response_headers = aws_http_headers_count(ws_bootstrap->response_headers);
+        if (num_response_headers > 0) {
+            response_header_array =
+                aws_mem_calloc(ws_bootstrap->alloc, num_response_headers, sizeof(struct aws_http_header));
+            for (size_t i = 0; i < num_response_headers; ++i) {
+                aws_http_headers_get_index(ws_bootstrap->response_headers, i, &response_header_array[i]);
+            }
+        }
 
         if (ws_bootstrap->got_full_response_body) {
             response_body_cursor = aws_byte_cursor_from_buf(&ws_bootstrap->response_body);
@@ -284,7 +293,8 @@ static void s_ws_bootstrap_invoke_setup_callback(struct aws_websocket_client_boo
         .error_code = error_code,
         .websocket = ws_bootstrap->websocket,
         .handshake_response_status = response_status_ptr,
-        .handshake_response_headers = response_headers_ptr,
+        .handshake_response_header_array = response_header_array,
+        .num_handshake_response_headers = num_response_headers,
         .handshake_response_body = response_body_ptr,
     };
 
@@ -292,6 +302,10 @@ static void s_ws_bootstrap_invoke_setup_callback(struct aws_websocket_client_boo
 
     /* Clear setup callback so that we know that it's been invoked. */
     ws_bootstrap->websocket_setup_callback = NULL;
+
+    if (response_header_array) {
+        aws_mem_release(ws_bootstrap->alloc, response_header_array);
+    }
 }
 
 /* Invoked when HTTP connection has been established (or failed to be established) */
