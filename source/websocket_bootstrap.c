@@ -335,10 +335,20 @@ static void s_ws_bootstrap_on_http_setup(struct aws_http_connection *http_connec
     struct aws_http_stream *handshake_stream =
         s_system_vtable->aws_http_connection_make_request(http_connection, &options);
 
-    if (!handshake_stream || s_system_vtable->aws_http_stream_activate(handshake_stream)) {
+    if (!handshake_stream) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
-            "id=%p: Failed to initiate websocket upgrade request, error %d (%s).",
+            "id=%p: Failed to make websocket upgrade request, error %d (%s).",
+            (void *)ws_bootstrap,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        goto error;
+    }
+
+    if (s_system_vtable->aws_http_stream_activate(handshake_stream)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=%p: Failed to activate websocket upgrade request, error %d (%s).",
             (void *)ws_bootstrap,
             aws_last_error(),
             aws_error_name(aws_last_error()));
@@ -353,6 +363,7 @@ static void s_ws_bootstrap_on_http_setup(struct aws_http_connection *http_connec
     return;
 
 error:
+    s_system_vtable->aws_http_stream_release(handshake_stream);
     s_ws_bootstrap_cancel_setup_due_to_err(ws_bootstrap, http_connection, aws_last_error());
 }
 
@@ -371,12 +382,14 @@ static void s_ws_bootstrap_on_http_shutdown(
     if (ws_bootstrap->websocket_setup_callback) {
         AWS_ASSERT(!ws_bootstrap->websocket);
 
+        /* If there's already a setup_error_code, use that */
+        if (ws_bootstrap->setup_error_code) {
+            error_code = ws_bootstrap->setup_error_code;
+        }
+
         /* Ensure non-zero error_code is passed */
         if (!error_code) {
-            error_code = ws_bootstrap->setup_error_code;
-            if (!error_code) {
-                error_code = AWS_ERROR_UNKNOWN;
-            }
+            error_code = AWS_ERROR_UNKNOWN;
         }
 
         AWS_LOGF_ERROR(

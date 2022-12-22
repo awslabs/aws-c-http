@@ -8,7 +8,6 @@
 #include <aws/common/atomics.h>
 #include <aws/http/connection.h>
 #include <aws/http/request_response.h>
-#include <aws/io/logging.h>
 #include <aws/io/uri.h>
 #include <aws/testing/aws_test_harness.h>
 
@@ -48,7 +47,7 @@ static const struct aws_websocket_client_bootstrap_system_vtable s_mock_system_v
     .aws_websocket_handler_new = s_mock_websocket_handler_new,
 };
 
-static const struct aws_http_header s_handshake_response_headers[] = {
+static const struct aws_http_header s_accepted_response_headers[] = {
     {
         .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
@@ -63,16 +62,26 @@ static const struct aws_http_header s_handshake_response_headers[] = {
     },
 };
 
-/* If fail_at_step is set to one of these, that step will explicitly fail and raise its enum value as the error code */
+static const struct aws_http_header s_rejected_response_headers[] = {
+    {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("43"),
+    },
+};
+static const char *s_rejected_response_body = "your request is bad and you should feel bad";
+
+/* If fail_at_step is set to one of these, that step will explicitly fail.
+ * These represent the steps where an external system could fail. */
 enum boot_step {
     BOOT_STEP_HTTP_CONNECT = 0x4000000, /* Use values that don't overlap with another aws-c-xyz library */
     BOOT_STEP_HTTP_CONNECT_COMPLETE,
     BOOT_STEP_REQUEST_NEW,
-    BOOT_STEP_HEADERS,
-    BOOT_STEP_HEADERS_DONE,
-    /* If the response validation steps fail, we expect a specific error */
-    BOOT_STEP_VALIDATE_RESPONSE_STATUS = AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE,
-    BOOT_STEP_WEBSOCKET_NEW = 0x50000000, /* Back to using made-up error-codes */
+    BOOT_STEP_REQUEST_ACTIVATE,
+    BOOT_STEP_BEFORE_HEADERS,
+    BOOT_STEP_BEFORE_HEADERS_DONE,
+    BOOT_STEP_BEFORE_REJECTION_BODY,
+    BOOT_STEP_BEFORE_REJECTION_STREAM_COMPLETE,
+    BOOT_STEP_WEBSOCKET_NEW,
     BOOT_STEP_HTTP_SHUTDOWN,
 };
 
@@ -81,14 +90,16 @@ static struct tester {
     /* Settings */
     struct aws_allocator *alloc;
     enum boot_step fail_at_step;
+    bool send_rejected_response;
 
     struct aws_http_message *handshake_request;
+
+    int handshake_response_status;
     const struct aws_http_header *handshake_response_headers;
     size_t num_handshake_response_headers;
+    struct aws_byte_cursor handshake_response_body;
 
     /* State */
-    struct aws_logger logger;
-
     bool http_connect_called_successfully;
 
     aws_http_on_client_connection_setup_fn *http_connect_setup_callback;
@@ -101,16 +112,22 @@ static struct tester {
     bool http_stream_new_called_successfully;
     aws_http_on_incoming_headers_fn *http_stream_on_response_headers;
     aws_http_on_incoming_header_block_done_fn *http_stream_on_response_header_block_done;
+    aws_http_on_incoming_body_fn *http_stream_on_response_body;
     aws_http_on_stream_complete_fn *http_stream_on_complete;
     void *http_stream_user_data;
+
+    bool http_stream_on_complete_invoked;
 
     bool websocket_new_called_successfully;
 
     bool http_stream_release_called;
-    bool http_stream_activate_called;
+    bool http_stream_activate_called_successfully;
 
     bool websocket_setup_invoked;
     int websocket_setup_error_code;
+    bool websocket_setup_had_response_status;
+    bool websocket_setup_had_response_headers;
+    bool websocket_setup_had_response_body;
 
     bool websocket_shutdown_invoked;
     int websocket_shutdown_error_code;
@@ -122,22 +139,20 @@ static struct tester {
 static int s_tester_init(struct aws_allocator *alloc) {
     aws_http_library_init(alloc);
 
-    struct aws_logger_standard_options logger_options = {
-        .level = AWS_LOG_LEVEL_TRACE,
-        .file = stderr,
-    };
-    ASSERT_SUCCESS(aws_logger_init_standard(&s_tester.logger, alloc, &logger_options));
-    aws_logger_set(&s_tester.logger);
-
     aws_websocket_client_bootstrap_set_system_vtable(&s_mock_system_vtable);
 
     /* Set default settings for tester (unless the test already configured it) */
-    if (!s_tester.alloc) {
-        s_tester.alloc = alloc;
-    }
-    if (!s_tester.handshake_response_headers) {
-        s_tester.handshake_response_headers = s_handshake_response_headers;
-        s_tester.num_handshake_response_headers = AWS_ARRAY_SIZE(s_handshake_response_headers);
+    s_tester.alloc = alloc;
+
+    if (s_tester.send_rejected_response) {
+        s_tester.handshake_response_status = 403;
+        s_tester.handshake_response_headers = s_rejected_response_headers;
+        s_tester.num_handshake_response_headers = AWS_ARRAY_SIZE(s_rejected_response_headers);
+        s_tester.handshake_response_body = aws_byte_cursor_from_c_str(s_rejected_response_body);
+    } else {
+        s_tester.handshake_response_status = 101;
+        s_tester.handshake_response_headers = s_accepted_response_headers;
+        s_tester.num_handshake_response_headers = AWS_ARRAY_SIZE(s_accepted_response_headers);
     }
 
     return AWS_OP_SUCCESS;
@@ -145,7 +160,6 @@ static int s_tester_init(struct aws_allocator *alloc) {
 
 static int s_tester_clean_up(void) {
     aws_http_library_clean_up();
-    aws_logger_clean_up(&s_tester.logger);
     return AWS_OP_SUCCESS;
 }
 
@@ -236,6 +250,9 @@ static int s_mock_http_client_connect(const struct aws_http_client_connection_op
 }
 
 static void s_mock_http_connection_release(struct aws_http_connection *connection) {
+    if (connection == NULL) {
+        return;
+    }
     AWS_FATAL_ASSERT(connection == s_mock_http_connection);
     AWS_FATAL_ASSERT(!s_tester.http_connection_release_called);
     s_tester.http_connection_release_called = true;
@@ -273,6 +290,7 @@ static struct aws_http_stream *s_mock_http_connection_make_request(
     s_tester.http_stream_new_called_successfully = true;
     s_tester.http_stream_on_response_headers = options->on_response_headers;
     s_tester.http_stream_on_response_header_block_done = options->on_response_header_block_done;
+    s_tester.http_stream_on_response_body = options->on_response_body;
     s_tester.http_stream_on_complete = options->on_complete;
     s_tester.http_stream_user_data = options->user_data;
     return s_mock_stream;
@@ -282,12 +300,20 @@ static int s_mock_http_stream_activate(struct aws_http_stream *stream) {
     AWS_FATAL_ASSERT(stream == s_mock_stream);
     AWS_FATAL_ASSERT(!s_tester.http_connection_release_called);
     AWS_FATAL_ASSERT(!s_tester.http_stream_release_called);
-    s_tester.http_stream_activate_called = true;
 
+    if (s_tester.fail_at_step == BOOT_STEP_REQUEST_ACTIVATE) {
+        return aws_raise_error(BOOT_STEP_REQUEST_ACTIVATE);
+    }
+
+    s_tester.http_stream_activate_called_successfully = true;
     return AWS_OP_SUCCESS;
 }
 
 static void s_mock_http_stream_release(struct aws_http_stream *stream) {
+    if (stream == NULL) {
+        return;
+    }
+
     AWS_FATAL_ASSERT(stream == s_mock_stream);
     AWS_FATAL_ASSERT(!s_tester.http_connection_release_called);
     AWS_FATAL_ASSERT(!s_tester.http_stream_release_called);
@@ -314,11 +340,7 @@ static int s_mock_http_stream_get_incoming_response_status(const struct aws_http
     AWS_FATAL_ASSERT(!s_tester.http_stream_release_called);
     AWS_FATAL_ASSERT(out_status);
 
-    if (s_tester.fail_at_step == BOOT_STEP_VALIDATE_RESPONSE_STATUS) {
-        *out_status = 403;
-    } else {
-        *out_status = 101;
-    }
+    *out_status = s_tester.handshake_response_status;
     return AWS_OP_SUCCESS;
 }
 
@@ -338,20 +360,38 @@ static struct aws_websocket *s_mock_websocket_handler_new(const struct aws_webso
 
 static void s_on_websocket_setup(const struct aws_websocket_on_connection_setup_data *data, void *user_data) {
 
-    if (data->error_code) {
-        AWS_FATAL_ASSERT(!data->websocket);
-    } else {
-        AWS_FATAL_ASSERT(data->websocket == s_mock_websocket);
+    /* error-code is set XOR websocket is set. Must be one, but not both. */
+    AWS_FATAL_ASSERT((data->error_code != 0) ^ (data->websocket != NULL));
 
-        /* Check that headers passed by mock response carry through. */
+    /* We may not get the full handshake response.
+     * But any parts we do get should match what the mock sent us. */
+
+    if (data->handshake_response_status) {
+        s_tester.websocket_setup_had_response_status = true;
+        AWS_FATAL_ASSERT(*data->handshake_response_status == s_tester.handshake_response_status);
+
+        /* If we're reporting a status code, we should also be reporting the headers */
+        AWS_FATAL_ASSERT(data->handshake_response_headers != NULL);
+    }
+
+    if (data->handshake_response_headers) {
+        s_tester.websocket_setup_had_response_headers = true;
         AWS_FATAL_ASSERT(s_headers_eq(
             s_tester.handshake_response_headers,
             s_tester.num_handshake_response_headers,
             data->handshake_response_headers));
 
-        AWS_FATAL_ASSERT(*data->handshake_response_status == 101);
+        /* If we're reporting headers, we should also be reporting the status code */
+        AWS_FATAL_ASSERT(data->handshake_response_headers != NULL);
+    }
 
-        AWS_FATAL_ASSERT(data->handshake_response_body == NULL);
+    if (data->handshake_response_body) {
+        s_tester.websocket_setup_had_response_body = true;
+        AWS_FATAL_ASSERT(aws_byte_cursor_eq(&s_tester.handshake_response_body, data->handshake_response_body));
+
+        /* If we're reporting the body, we should also be reporting the headers and status code */
+        AWS_FATAL_ASSERT(data->handshake_response_status != NULL);
+        AWS_FATAL_ASSERT(data->handshake_response_headers != NULL);
     }
 
     AWS_FATAL_ASSERT(user_data == &s_tester);
@@ -373,7 +413,9 @@ static void s_on_websocket_shutdown(struct aws_websocket *websocket, int error_c
 }
 
 static void s_complete_http_stream_and_connection(int error_code) {
-    s_tester.http_stream_on_complete(s_mock_stream, error_code, s_tester.http_stream_user_data);
+    if (s_tester.http_stream_activate_called_successfully && !s_tester.http_stream_on_complete_invoked) {
+        s_tester.http_stream_on_complete(s_mock_stream, error_code, s_tester.http_stream_user_data);
+    }
     s_tester.http_connect_shutdown_callback(s_mock_http_connection, error_code, s_tester.http_stream_user_data);
 }
 
@@ -429,24 +471,24 @@ static int s_drive_websocket_connect(int *out_error_code) {
      * shutdown callback */
     if (s_tester.http_connection_close_called) {
         s_tester.http_connect_shutdown_callback(
-            s_mock_http_connection, AWS_OP_SUCCESS, s_tester.http_connect_user_data);
+            s_mock_http_connection, AWS_ERROR_SUCCESS, s_tester.http_connect_user_data);
         goto finishing_checks;
     }
 
     /* Bootstrap should have created new stream */
     ASSERT_TRUE(s_tester.http_stream_new_called_successfully);
+    ASSERT_TRUE(s_tester.http_stream_activate_called_successfully);
 
     /* HTTP connection could fail before any headers arrive */
-    if (s_tester.fail_at_step == BOOT_STEP_HEADERS) {
-        s_complete_http_stream_and_connection(BOOT_STEP_HEADERS);
+    if (s_tester.fail_at_step == BOOT_STEP_BEFORE_HEADERS) {
+        s_complete_http_stream_and_connection(BOOT_STEP_BEFORE_HEADERS);
         goto finishing_checks;
     }
 
     /* Headers arrive, HTTP connection ends if callback returns error */
     if (s_tester.http_stream_on_response_headers(
             s_mock_stream,
-            s_tester.fail_at_step == BOOT_STEP_VALIDATE_RESPONSE_STATUS ? AWS_HTTP_HEADER_BLOCK_MAIN
-                                                                        : AWS_HTTP_HEADER_BLOCK_INFORMATIONAL,
+            s_tester.send_rejected_response ? AWS_HTTP_HEADER_BLOCK_MAIN : AWS_HTTP_HEADER_BLOCK_INFORMATIONAL,
             s_tester.handshake_response_headers,
             s_tester.num_handshake_response_headers,
             s_tester.http_stream_user_data)) {
@@ -456,23 +498,69 @@ static int s_drive_websocket_connect(int *out_error_code) {
     }
 
     /* HTTP connection could fail before headers are done */
-    if (s_tester.fail_at_step == BOOT_STEP_HEADERS_DONE) {
-        s_complete_http_stream_and_connection(BOOT_STEP_HEADERS_DONE);
+    if (s_tester.fail_at_step == BOOT_STEP_BEFORE_HEADERS_DONE) {
+        s_complete_http_stream_and_connection(BOOT_STEP_BEFORE_HEADERS_DONE);
         goto finishing_checks;
     }
 
     /* Headers are done, HTTP connection ends if error returned */
     if (s_tester.http_stream_on_response_header_block_done(
             s_mock_stream,
-            s_tester.fail_at_step == BOOT_STEP_VALIDATE_RESPONSE_STATUS ? AWS_HTTP_HEADER_BLOCK_MAIN
-                                                                        : AWS_HTTP_HEADER_BLOCK_INFORMATIONAL,
+            s_tester.send_rejected_response ? AWS_HTTP_HEADER_BLOCK_MAIN : AWS_HTTP_HEADER_BLOCK_INFORMATIONAL,
             s_tester.http_stream_user_data)) {
         s_complete_http_stream_and_connection(aws_last_error());
         goto finishing_checks;
     }
 
     if (s_tester.http_connection_close_called) {
-        s_complete_http_stream_and_connection(AWS_OP_SUCCESS);
+        s_complete_http_stream_and_connection(AWS_ERROR_SUCCESS);
+        goto finishing_checks;
+    }
+
+    if (s_tester.send_rejected_response) {
+        /* If the response is a rejection, it will have a body */
+
+        /* HTTP connection could fail before the body is delivered */
+        if (s_tester.fail_at_step == BOOT_STEP_BEFORE_REJECTION_BODY) {
+            s_complete_http_stream_and_connection(BOOT_STEP_BEFORE_REJECTION_BODY);
+            goto finishing_checks;
+        }
+
+        /* Response body arrives, HTTP connection ends if error returned */
+        if (s_tester.handshake_response_body.len > 0) {
+
+            /* HTTP connection could fail before the whole body is delivered */
+            struct aws_byte_cursor body = s_tester.handshake_response_body;
+            if (s_tester.fail_at_step == BOOT_STEP_BEFORE_REJECTION_STREAM_COMPLETE) {
+                body.len = 1;
+            }
+
+            if (s_tester.http_stream_on_response_body(
+                    s_mock_stream, &s_tester.handshake_response_body, s_tester.http_stream_user_data)) {
+                s_complete_http_stream_and_connection(aws_last_error());
+                goto finishing_checks;
+            }
+
+            if (s_tester.http_connection_close_called) {
+                s_complete_http_stream_and_connection(AWS_ERROR_SUCCESS);
+                goto finishing_checks;
+            }
+        }
+
+        /* HTTP connection could fail before the stream completes on its own */
+        if (s_tester.fail_at_step == BOOT_STEP_BEFORE_REJECTION_STREAM_COMPLETE) {
+            s_complete_http_stream_and_connection(BOOT_STEP_BEFORE_REJECTION_STREAM_COMPLETE);
+            goto finishing_checks;
+        }
+
+        /* HTTP stream completes on its own after delivering rejection */
+        s_tester.http_stream_on_complete(s_mock_stream, AWS_ERROR_SUCCESS, s_tester.http_stream_user_data);
+        s_tester.http_stream_on_complete_invoked = true;
+
+        /* Bootstrap should have closed the connection after receiving the completed response */
+        ASSERT_TRUE(s_tester.http_connection_close_called);
+        s_tester.http_connect_shutdown_callback(
+            s_mock_http_connection, AWS_ERROR_SUCCESS, s_tester.http_stream_user_data);
         goto finishing_checks;
     }
 
@@ -491,7 +579,7 @@ static int s_drive_websocket_connect(int *out_error_code) {
         goto finishing_checks;
     }
 
-    s_complete_http_stream_and_connection(AWS_OP_SUCCESS);
+    s_complete_http_stream_and_connection(AWS_ERROR_SUCCESS);
 
 finishing_checks:
 
@@ -524,7 +612,6 @@ finishing_checks:
 
     /* If request was created, it must be released eventually. */
     if (s_tester.http_stream_new_called_successfully) {
-        ASSERT_TRUE(s_tester.http_stream_activate_called);
         ASSERT_TRUE(s_tester.http_stream_release_called);
     }
 
@@ -552,6 +639,9 @@ TEST_CASE(websocket_boot_golden_path) {
     int websocket_connect_error_code;
     ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, websocket_connect_error_code);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_status);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_headers);
+    ASSERT_FALSE(s_tester.websocket_setup_had_response_body);
 
     ASSERT_SUCCESS(s_tester_clean_up());
     return AWS_OP_SUCCESS;
@@ -583,16 +673,16 @@ TEST_CASE(websocket_boot_fail_at_new_request) {
     return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_REQUEST_NEW);
 }
 
+TEST_CASE(websocket_boot_fail_at_activate_request) {
+    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_REQUEST_ACTIVATE);
+}
+
 TEST_CASE(websocket_boot_fail_before_response_headers) {
-    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_HEADERS);
+    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_BEFORE_HEADERS);
 }
 
 TEST_CASE(websocket_boot_fail_before_response_headers_done) {
-    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_HEADERS_DONE);
-}
-
-TEST_CASE(websocket_boot_fail_at_response_status) {
-    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_VALIDATE_RESPONSE_STATUS);
+    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_BEFORE_HEADERS_DONE);
 }
 
 TEST_CASE(websocket_boot_fail_at_new_handler) {
@@ -601,6 +691,70 @@ TEST_CASE(websocket_boot_fail_at_new_handler) {
 
 TEST_CASE(websocket_boot_report_unexpected_http_shutdown) {
     return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_HTTP_SHUTDOWN);
+}
+
+/* Test receiving a 4xx rejection response from the server.
+ * Note that this test doesn't use fail_at_step, because we're not modeling
+ * an "unexpected" HTTP failure. */
+TEST_CASE(websocket_boot_fail_from_handshake_rejection) {
+    (void)ctx;
+    s_tester.send_rejected_response = true;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE, websocket_connect_error_code);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+/* Test the connection dying early, while processing a 4xx rejection response.
+ * Specifically, after the headers are received but before the body is received. */
+TEST_CASE(websocket_boot_fail_before_handshake_rejection_body) {
+    (void)ctx;
+    s_tester.send_rejected_response = true;
+    s_tester.fail_at_step = BOOT_STEP_BEFORE_REJECTION_BODY;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+
+    /* It's ambiguous what the error-code should be here.
+     * The connection died early, AND we know from the status code that it was an UPGRADE_FAILURE.
+     * Currently, the bootstrap is programmed to report it as a normal UPGRADE_FAILURE,
+     * but don't report a body, because we didn't receive any */
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE, websocket_connect_error_code);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_status);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_headers);
+    ASSERT_FALSE(s_tester.websocket_setup_had_response_body);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+/* Test the connection dying early, while processing a 4xx rejection response.
+ * Specifically, after some of the body is received, but before the stream completes. */
+TEST_CASE(websocket_boot_fail_before_handshake_rejection_stream_complete) {
+    (void)ctx;
+    s_tester.send_rejected_response = true;
+    s_tester.fail_at_step = BOOT_STEP_BEFORE_REJECTION_STREAM_COMPLETE;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+
+    /* It's ambiguous what the error-code should be here.
+     * The connection died early, AND we know from the status code that it was an UPGRADE_FAILURE.
+     * Currently, the bootstrap is programmed to report it as a normal UPGRADE_FAILURE,
+     * but don't report a body, because we can't be 100% sure we got the whole thing.  */
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE, websocket_connect_error_code);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_status);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_headers);
+    ASSERT_FALSE(s_tester.websocket_setup_had_response_body);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
 }
 
 /* Check that AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH is sufficiently large */
