@@ -358,47 +358,47 @@ static struct aws_websocket *s_mock_websocket_handler_new(const struct aws_webso
     return s_mock_websocket;
 }
 
-static void s_on_websocket_setup(const struct aws_websocket_on_connection_setup_data *data, void *user_data) {
+static void s_on_websocket_setup(const struct aws_websocket_on_connection_setup_data *setup, void *user_data) {
 
     /* error-code is set XOR websocket is set. Must be one, but not both. */
-    AWS_FATAL_ASSERT((data->error_code != 0) ^ (data->websocket != NULL));
+    AWS_FATAL_ASSERT((setup->error_code != 0) ^ (setup->websocket != NULL));
 
     /* We may not get the full handshake response.
      * But any parts we do get should match what the mock sent us. */
 
-    if (data->handshake_response_status) {
+    if (setup->handshake_response_status) {
         s_tester.websocket_setup_had_response_status = true;
-        AWS_FATAL_ASSERT(*data->handshake_response_status == s_tester.handshake_response_status);
+        AWS_FATAL_ASSERT(*setup->handshake_response_status == s_tester.handshake_response_status);
 
         /* If we're reporting a status code, we should also be reporting the headers */
-        AWS_FATAL_ASSERT(data->handshake_response_header_array != NULL);
+        AWS_FATAL_ASSERT(setup->handshake_response_header_array != NULL);
     }
 
-    if (data->handshake_response_header_array) {
+    if (setup->handshake_response_header_array) {
         s_tester.websocket_setup_had_response_headers = true;
         AWS_FATAL_ASSERT(s_headers_eq(
             s_tester.handshake_response_headers,
             s_tester.num_handshake_response_headers,
-            data->handshake_response_header_array,
-            data->num_handshake_response_headers));
+            setup->handshake_response_header_array,
+            setup->num_handshake_response_headers));
 
         /* If we're reporting headers, we should also be reporting the status code */
-        AWS_FATAL_ASSERT(data->handshake_response_status != NULL);
+        AWS_FATAL_ASSERT(setup->handshake_response_status != NULL);
     }
 
-    if (data->handshake_response_body) {
+    if (setup->handshake_response_body) {
         s_tester.websocket_setup_had_response_body = true;
-        AWS_FATAL_ASSERT(aws_byte_cursor_eq(&s_tester.handshake_response_body, data->handshake_response_body));
+        AWS_FATAL_ASSERT(aws_byte_cursor_eq(&s_tester.handshake_response_body, setup->handshake_response_body));
 
         /* If we're reporting the body, we should also be reporting the headers and status code */
-        AWS_FATAL_ASSERT(data->handshake_response_status != NULL);
-        AWS_FATAL_ASSERT(data->handshake_response_header_array != NULL);
+        AWS_FATAL_ASSERT(setup->handshake_response_status != NULL);
+        AWS_FATAL_ASSERT(setup->handshake_response_header_array != NULL);
     }
 
     AWS_FATAL_ASSERT(user_data == &s_tester);
 
     s_tester.websocket_setup_invoked = true;
-    s_tester.websocket_setup_error_code = data->error_code;
+    s_tester.websocket_setup_error_code = setup->error_code;
 
     /* Don't need the request anymore */
     aws_http_message_destroy(s_tester.handshake_request);
