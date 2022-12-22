@@ -529,14 +529,13 @@ static int s_drive_websocket_connect(int *out_error_code) {
         /* Response body arrives, HTTP connection ends if error returned */
         if (s_tester.handshake_response_body.len > 0) {
 
-            /* HTTP connection could fail before the whole body is delivered */
+            /* If we're testing the stream dying before the whole body is delivered, then only deliver a bit of it */
             struct aws_byte_cursor body = s_tester.handshake_response_body;
             if (s_tester.fail_at_step == BOOT_STEP_BEFORE_REJECTION_STREAM_COMPLETE) {
                 body.len = 1;
             }
 
-            if (s_tester.http_stream_on_response_body(
-                    s_mock_stream, &s_tester.handshake_response_body, s_tester.http_stream_user_data)) {
+            if (s_tester.http_stream_on_response_body(s_mock_stream, &body, s_tester.http_stream_user_data)) {
                 s_complete_http_stream_and_connection(aws_last_error());
                 goto finishing_checks;
             }
