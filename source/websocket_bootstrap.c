@@ -545,7 +545,7 @@ static int s_ws_bootstrap_on_handshake_response_header_block_done(
 
         } else {
             /* It would be weird to get any other kind of 1xx response, but anything is possible.
-             * Another, response should come eventually. Just forget the headers from this one... */
+             * Another response should come eventually. Just ignore the headers from this one... */
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_WEBSOCKET_SETUP,
                 "id=%p: Server sent interim response with status code %d",
