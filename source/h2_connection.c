@@ -1565,7 +1565,7 @@ static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t 
         /* Let's update the connection flow-control window size */
         if (window_size_increment == 0) {
             /* flow-control window increment of 0 MUST be treated as error (RFC7540 6.9.1) */
-            CONNECTION_LOG(ERROR, connection, "Window update frame with 0 increment size")
+            CONNECTION_LOG(ERROR, connection, "Window update frame with 0 increment size");
             return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
         }
         if (connection->thread_data.window_size_peer + window_size_increment > AWS_H2_WINDOW_UPDATE_MAX) {
@@ -1573,7 +1573,7 @@ static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t 
             CONNECTION_LOG(
                 ERROR,
                 connection,
-                "Window update frame causes the connection flow-control window exceeding the maximum size")
+                "Window update frame causes the connection flow-control window exceeding the maximum size");
             return aws_h2err_from_h2_code(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR);
         }
         if (connection->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE) {
