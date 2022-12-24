@@ -3,9 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+#include <aws/cal/hash.h>
+#include <aws/common/encoding.h>
 #include <aws/common/logging.h>
 #include <aws/http/connection.h>
 #include <aws/http/private/http_impl.h>
+#include <aws/http/private/strutil.h>
 #include <aws/http/private/websocket_impl.h>
 #include <aws/http/request_response.h>
 #include <aws/http/status_code.h>
@@ -66,6 +69,10 @@ struct aws_websocket_client_bootstrap {
     /* Handshake request data */
     struct aws_http_message *handshake_request;
 
+    /* Given the "Sec-WebSocket-Key" from the request,
+     * this is what we expect the response's "Sec-WebSocket-Accept" to be */
+    struct aws_byte_buf expected_sec_websocket_accept;
+
     /* Handshake response data */
     int response_status;
     struct aws_http_headers *response_headers;
@@ -78,6 +85,9 @@ struct aws_websocket_client_bootstrap {
 };
 
 static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_bootstrap);
+static int s_ws_bootstrap_calculate_sec_websocket_accept(
+    struct aws_byte_cursor sec_websocket_key,
+    struct aws_byte_buf *out_buf);
 static void s_ws_bootstrap_cancel_setup_due_to_err(
     struct aws_websocket_client_bootstrap *ws_bootstrap,
     struct aws_http_connection *http_connection,
@@ -125,24 +135,19 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    bool all_frame_callbacks_set =
-        options->on_incoming_frame_begin && options->on_incoming_frame_payload && options->on_incoming_frame_begin;
-
-    bool no_frame_callbacks_set =
-        !options->on_incoming_frame_begin && !options->on_incoming_frame_payload && !options->on_incoming_frame_begin;
-
-    if (!(all_frame_callbacks_set || no_frame_callbacks_set)) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_WEBSOCKET_SETUP,
-            "id=static: Invalid websocket connection options,"
-            " either all frame-handling callbacks must be set, or none must be set.");
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-    }
-
     if (!options->handshake_request) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
             "id=static: Invalid connection options, missing required request for websocket client handshake.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    const struct aws_http_headers *request_headers = aws_http_message_get_headers(options->handshake_request);
+    struct aws_byte_cursor sec_websocket_key;
+    if (aws_http_headers_get(request_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Key"), &sec_websocket_key)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=static: Websocket handshake request is missing required 'Sec-WebSocket-Key' header");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
@@ -160,9 +165,15 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     ws_bootstrap->websocket_frame_payload_callback = options->on_incoming_frame_payload;
     ws_bootstrap->websocket_frame_complete_callback = options->on_incoming_frame_complete;
     ws_bootstrap->handshake_request = aws_http_message_acquire(options->handshake_request);
+    aws_byte_buf_init(&ws_bootstrap->expected_sec_websocket_accept, ws_bootstrap->alloc, 0);
     ws_bootstrap->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
     ws_bootstrap->response_headers = aws_http_headers_new(ws_bootstrap->alloc);
     aws_byte_buf_init(&ws_bootstrap->response_body, ws_bootstrap->alloc, 0);
+
+    if (s_ws_bootstrap_calculate_sec_websocket_accept(
+            sec_websocket_key, &ws_bootstrap->expected_sec_websocket_accept)) {
+        goto error;
+    }
 
     /* Initiate HTTP connection */
     struct aws_http_client_connection_options http_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
@@ -203,7 +214,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
             "id=static: Websocket failed to initiate HTTP connection, error %d (%s)",
             aws_last_error(),
             aws_error_name(aws_last_error()));
-        goto error_already_logged;
+        goto error;
     }
 
     /* Success! (so far) */
@@ -217,7 +228,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
 
     return AWS_OP_SUCCESS;
 
-error_already_logged:
+error:
     s_ws_bootstrap_destroy(ws_bootstrap);
     return AWS_OP_ERR;
 }
@@ -229,9 +240,74 @@ static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_boo
 
     aws_http_message_release(ws_bootstrap->handshake_request);
     aws_http_headers_release(ws_bootstrap->response_headers);
+    aws_byte_buf_clean_up(&ws_bootstrap->expected_sec_websocket_accept);
     aws_byte_buf_clean_up(&ws_bootstrap->response_body);
 
     aws_mem_release(ws_bootstrap->alloc, ws_bootstrap);
+}
+
+/* Given the handshake request's "Sec-WebSocket-Key" value,
+ * calculate the expected value for the response's "Sec-WebSocket-Accept".
+ * RFC-6455 Section 4.1:
+ *      base64-encoded SHA-1 of the concatenation of the |Sec-WebSocket-Key|
+ *      (as a string, not base64-decoded) with the string
+ *      "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" but ignoring any leading and
+ *      trailing whitespace
+ */
+static int s_ws_bootstrap_calculate_sec_websocket_accept(
+    struct aws_byte_cursor sec_websocket_key,
+    struct aws_byte_buf *out_buf) {
+
+    AWS_ASSERT(out_buf && out_buf->allocator && out_buf->len == 0); /* expect buf to be initialized empty */
+    struct aws_allocator *alloc = out_buf->allocator;
+
+    /* ignore leading and trailing whitespace */
+    sec_websocket_key = aws_strutil_trim_http_whitespace(sec_websocket_key);
+
+    /* concatenation of key with magic string (store temporarily in out_buf) */
+    struct aws_byte_cursor magic_string = aws_byte_cursor_from_c_str("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+
+    aws_byte_buf_reserve(out_buf, sec_websocket_key.len + magic_string.len);
+    aws_byte_buf_append_dynamic(out_buf, &sec_websocket_key);
+    aws_byte_buf_append_dynamic(out_buf, &magic_string);
+    struct aws_byte_cursor key_and_magic_string = aws_byte_cursor_from_buf(out_buf);
+
+    /* SHA-1 */
+    uint8_t sha1_storage[AWS_SHA1_LEN];
+    struct aws_byte_buf sha1_buf = aws_byte_buf_from_empty_array(sha1_storage, sizeof(sha1_storage));
+    if (aws_sha1_compute(alloc, &key_and_magic_string, &sha1_buf, 0)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=static: Failed to compute SHA1, error %d (%s)",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+
+    /* base64-encoded SHA-1 (clear out_buf, and write to it again) */
+    size_t base64_encode_sha1_len;
+    if (aws_base64_compute_encoded_len(sha1_buf.len, &base64_encode_sha1_len)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=static: Failed to determine Base64-encoded length, error %d (%s)",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+    aws_byte_buf_reset(out_buf, false /*zero_contents*/);
+    aws_byte_buf_reserve(out_buf, base64_encode_sha1_len);
+
+    struct aws_byte_cursor sha1_cursor = aws_byte_cursor_from_buf(&sha1_buf);
+    if (aws_base64_encode(&sha1_cursor, out_buf)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=static: Failed to Base64-encode, error %d (%s)",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+
+    return AWS_OP_SUCCESS;
 }
 
 /* Called if something goes wrong after an HTTP connection is established.
@@ -457,15 +533,83 @@ static int s_ws_bootstrap_on_handshake_response_headers(
     return AWS_OP_SUCCESS;
 }
 
+static int s_ws_bootstrap_validate_header(
+    struct aws_websocket_client_bootstrap *ws_bootstrap,
+    const char *name,
+    struct aws_byte_cursor expected_value,
+    bool case_sensitive) {
+
+    struct aws_byte_cursor actual_value;
+    if (aws_http_headers_get(ws_bootstrap->response_headers, aws_byte_cursor_from_c_str(name), &actual_value)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP, "id=%p: Response lacks required '%s' header", (void *)ws_bootstrap, name);
+        return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
+    }
+
+    bool matches = case_sensitive ? aws_byte_cursor_eq(&expected_value, &actual_value)
+                                  : aws_byte_cursor_eq_ignore_case(&expected_value, &actual_value);
+    if (!matches) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=%p: Response '%s' header has wrong value. Expected '" PRInSTR "'. Received '" PRInSTR "'",
+            (void *)ws_bootstrap,
+            name,
+            AWS_BYTE_CURSOR_PRI(expected_value),
+            AWS_BYTE_CURSOR_PRI(actual_value));
+        return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 /* OK, we've got all the headers for the 101 Switching Protocols response.
- * Verify handshake response according to RFC-6455 Section 1.3,
- * install the websocket handler into the channel,
+ * Validate the handshake response, install the websocket handler into the channel,
  * and invoke the on_connection_setup callback. */
 static int s_ws_bootstrap_validate_response_and_install_websocket_handler(
     struct aws_websocket_client_bootstrap *ws_bootstrap,
     struct aws_http_connection *http_connection) {
 
-    /* TODO: validate Sec-WebSocket-Accept header */
+    /* RFC-6455 Section 4.1 - The client MUST validate the server's response as follows... */
+
+    /* (we already checked step 1, that status code is 101) */
+    AWS_FATAL_ASSERT(ws_bootstrap->response_status == AWS_HTTP_STATUS_CODE_101_SWITCHING_PROTOCOLS);
+
+    /* 2.   If the response lacks an |Upgrade| header field or the |Upgrade|
+     *      header field contains a value that is not an ASCII case-
+     *      insensitive match for the value "websocket", the client MUST
+     *      _Fail the WebSocket Connection_. */
+    if (s_ws_bootstrap_validate_header(
+            ws_bootstrap, "Upgrade", aws_byte_cursor_from_c_str("websocket"), false /*case_sensitive*/)) {
+        goto error;
+    }
+
+    /* 3.   If the response lacks a |Connection| header field or the
+     *      |Connection| header field doesn't contain a token that is an
+     *      ASCII case-insensitive match for the value "Upgrade", the client
+     *      MUST _Fail the WebSocket Connection_. */
+    if (s_ws_bootstrap_validate_header(
+            ws_bootstrap, "Connection", aws_byte_cursor_from_c_str("Upgrade"), false /*case_sensitive*/)) {
+        goto error;
+    }
+
+    /* 4.   If the response lacks a |Sec-WebSocket-Accept| header field or
+     *      the |Sec-WebSocket-Accept| contains a value other than the
+     *      base64-encoded SHA-1 of the concatenation of the |Sec-WebSocket-
+     *      Key| (as a string, not base64-decoded) with the string "258EAFA5-
+     *      E914-47DA-95CA-C5AB0DC85B11" but ignoring any leading and
+     *      trailing whitespace, the client MUST _Fail the WebSocket
+     *      Connection_. */
+    if (s_ws_bootstrap_validate_header(
+            ws_bootstrap,
+            "Sec-WebSocket-Accept",
+            aws_byte_cursor_from_buf(&ws_bootstrap->expected_sec_websocket_accept),
+            true /*case_sensitive*/)) {
+        goto error;
+    }
+
+    /* TODO: validate Sec-WebSocket-Extensions */
+
+    /* TODO: validate Sec-WebSocket-Protocol */
 
     /* Insert websocket handler into channel */
     struct aws_channel *channel = s_system_vtable->aws_http_connection_get_channel(http_connection);

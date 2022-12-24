@@ -47,6 +47,9 @@ static const struct aws_websocket_client_bootstrap_system_vtable s_mock_system_v
     .aws_websocket_handler_new = s_mock_websocket_handler_new,
 };
 
+/* Hardcoded value for "Sec-WebSocket-Key" header in handshake request. */
+static const char *s_sec_websocket_key_value = "dGhlIHNhbXBsZSBub25jZQ==";
+
 static const struct aws_http_header s_accepted_response_headers[] = {
     {
         .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
@@ -436,6 +439,12 @@ static int s_drive_websocket_connect(int *out_error_code) {
     if (!s_tester.handshake_request) {
         goto finishing_checks;
     }
+
+    struct aws_http_headers *request_headers = aws_http_message_get_headers(s_tester.handshake_request);
+    ASSERT_SUCCESS(aws_http_headers_set(
+        request_headers,
+        aws_byte_cursor_from_c_str("Sec-WebSocket-Key"),
+        aws_byte_cursor_from_c_str(s_sec_websocket_key_value)));
 
     struct aws_websocket_client_connection_options ws_options = {
         .allocator = s_tester.alloc,

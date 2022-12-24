@@ -1373,16 +1373,14 @@ static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
 
 /* Invoke user cb */
 static int s_decoder_on_user_payload(struct aws_websocket *websocket, struct aws_byte_cursor data) {
-    if (!websocket->on_incoming_frame_payload) {
-        return AWS_OP_SUCCESS;
-    }
+    if (websocket->on_incoming_frame_payload) {
+        if (!websocket->on_incoming_frame_payload(
+                websocket, websocket->thread_data.current_incoming_frame, data, websocket->user_data)) {
 
-    if (!websocket->on_incoming_frame_payload(
-            websocket, websocket->thread_data.current_incoming_frame, data, websocket->user_data)) {
-
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_WEBSOCKET, "id=%p: Incoming payload callback has reported a failure.", (void *)websocket);
-        return aws_raise_error(AWS_ERROR_HTTP_CALLBACK_FAILURE);
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET, "id=%p: Incoming payload callback has reported a failure.", (void *)websocket);
+            return aws_raise_error(AWS_ERROR_HTTP_CALLBACK_FAILURE);
+        }
     }
 
     /* If this is a "data" frame's payload, let the window shrink */
