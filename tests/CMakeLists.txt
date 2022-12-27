@@ -25,6 +25,7 @@ add_test_case(headers_erase_index)
 add_test_case(headers_erase)
 add_test_case(headers_erase_value)
 add_test_case(headers_clear)
+add_test_case(headers_get_comma_separated)
 add_test_case(h2_headers_request_pseudos_get_set)
 add_test_case(h2_headers_response_pseudos_get_set)
 
