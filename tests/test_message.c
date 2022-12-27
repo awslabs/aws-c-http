@@ -370,17 +370,21 @@ TEST_CASE(headers_get_comma_separated) {
     ASSERT_TRUE(aws_string_eq_c_str(value, "A,B"));
     aws_string_destroy(value);
 
-    /* Check edge cases */
+    /* Check more edge cases */
     aws_http_headers_clear(headers);
     aws_http_headers_add(headers, aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com"));
-    aws_http_headers_add(headers, aws_byte_cursor_from_c_str("X-My-List"), aws_byte_cursor_from_c_str(""));
-    aws_http_headers_add(headers, aws_byte_cursor_from_c_str("x-my-list"), aws_byte_cursor_from_c_str("B"));
+    /* some fields have single entry, some fields have multiple entries */
+    aws_http_headers_add(headers, aws_byte_cursor_from_c_str("X-My-List"), aws_byte_cursor_from_c_str("A,B"));
+    /* preserve whitespace within middle of value. also name is different case  */
+    aws_http_headers_add(headers, aws_byte_cursor_from_c_str("x-my-list"), aws_byte_cursor_from_c_str("C, D"));
     aws_http_headers_add(
         headers, aws_byte_cursor_from_c_str("X-My-List-"), aws_byte_cursor_from_c_str("BAD-EXTRA-DASH"));
+    /* name is different case, and blank value*/
     aws_http_headers_add(headers, aws_byte_cursor_from_c_str("X-MY-LIST"), aws_byte_cursor_from_c_str(""));
+    aws_http_headers_add(headers, aws_byte_cursor_from_c_str("x-my-list"), aws_byte_cursor_from_c_str("E"));
     value = aws_http_headers_get_comma_separated(headers, aws_byte_cursor_from_c_str("X-My-List"));
     ASSERT_NOT_NULL(value);
-    ASSERT_TRUE(aws_string_eq_c_str(value, ",B,"));
+    ASSERT_TRUE(aws_string_eq_c_str(value, "A,B,C, D,,E"));
     aws_string_destroy(value);
 
     /* Done */
