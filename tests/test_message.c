@@ -155,8 +155,7 @@ TEST_CASE(headers_add) {
 
     /* get-by-name (ignore case) */
     struct aws_byte_cursor value_get;
-    ASSERT_SUCCESS(
-        aws_http_headers_get_single(headers, aws_byte_cursor_from_c_str("host"), &value_get)); /* ignore case */
+    ASSERT_SUCCESS(aws_http_headers_get(headers, aws_byte_cursor_from_c_str("host"), &value_get)); /* ignore case */
     ASSERT_SUCCESS(s_check_value_eq(value_get, "example.com"));
 
     aws_http_headers_release(headers);
@@ -182,15 +181,10 @@ TEST_CASE(headers_add_array) {
         ASSERT_SUCCESS(s_check_headers_eq(src_headers[i], get));
     }
 
-    /* check the DEPRECATED get-by-name returns first one it sees */
+    /* check that get-by-name returns first one it sees */
     struct aws_byte_cursor get;
     ASSERT_SUCCESS(aws_http_headers_get(headers, aws_byte_cursor_from_c_str("COOKIE"), &get));
     ASSERT_SUCCESS(s_check_value_eq(get, "a=1"));
-
-    /* check that get_single() reports an error due to duplicates */
-    ASSERT_ERROR(
-        AWS_ERROR_HTTP_UNEXPECTED_DUPLICATE_HEADER,
-        aws_http_headers_get_single(headers, aws_byte_cursor_from_c_str("COOKIE"), &get));
 
     aws_http_headers_release(headers);
     return AWS_OP_SUCCESS;
@@ -222,7 +216,7 @@ TEST_CASE(headers_set) {
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(headers));
 
     struct aws_byte_cursor value_get;
-    ASSERT_SUCCESS(aws_http_headers_get_single(headers, aws_byte_cursor_from_c_str("cookie"), &value_get));
+    ASSERT_SUCCESS(aws_http_headers_get(headers, aws_byte_cursor_from_c_str("cookie"), &value_get));
     ASSERT_SUCCESS(s_check_value_eq(value_get, "d=4"));
 
     aws_http_headers_release(headers);
@@ -331,7 +325,7 @@ TEST_CASE(headers_clear) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(headers_get_comma_separated) {
+TEST_CASE(headers_get_all) {
     (void)ctx;
 
     struct aws_http_headers *headers = aws_http_headers_new(allocator);
@@ -339,14 +333,14 @@ TEST_CASE(headers_get_comma_separated) {
     /* Check when no such headers exist */
     aws_http_headers_clear(headers);
     aws_http_headers_add(headers, aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com"));
-    ASSERT_NULL(aws_http_headers_get_comma_separated(headers, aws_byte_cursor_from_c_str("X-My-List")));
+    ASSERT_NULL(aws_http_headers_get_all(headers, aws_byte_cursor_from_c_str("X-My-List")));
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_HEADER_NOT_FOUND, aws_last_error());
 
     /* Check getting a single value */
     aws_http_headers_clear(headers);
     aws_http_headers_add(headers, aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com"));
     aws_http_headers_add(headers, aws_byte_cursor_from_c_str("X-My-List"), aws_byte_cursor_from_c_str("A"));
-    struct aws_string *value = aws_http_headers_get_comma_separated(headers, aws_byte_cursor_from_c_str("X-My-List"));
+    struct aws_string *value = aws_http_headers_get_all(headers, aws_byte_cursor_from_c_str("X-My-List"));
     ASSERT_NOT_NULL(value);
     ASSERT_TRUE(aws_string_eq_c_str(value, "A"));
     aws_string_destroy(value);
@@ -355,7 +349,7 @@ TEST_CASE(headers_get_comma_separated) {
     aws_http_headers_clear(headers);
     aws_http_headers_add(headers, aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com"));
     aws_http_headers_add(headers, aws_byte_cursor_from_c_str("X-My-List"), aws_byte_cursor_from_c_str(""));
-    value = aws_http_headers_get_comma_separated(headers, aws_byte_cursor_from_c_str("X-My-List"));
+    value = aws_http_headers_get_all(headers, aws_byte_cursor_from_c_str("X-My-List"));
     ASSERT_NOT_NULL(value);
     ASSERT_TRUE(aws_string_eq_c_str(value, ""));
     aws_string_destroy(value);
@@ -365,26 +359,26 @@ TEST_CASE(headers_get_comma_separated) {
     aws_http_headers_add(headers, aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com"));
     aws_http_headers_add(headers, aws_byte_cursor_from_c_str("X-My-List"), aws_byte_cursor_from_c_str("A"));
     aws_http_headers_add(headers, aws_byte_cursor_from_c_str("X-My-List"), aws_byte_cursor_from_c_str("B"));
-    value = aws_http_headers_get_comma_separated(headers, aws_byte_cursor_from_c_str("X-My-List"));
+    value = aws_http_headers_get_all(headers, aws_byte_cursor_from_c_str("X-My-List"));
     ASSERT_NOT_NULL(value);
-    ASSERT_TRUE(aws_string_eq_c_str(value, "A,B"));
+    ASSERT_TRUE(aws_string_eq_c_str(value, "A, B"));
     aws_string_destroy(value);
 
     /* Check more edge cases */
     aws_http_headers_clear(headers);
     aws_http_headers_add(headers, aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com"));
     /* some fields have single entry, some fields have multiple entries */
-    aws_http_headers_add(headers, aws_byte_cursor_from_c_str("X-My-List"), aws_byte_cursor_from_c_str("A,B"));
+    aws_http_headers_add(headers, aws_byte_cursor_from_c_str("X-My-List"), aws_byte_cursor_from_c_str("A, B"));
     /* preserve whitespace within middle of value. also name is different case  */
-    aws_http_headers_add(headers, aws_byte_cursor_from_c_str("x-my-list"), aws_byte_cursor_from_c_str("C, D"));
+    aws_http_headers_add(headers, aws_byte_cursor_from_c_str("x-my-list"), aws_byte_cursor_from_c_str("C,D"));
     aws_http_headers_add(
         headers, aws_byte_cursor_from_c_str("X-My-List-"), aws_byte_cursor_from_c_str("BAD-EXTRA-DASH"));
     /* name is different case, and blank value*/
     aws_http_headers_add(headers, aws_byte_cursor_from_c_str("X-MY-LIST"), aws_byte_cursor_from_c_str(""));
     aws_http_headers_add(headers, aws_byte_cursor_from_c_str("x-my-list"), aws_byte_cursor_from_c_str("E"));
-    value = aws_http_headers_get_comma_separated(headers, aws_byte_cursor_from_c_str("X-My-List"));
+    value = aws_http_headers_get_all(headers, aws_byte_cursor_from_c_str("X-My-List"));
     ASSERT_NOT_NULL(value);
-    ASSERT_TRUE(aws_string_eq_c_str(value, "A,B,C, D,,E"));
+    ASSERT_TRUE(aws_string_eq_c_str(value, "A, B, C,D, , E"));
     aws_string_destroy(value);
 
     /* Done */
