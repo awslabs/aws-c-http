@@ -6,6 +6,7 @@
 #include <aws/cal/hash.h>
 #include <aws/common/encoding.h>
 #include <aws/common/logging.h>
+#include <aws/common/string.h>
 #include <aws/http/connection.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/strutil.h>
@@ -72,6 +73,9 @@ struct aws_websocket_client_bootstrap {
     /* Given the "Sec-WebSocket-Key" from the request,
      * this is what we expect the response's "Sec-WebSocket-Accept" to be */
     struct aws_byte_buf expected_sec_websocket_accept;
+
+    /* Values from the request's "Sec-WebSocket-Protocol" values (or NULL if none)  */
+    struct aws_string *expected_sec_websocket_protocol;
 
     /* Handshake response data */
     int response_status;
@@ -152,6 +156,16 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
+    /* Extensions are not currently supported */
+    struct aws_string *sec_websocket_extensions =
+        aws_http_headers_get_comma_separated(request_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Extensions"));
+    if (sec_websocket_extensions != NULL) {
+        aws_string_destroy(sec_websocket_extensions);
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP, "id=static: 'Sec-WebSocket-Extensions' are not currently supported");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
     /* Create bootstrap */
     struct aws_websocket_client_bootstrap *ws_bootstrap =
         aws_mem_calloc(options->allocator, 1, sizeof(struct aws_websocket_client_bootstrap));
@@ -174,6 +188,9 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
             sec_websocket_key, &ws_bootstrap->expected_sec_websocket_accept, ws_bootstrap->alloc)) {
         goto error;
     }
+
+    ws_bootstrap->expected_sec_websocket_protocol = aws_http_headers_get_comma_separated(
+        options->handshake_request, aws_byte_cursor_from_c_str("Sec-WebSocket-Protocol"));
 
     /* Initiate HTTP connection */
     struct aws_http_client_connection_options http_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
@@ -241,6 +258,7 @@ static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_boo
     aws_http_message_release(ws_bootstrap->handshake_request);
     aws_http_headers_release(ws_bootstrap->response_headers);
     aws_byte_buf_clean_up(&ws_bootstrap->expected_sec_websocket_accept);
+    aws_string_destroy(ws_bootstrap->expected_sec_websocket_protocol);
     aws_byte_buf_clean_up(&ws_bootstrap->response_body);
 
     aws_mem_release(ws_bootstrap->alloc, ws_bootstrap);
@@ -582,6 +600,38 @@ static int s_ws_bootstrap_validate_header(
     return AWS_OP_SUCCESS;
 }
 
+static int s_ws_bootstrap_validate_sec_websocket_protocol(const struct aws_websocket_client_bootstrap *ws_bootstrap) {
+
+    /* First handle the easy case:
+     * If client requested no protocols, then the response should not pick any */
+    if (ws_bootstrap->expected_sec_websocket_protocol == NULL) {
+        if (aws_http_headers_has(
+                ws_bootstrap->response_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Protocol"))) {
+
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET_SETUP,
+                "id=%p: Response has 'Sec-WebSocket-Protocol' header, no protocol was requested",
+                (void *)ws_bootstrap);
+            return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
+        } else {
+            return AWS_OP_SUCCESS;
+        }
+    }
+
+    /* Check that server has picked one of the requested protocols */
+    struct aws_byte_cursor response_protocol;
+    if (aws_http_headers_get_single(
+            ws_bootstrap->response_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Protocol"), &response_protocol)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=%p: Response lacks required 'Sec-WebSocket-Protocol' header",
+            (void *)ws_bootstrap);
+        return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
+    }
+
+    YOU ARE HERE
+}
+
 /* OK, we've got all the headers for the 101 Switching Protocols response.
  * Validate the handshake response, install the websocket handler into the channel,
  * and invoke the on_connection_setup callback. */
@@ -627,9 +677,66 @@ static int s_ws_bootstrap_validate_response_and_install_websocket_handler(
         goto error;
     }
 
-    /* TODO: validate Sec-WebSocket-Extensions */
+    /* (step 5 is about validating Sec-WebSocket-Extensions, but we don't support extensions) */
+    struct aws_string *sec_websocket_extensions = aws_http_headers_get_comma_separated(
+        ws_bootstrap->response_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Extensions"));
+    if (sec_websocket_extensions != NULL) {
+        aws_string_destroy(sec_websocket_extensions);
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=%p: Response has 'Sec-WebSocket-Extensions' header, but client does not support extensions.",
+            (void *)ws_bootstrap);
+        aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
+        goto error;
+    }
 
-    /* TODO: validate Sec-WebSocket-Protocol */
+    /* 6.   If the response includes a |Sec-WebSocket-Protocol| header field
+     *      and this header field indicates the use of a subprotocol that was
+     *      not present in the client's handshake (the server has indicated a
+     *      subprotocol not requested by the client), the client MUST _Fail
+     *      the WebSocket Connection_. */
+    if (ws_bootstrap->sec_websocket_protocol_values) {
+        struct aws_byte_cursor response_protocol;
+        if (aws_http_headers_get_single(
+                ws_bootstrap->response_headers,
+                aws_byte_cursor_from_c_str("Sec-WebSocket-Protocol"),
+                &response_protocol)) {
+
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET_SETUP,
+                "id=%p: Response lacks required'Sec-WebSocket-Protocol' header",
+                (void *)ws_bootstrap);
+            aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
+            goto error;
+        }
+
+    } else {
+        if (aws_http_headers_has(ws_bootstrap->response_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Protocol")) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET_SETUP,
+                "id=%p: Response has 'Sec-WebSocket-Protocol' header, no protocol was requested",
+                (void *)ws_bootstrap);
+            aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
+            goto error;
+        }
+    }
+    struct aws_byte_cursor response_protocol;
+    if (aws_http_headers_get_single(
+            ws_bootstrap->response_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Protocol"), &response_protocol) ==
+        AWS_OP_SUCCESS) {
+
+        if (ws_bootstrap->sec_websocket_protocol_values == NULL) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET_SETUP,
+                "id=%p: Response has 'Sec-WebSocket-Protocol' header, no protocol was requested",
+                (void *)ws_bootstrap);
+            aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
+            goto error;
+        }
+    }
+    if (s_ws_bootstrap_validate_sec_websocket_protocol(ws_bootstrap)) {
+        goto error;
+    }
 
     /* Insert websocket handler into channel */
     struct aws_channel *channel = s_system_vtable->aws_http_connection_get_channel(http_connection);
