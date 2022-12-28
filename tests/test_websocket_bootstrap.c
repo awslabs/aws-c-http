@@ -108,6 +108,8 @@ static struct tester {
     struct aws_allocator *alloc;
     enum boot_step fail_at_step;
 
+    struct aws_http_header *extra_handshake_request_header_array;
+    size_t num_extra_handshake_request_headers;
     struct aws_http_message *handshake_request;
 
     const struct test_response *handshake_response;
@@ -443,7 +445,7 @@ static int s_drive_websocket_connect(int *out_error_code) {
     bool websocket_connect_called_successfully = false;
     bool http_connect_setup_reported_success = false;
 
-    /* Call websocket_connect() */
+    /* Build handshake request */
     static struct aws_byte_cursor path = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("/");
     static const struct aws_byte_cursor host = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("server.example.com");
 
@@ -458,6 +460,11 @@ static int s_drive_websocket_connect(int *out_error_code) {
         aws_byte_cursor_from_c_str("Sec-WebSocket-Key"),
         aws_byte_cursor_from_c_str(s_sec_websocket_key_value)));
 
+    for (size_t i = 0; i < s_tester.num_extra_handshake_request_headers; ++i) {
+        ASSERT_SUCCESS(aws_http_headers_add_header(request_headers, &s_tester.extra_handshake_request_header_array[i]));
+    }
+
+    /* Call websocket_connect() */
     struct aws_websocket_client_connection_options ws_options = {
         .allocator = s_tester.alloc,
         .bootstrap = (void *)"client channel bootstrap",
@@ -871,7 +878,7 @@ TEST_CASE(websocket_boot_fail_from_invalid_connection_header) {
     return s_websocket_boot_fail_from_bad_101_response(allocator, &bad_response);
 }
 
-TEST_CASE(websocket_boot_fail_from_invalid_sec_websocket_upgrade_header) {
+TEST_CASE(websocket_boot_fail_from_invalid_sec_websocket_accept_header) {
     (void)ctx;
     struct test_response bad_response = {
         .status_code = 101,
@@ -889,6 +896,232 @@ TEST_CASE(websocket_boot_fail_from_invalid_sec_websocket_upgrade_header) {
                     .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
                     /* ought to be "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="*/
                     .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("S3PPLMBITXAQ9KYGZZHZRBK+XOO="),
+                },
+            },
+    };
+    return s_websocket_boot_fail_from_bad_101_response(allocator, &bad_response);
+}
+
+TEST_CASE(websocket_boot_fail_from_unsupported_sec_websocket_extensions_in_request) {
+    (void)ctx;
+    struct aws_http_header extra_request_headers[] = {
+        /* extensions are not currently supported */
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Extensions"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("permessage-deflate"),
+        },
+    };
+    s_tester.extra_handshake_request_header_array = extra_request_headers;
+    s_tester.num_extra_handshake_request_headers = AWS_ARRAY_SIZE(extra_request_headers);
+
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+    ASSERT_INT_EQUALS(AWS_ERROR_INVALID_ARGUMENT, websocket_connect_error_code);
+    ASSERT_FALSE(s_tester.websocket_setup_invoked);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_boot_fail_from_unsupported_sec_websocket_extensions_in_response) {
+    (void)ctx;
+    struct test_response bad_response = {
+        .status_code = 101,
+        .headers =
+            {
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                },
+                {
+                    /* extensions are not currently supported */
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Extensions"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("permessage-deflate"),
+                },
+            },
+    };
+    return s_websocket_boot_fail_from_bad_101_response(allocator, &bad_response);
+}
+
+/* If client requests a specific protocol, the server response must say it's being used */
+TEST_CASE(websocket_boot_ok_with_sec_websocket_protocol_header) {
+    (void)ctx;
+    struct aws_http_header extra_request_headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt"),
+        },
+    };
+    s_tester.extra_handshake_request_header_array = extra_request_headers;
+    s_tester.num_extra_handshake_request_headers = AWS_ARRAY_SIZE(extra_request_headers);
+
+    struct test_response response = {
+        .status_code = 101,
+        .headers =
+            {
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt"),
+                },
+            },
+    };
+    s_tester.handshake_response = &response;
+
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+    ASSERT_INT_EQUALS(0, websocket_connect_error_code);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+/* The client can request a list of acceptable protocols (may be split across headers), and server must pick one */
+TEST_CASE(websocket_boot_ok_with_sec_websocket_protocol_split_across_headers) {
+    (void)ctx;
+    struct aws_http_header extra_request_headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("http/1.1, http/2"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt, mqtt5, mqtt6"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("klingon, esperanto"),
+        },
+    };
+    s_tester.extra_handshake_request_header_array = extra_request_headers;
+    s_tester.num_extra_handshake_request_headers = AWS_ARRAY_SIZE(extra_request_headers);
+
+    struct test_response response = {
+        .status_code = 101,
+        .headers =
+            {
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt5"),
+                },
+            },
+    };
+    s_tester.handshake_response = &response;
+
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+    ASSERT_INT_EQUALS(0, websocket_connect_error_code);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_boot_fail_from_missing_sec_websocket_protocol_header) {
+    (void)ctx;
+    struct aws_http_header extra_request_headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt, mqtt5"),
+        },
+    };
+    s_tester.extra_handshake_request_header_array = extra_request_headers;
+    s_tester.num_extra_handshake_request_headers = AWS_ARRAY_SIZE(extra_request_headers);
+
+    struct test_response bad_response = {
+        .status_code = 101,
+        .headers =
+            {
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                },
+                /* commenting out required header
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt5"),
+                },
+                */
+            },
+    };
+    return s_websocket_boot_fail_from_bad_101_response(allocator, &bad_response);
+}
+
+TEST_CASE(websocket_boot_fail_from_invalid_sec_websocket_protocol_header) {
+    (void)ctx;
+    struct aws_http_header extra_request_headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt, mqtt5"),
+        },
+    };
+    s_tester.extra_handshake_request_header_array = extra_request_headers;
+    s_tester.num_extra_handshake_request_headers = AWS_ARRAY_SIZE(extra_request_headers);
+
+    struct test_response bad_response = {
+        .status_code = 101,
+        .headers =
+            {
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+                    /* ought to be "mqtt" or "mqtt5" */
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt, mqtt5"),
                 },
             },
     };
