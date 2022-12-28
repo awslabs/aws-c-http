@@ -35,7 +35,7 @@ void aws_hpack_decoder_clean_up(struct aws_hpack_decoder *decoder) {
 
 static const struct aws_http_header *s_get_header_u64(const struct aws_hpack_decoder *decoder, uint64_t index) {
     if (index > SIZE_MAX) {
-        HPACK_LOG(ERROR, decoder, "Header index is absurdly large")
+        HPACK_LOG(ERROR, decoder, "Header index is absurdly large");
         aws_raise_error(AWS_ERROR_INVALID_INDEX);
         return NULL;
     }

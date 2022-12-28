@@ -1683,8 +1683,8 @@ struct aws_http_message *aws_http_message_new_websocket_handshake_request(
     struct aws_byte_cursor host) {
 
     AWS_PRECONDITION(allocator);
-    AWS_PRECONDITION(aws_byte_cursor_is_valid(&path))
-    AWS_PRECONDITION(aws_byte_cursor_is_valid(&host))
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&path));
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&host));
 
     struct aws_http_message *request = aws_http_message_new_request(allocator);
     if (!request) {

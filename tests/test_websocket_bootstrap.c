@@ -236,7 +236,7 @@ static struct aws_websocket *s_mock_websocket = (void *)"websocket";
 
 static int s_mock_http_client_connect(const struct aws_http_client_connection_options *options) {
     AWS_FATAL_ASSERT(options);
-    AWS_FATAL_ASSERT(!s_tester.http_connect_called_successfully)
+    AWS_FATAL_ASSERT(!s_tester.http_connect_called_successfully);
 
     if (s_tester.fail_at_step == BOOT_STEP_HTTP_CONNECT) {
         return aws_raise_error(BOOT_STEP_HTTP_CONNECT);
