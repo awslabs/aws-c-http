@@ -87,7 +87,8 @@ struct aws_websocket_client_bootstrap {
 static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_bootstrap);
 static int s_ws_bootstrap_calculate_sec_websocket_accept(
     struct aws_byte_cursor sec_websocket_key,
-    struct aws_byte_buf *out_buf);
+    struct aws_byte_buf *out_buf,
+    struct aws_allocator *alloc);
 static void s_ws_bootstrap_cancel_setup_due_to_err(
     struct aws_websocket_client_bootstrap *ws_bootstrap,
     struct aws_http_connection *http_connection,
@@ -166,13 +167,12 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     ws_bootstrap->websocket_frame_payload_callback = options->on_incoming_frame_payload;
     ws_bootstrap->websocket_frame_complete_callback = options->on_incoming_frame_complete;
     ws_bootstrap->handshake_request = aws_http_message_acquire(options->handshake_request);
-    aws_byte_buf_init(&ws_bootstrap->expected_sec_websocket_accept, ws_bootstrap->alloc, 0);
     ws_bootstrap->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
     ws_bootstrap->response_headers = aws_http_headers_new(ws_bootstrap->alloc);
     aws_byte_buf_init(&ws_bootstrap->response_body, ws_bootstrap->alloc, 0);
 
     if (s_ws_bootstrap_calculate_sec_websocket_accept(
-            sec_websocket_key, &ws_bootstrap->expected_sec_websocket_accept)) {
+            sec_websocket_key, &ws_bootstrap->expected_sec_websocket_accept, ws_bootstrap->alloc)) {
         goto error;
     }
 
@@ -257,10 +257,10 @@ static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_boo
  */
 static int s_ws_bootstrap_calculate_sec_websocket_accept(
     struct aws_byte_cursor sec_websocket_key,
-    struct aws_byte_buf *out_buf) {
+    struct aws_byte_buf *out_buf,
+    struct aws_allocator *alloc) {
 
-    AWS_ASSERT(out_buf && out_buf->allocator && out_buf->len == 0); /* expect buf to be initialized empty */
-    struct aws_allocator *alloc = out_buf->allocator;
+    AWS_ASSERT(out_buf && !out_buf->allocator && out_buf->len == 0); /* expect buf to be uninitialized */
 
     /* ignore leading and trailing whitespace */
     sec_websocket_key = aws_strutil_trim_http_whitespace(sec_websocket_key);
@@ -268,7 +268,7 @@ static int s_ws_bootstrap_calculate_sec_websocket_accept(
     /* concatenation of key with magic string (store temporarily in out_buf) */
     struct aws_byte_cursor magic_string = aws_byte_cursor_from_c_str("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
 
-    aws_byte_buf_reserve(out_buf, sec_websocket_key.len + magic_string.len);
+    aws_byte_buf_init(out_buf, alloc, sec_websocket_key.len + magic_string.len);
     aws_byte_buf_append_dynamic(out_buf, &sec_websocket_key);
     aws_byte_buf_append_dynamic(out_buf, &magic_string);
     struct aws_byte_cursor key_and_magic_string = aws_byte_cursor_from_buf(out_buf);
