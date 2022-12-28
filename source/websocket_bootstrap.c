@@ -145,8 +145,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
 
     const struct aws_http_headers *request_headers = aws_http_message_get_headers(options->handshake_request);
     struct aws_byte_cursor sec_websocket_key;
-    if (aws_http_headers_get_single(
-            request_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Key"), &sec_websocket_key)) {
+    if (aws_http_headers_get(request_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Key"), &sec_websocket_key)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
             "id=static: Websocket handshake request is missing required 'Sec-WebSocket-Key' header");
@@ -262,27 +261,43 @@ static int s_ws_bootstrap_calculate_sec_websocket_accept(
 
     AWS_ASSERT(out_buf && !out_buf->allocator && out_buf->len == 0); /* expect buf to be uninitialized */
 
-    /* ignore leading and trailing whitespace */
-    sec_websocket_key = aws_strutil_trim_http_whitespace(sec_websocket_key);
+    /* note: leading and trailing whitespace was already trimmed by aws_http_headers */
 
-    /* concatenation of key with magic string (store temporarily in out_buf) */
-    struct aws_byte_cursor magic_string = aws_byte_cursor_from_c_str("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+    /* optimization: skip concatenating Sec-WebSocket-Key and the magic string.
+     * just run the SHA1 over the first string, and then the 2nd. */
 
-    aws_byte_buf_init(out_buf, alloc, sec_websocket_key.len + magic_string.len);
-    aws_byte_buf_append_dynamic(out_buf, &sec_websocket_key);
-    aws_byte_buf_append_dynamic(out_buf, &magic_string);
-    struct aws_byte_cursor key_and_magic_string = aws_byte_cursor_from_buf(out_buf);
+    bool success = false;
+    struct aws_byte_cursor magic_string = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
 
     /* SHA-1 */
-    uint8_t sha1_storage[AWS_SHA1_LEN];
-    struct aws_byte_buf sha1_buf = aws_byte_buf_from_empty_array(sha1_storage, sizeof(sha1_storage));
-    if (aws_sha1_compute(alloc, &key_and_magic_string, &sha1_buf, 0)) {
+    struct aws_hash *sha1 = aws_sha1_new(alloc);
+    if (!sha1) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
-            "id=static: Failed to compute SHA1, error %d (%s)",
+            "id=static: Failed to initiate SHA1, error %d (%s)",
             aws_last_error(),
             aws_error_name(aws_last_error()));
-        return AWS_OP_ERR;
+        goto cleanup;
+    }
+
+    if (aws_hash_update(sha1, &sec_websocket_key) || aws_hash_update(sha1, &magic_string)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=static: Failed to update SHA1, error %d (%s)",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        goto cleanup;
+    }
+
+    uint8_t sha1_storage[AWS_SHA1_LEN];
+    struct aws_byte_buf sha1_buf = aws_byte_buf_from_empty_array(sha1_storage, sizeof(sha1_storage));
+    if (aws_hash_finalize(sha1, &sha1_buf, 0)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=static: Failed to finalize SHA1, error %d (%s)",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        goto cleanup;
     }
 
     /* base64-encoded SHA-1 (clear out_buf, and write to it again) */
@@ -293,10 +308,9 @@ static int s_ws_bootstrap_calculate_sec_websocket_accept(
             "id=static: Failed to determine Base64-encoded length, error %d (%s)",
             aws_last_error(),
             aws_error_name(aws_last_error()));
-        return AWS_OP_ERR;
+        goto cleanup;
     }
-    aws_byte_buf_reset(out_buf, false /*zero_contents*/);
-    aws_byte_buf_reserve(out_buf, base64_encode_sha1_len);
+    aws_byte_buf_init(out_buf, alloc, base64_encode_sha1_len);
 
     struct aws_byte_cursor sha1_cursor = aws_byte_cursor_from_buf(&sha1_buf);
     if (aws_base64_encode(&sha1_cursor, out_buf)) {
@@ -305,10 +319,15 @@ static int s_ws_bootstrap_calculate_sec_websocket_accept(
             "id=static: Failed to Base64-encode, error %d (%s)",
             aws_last_error(),
             aws_error_name(aws_last_error()));
-        return AWS_OP_ERR;
+        goto cleanup;
     }
 
-    return AWS_OP_SUCCESS;
+    success = true;
+cleanup:
+    if (sha1) {
+        aws_hash_destroy(sha1);
+    }
+    return success ? AWS_OP_SUCCESS : AWS_OP_ERR;
 }
 
 /* Called if something goes wrong after an HTTP connection is established.
@@ -541,7 +560,7 @@ static int s_ws_bootstrap_validate_header(
     bool case_sensitive) {
 
     struct aws_byte_cursor actual_value;
-    if (aws_http_headers_get_single(ws_bootstrap->response_headers, aws_byte_cursor_from_c_str(name), &actual_value)) {
+    if (aws_http_headers_get(ws_bootstrap->response_headers, aws_byte_cursor_from_c_str(name), &actual_value)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP, "id=%p: Response lacks required '%s' header", (void *)ws_bootstrap, name);
         return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
