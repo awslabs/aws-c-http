@@ -91,23 +91,28 @@ void aws_http_headers_acquire(struct aws_http_headers *headers) {
 
 static int s_http_headers_add_header_impl(
     struct aws_http_headers *headers,
-    const struct aws_http_header *header,
+    const struct aws_http_header *header_orig,
     bool front) {
 
     AWS_PRECONDITION(headers);
-    AWS_PRECONDITION(header);
-    AWS_PRECONDITION(aws_byte_cursor_is_valid(&header->name) && aws_byte_cursor_is_valid(&header->value));
+    AWS_PRECONDITION(header_orig);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&header_orig->name) && aws_byte_cursor_is_valid(&header_orig->value));
 
-    if (header->name.len == 0) {
+    struct aws_http_header header_copy = *header_orig;
+
+    if (header_copy.name.len == 0) {
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_NAME);
     }
 
+    /* Whitespace around header values is ignored (RFC-7230 - Section 3.2).
+     * Trim it off here, so anyone querying this value has an easier time. */
+    header_copy.value = aws_strutil_trim_http_whitespace(header_copy.value);
+
     size_t total_len;
-    if (aws_add_size_checked(header->name.len, header->value.len, &total_len)) {
+    if (aws_add_size_checked(header_copy.name.len, header_copy.value.len, &total_len)) {
         return AWS_OP_ERR;
     }
 
-    struct aws_http_header header_copy = *header;
     /* Store our own copy of the strings.
      * We put the name and value into the same allocation. */
     uint8_t *strmem = aws_mem_acquire(headers->alloc, total_len);
@@ -309,6 +314,85 @@ int aws_http_headers_get_index(
     return aws_array_list_get_at(&headers->array_list, out_header, index);
 }
 
+int aws_http_headers_get_single(
+    const struct aws_http_headers *headers,
+    struct aws_byte_cursor name,
+    struct aws_byte_cursor *out_value) {
+
+    AWS_PRECONDITION(headers);
+    AWS_PRECONDITION(out_value);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
+
+    AWS_ZERO_STRUCT(*out_value);
+
+    bool found = false;
+    struct aws_byte_cursor value;
+    AWS_ZERO_STRUCT(value);
+    struct aws_http_header *header = NULL;
+    const size_t count = aws_http_headers_count(headers);
+    for (size_t i = 0; i < count; ++i) {
+        aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
+        AWS_ASSUME(header);
+
+        if (aws_http_header_name_eq(header->name, name)) {
+            if (found) {
+                return aws_raise_error(AWS_ERROR_HTTP_UNEXPECTED_DUPLICATE_HEADER);
+            }
+            value = header->value;
+            found = true;
+        }
+    }
+
+    if (found) {
+        *out_value = value;
+        return AWS_OP_SUCCESS;
+    } else {
+        return aws_raise_error(AWS_ERROR_HTTP_HEADER_NOT_FOUND);
+    }
+}
+
+/* RFC-7230 - 3.2.2
+ * A recipient MAY combine multiple header fields with the same field name
+ * into one "field-name: field-value" pair, without changing the semantics
+ * of the message, by appending each subsequent field value to the combined
+ * field value in order, separated by a comma */
+AWS_HTTP_API
+struct aws_string *aws_http_headers_get_comma_separated(
+    const struct aws_http_headers *headers,
+    struct aws_byte_cursor name) {
+
+    AWS_PRECONDITION(headers);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
+
+    struct aws_string *value_str = NULL;
+
+    struct aws_byte_buf value_builder;
+    aws_byte_buf_init(&value_builder, headers->alloc, 0);
+    bool found = false;
+    struct aws_http_header *header = NULL;
+    const size_t count = aws_http_headers_count(headers);
+    for (size_t i = 0; i < count; ++i) {
+        aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
+        if (aws_http_header_name_eq(name, header->name)) {
+            if (!found) {
+                found = true;
+            } else {
+                aws_byte_buf_append_byte_dynamic(&value_builder, ',');
+            }
+            aws_byte_buf_append_dynamic(&value_builder, &header->value);
+        }
+    }
+
+    if (found) {
+        value_str = aws_string_new_from_buf(headers->alloc, &value_builder);
+    } else {
+        aws_raise_error(AWS_ERROR_HTTP_HEADER_NOT_FOUND);
+    }
+
+    aws_byte_buf_clean_up(&value_builder);
+    return value_str;
+}
+
 int aws_http_headers_get(
     const struct aws_http_headers *headers,
     struct aws_byte_cursor name,
@@ -335,38 +419,48 @@ int aws_http_headers_get(
 
 bool aws_http_headers_has(const struct aws_http_headers *headers, struct aws_byte_cursor name) {
 
-    struct aws_byte_cursor out_value;
-    if (aws_http_headers_get(headers, name, &out_value)) {
-        return false;
+    AWS_PRECONDITION(headers);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
+
+    struct aws_http_header *header = NULL;
+    const size_t count = aws_http_headers_count(headers);
+    for (size_t i = 0; i < count; ++i) {
+        aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
+        AWS_ASSUME(header);
+
+        if (aws_http_header_name_eq(header->name, name)) {
+            return true;
+        }
     }
-    return true;
+
+    return false;
 }
 
 int aws_http2_headers_get_request_method(
     const struct aws_http_headers *h2_headers,
     struct aws_byte_cursor *out_method) {
-    return aws_http_headers_get(h2_headers, aws_http_header_method, out_method);
+    return aws_http_headers_get_single(h2_headers, aws_http_header_method, out_method);
 }
 
 int aws_http2_headers_get_request_scheme(
     const struct aws_http_headers *h2_headers,
     struct aws_byte_cursor *out_scheme) {
-    return aws_http_headers_get(h2_headers, aws_http_header_scheme, out_scheme);
+    return aws_http_headers_get_single(h2_headers, aws_http_header_scheme, out_scheme);
 }
 
 int aws_http2_headers_get_request_authority(
     const struct aws_http_headers *h2_headers,
     struct aws_byte_cursor *out_authority) {
-    return aws_http_headers_get(h2_headers, aws_http_header_authority, out_authority);
+    return aws_http_headers_get_single(h2_headers, aws_http_header_authority, out_authority);
 }
 
 int aws_http2_headers_get_request_path(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_path) {
-    return aws_http_headers_get(h2_headers, aws_http_header_path, out_path);
+    return aws_http_headers_get_single(h2_headers, aws_http_header_path, out_path);
 }
 
 int aws_http2_headers_get_response_status(const struct aws_http_headers *h2_headers, int *out_status_code) {
     struct aws_byte_cursor status_code_cur;
-    int return_code = aws_http_headers_get(h2_headers, aws_http_header_status, &status_code_cur);
+    int return_code = aws_http_headers_get_single(h2_headers, aws_http_header_status, &status_code_cur);
     if (return_code == AWS_OP_SUCCESS) {
         uint64_t code_val_u64;
         if (aws_byte_cursor_utf8_parse_u64(status_code_cur, &code_val_u64)) {
@@ -912,7 +1006,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
          */
         struct aws_byte_cursor host_value;
         AWS_ZERO_STRUCT(host_value);
-        if (aws_http_headers_get(http1_msg->headers, aws_byte_cursor_from_c_str("host"), &host_value) ==
+        if (aws_http_headers_get_single(http1_msg->headers, aws_byte_cursor_from_c_str("host"), &host_value) ==
             AWS_OP_SUCCESS) {
             if (aws_http_headers_add(copied_headers, aws_http_header_authority, host_value)) {
                 goto error;
@@ -924,6 +1018,14 @@ struct aws_http_message *aws_http2_message_new_from_http1(
                 aws_http_header_authority.ptr,
                 (int)host_value.len,
                 host_value.ptr);
+        } else if (aws_last_error() != AWS_ERROR_HTTP_HEADER_NOT_FOUND) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_GENERAL,
+                "Failed to create HTTP/2 message from HTTP/1 message, ip: %p, due to error with host header: %d %s",
+                (void *)http1_msg,
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
+            goto error;
         }
         /* TODO: If the host headers is missing, the target URI could be the other source of the authority information
          */
