@@ -635,10 +635,9 @@ static int s_ws_bootstrap_validate_sec_websocket_protocol(const struct aws_webso
             /* Success! */
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_WEBSOCKET_SETUP,
-                "id=%p: Server selected '" PRInSTR ": " PRInSTR "'",
+                "id=%p: Server selected Sec-WebSocket-Protocol: " PRInSTR,
                 (void *)ws_bootstrap,
-                AWS_BYTE_CURSOR_PRI(response_protocol),
-                AWS_BYTE_CURSOR_PRI(expected_sec_websocket_protocol));
+                AWS_BYTE_CURSOR_PRI(response_protocol));
             return AWS_OP_SUCCESS;
         }
     }
