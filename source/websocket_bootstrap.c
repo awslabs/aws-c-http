@@ -74,8 +74,8 @@ struct aws_websocket_client_bootstrap {
      * this is what we expect the response's "Sec-WebSocket-Accept" to be */
     struct aws_byte_buf expected_sec_websocket_accept;
 
-    /* Values from the request's "Sec-WebSocket-Protocol" values (or NULL if none)  */
-    struct aws_string *expected_sec_websocket_protocol;
+    /* Comma-separated values from the request's "Sec-WebSocket-Protocol" (or NULL if none)  */
+    struct aws_string *expected_sec_websocket_protocols;
 
     /* Handshake response data */
     int response_status;
@@ -186,7 +186,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
         goto error;
     }
 
-    ws_bootstrap->expected_sec_websocket_protocol =
+    ws_bootstrap->expected_sec_websocket_protocols =
         aws_http_headers_get_all(request_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Protocol"));
 
     /* Initiate HTTP connection */
@@ -255,7 +255,7 @@ static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_boo
     aws_http_message_release(ws_bootstrap->handshake_request);
     aws_http_headers_release(ws_bootstrap->response_headers);
     aws_byte_buf_clean_up(&ws_bootstrap->expected_sec_websocket_accept);
-    aws_string_destroy(ws_bootstrap->expected_sec_websocket_protocol);
+    aws_string_destroy(ws_bootstrap->expected_sec_websocket_protocols);
     aws_byte_buf_clean_up(&ws_bootstrap->response_body);
 
     aws_mem_release(ws_bootstrap->alloc, ws_bootstrap);
@@ -600,7 +600,7 @@ static int s_ws_bootstrap_validate_header(
 static int s_ws_bootstrap_validate_sec_websocket_protocol(const struct aws_websocket_client_bootstrap *ws_bootstrap) {
     /* First handle the easy case:
      * If client requested no protocols, then the response should not pick any */
-    if (ws_bootstrap->expected_sec_websocket_protocol == NULL) {
+    if (ws_bootstrap->expected_sec_websocket_protocols == NULL) {
         if (aws_http_headers_has(
                 ws_bootstrap->response_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Protocol"))) {
 
@@ -625,11 +625,11 @@ static int s_ws_bootstrap_validate_sec_websocket_protocol(const struct aws_webso
         return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
     }
 
-    struct aws_byte_cursor expected_sec_websocket_protocol =
-        aws_byte_cursor_from_string(ws_bootstrap->expected_sec_websocket_protocol);
+    struct aws_byte_cursor request_protocols =
+        aws_byte_cursor_from_string(ws_bootstrap->expected_sec_websocket_protocols);
     struct aws_byte_cursor request_protocol_i;
     AWS_ZERO_STRUCT(request_protocol_i);
-    while (aws_byte_cursor_next_split(&expected_sec_websocket_protocol, ',', &request_protocol_i)) {
+    while (aws_byte_cursor_next_split(&request_protocols, ',', &request_protocol_i)) {
         struct aws_byte_cursor request_protocol = aws_strutil_trim_http_whitespace(request_protocol_i);
         if (aws_byte_cursor_eq(&response_protocol, &request_protocol)) {
             /* Success! */
@@ -648,7 +648,7 @@ static int s_ws_bootstrap_validate_sec_websocket_protocol(const struct aws_webso
         "'. Expected one of '" PRInSTR "'",
         (void *)ws_bootstrap,
         AWS_BYTE_CURSOR_PRI(response_protocol),
-        AWS_BYTE_CURSOR_PRI(expected_sec_websocket_protocol));
+        AWS_BYTE_CURSOR_PRI(request_protocols));
     return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
 }
 
