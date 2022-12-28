@@ -321,9 +321,7 @@ int aws_http_headers_get_index(
  * field line value in order, separated by a comma (",") and optional whitespace
  * (OWS, defined in Section 5.6.3). For consistency, use comma SP. */
 AWS_HTTP_API
-struct aws_string *aws_http_headers_get_comma_separated(
-    const struct aws_http_headers *headers,
-    struct aws_byte_cursor name) {
+struct aws_string *aws_http_headers_get_all(const struct aws_http_headers *headers, struct aws_byte_cursor name) {
 
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
