@@ -245,14 +245,14 @@ struct aws_websocket_client_connection_options {
 
     /**
      * Called repeatedly as payload data arrives.
-     * Required if `on_incoming_frame_begin` is set.
+     * Optional.
      * See `aws_websocket_on_incoming_frame_payload_fn`.
      */
     aws_websocket_on_incoming_frame_payload_fn *on_incoming_frame_payload;
 
     /**
      * Called when done processing an incoming frame.
-     * Required if `on_incoming_frame_begin` is set.
+     * Optional.
      * See `aws_websocket_on_incoming_frame_complete_fn`.
      */
     aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
