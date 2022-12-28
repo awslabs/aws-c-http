@@ -528,19 +528,6 @@ int aws_http_headers_get_index(
     struct aws_http_header *out_header);
 
 /**
- * Get the single value for this name.
- * AWS_ERROR_HTTP_HEADER_NOT_FOUND is raised if the name is not found.
- * AWS_ERROR_HTTP_UNEXPECTED_DUPLICATE_HEADER is raised if the name is found multiple times.
- *
- * If you expect a comma-separated value, use aws_http_headers_get_comma_separated() instead.
- */
-AWS_HTTP_API
-int aws_http_headers_get_single(
-    const struct aws_http_headers *headers,
-    struct aws_byte_cursor name,
-    struct aws_byte_cursor *out_value);
-
-/**
  * Get the comma-separated value for this name.
  * If there are any headers for this name, a new aws_string is returned that you
  * are responsible for destroying. If there are multiple headers with this name
@@ -553,8 +540,8 @@ struct aws_string *aws_http_headers_get_comma_separated(
     struct aws_byte_cursor name);
 
 /**
- * DEPRECATED
- * Use aws_http_headers_get_single() or aws_http_headers_get_comma_separated() instead.
+ * Get the first value for this name, ignoring any additional values.
+ * AWS_ERROR_HTTP_HEADER_NOT_FOUND is raised if the name is not found.
  */
 AWS_HTTP_API
 int aws_http_headers_get(
