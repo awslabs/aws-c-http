@@ -144,7 +144,8 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
 
     const struct aws_http_headers *request_headers = aws_http_message_get_headers(options->handshake_request);
     struct aws_byte_cursor sec_websocket_key;
-    if (aws_http_headers_get(request_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Key"), &sec_websocket_key)) {
+    if (aws_http_headers_get_single(
+            request_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Key"), &sec_websocket_key)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
             "id=static: Websocket handshake request is missing required 'Sec-WebSocket-Key' header");
@@ -540,7 +541,7 @@ static int s_ws_bootstrap_validate_header(
     bool case_sensitive) {
 
     struct aws_byte_cursor actual_value;
-    if (aws_http_headers_get(ws_bootstrap->response_headers, aws_byte_cursor_from_c_str(name), &actual_value)) {
+    if (aws_http_headers_get_single(ws_bootstrap->response_headers, aws_byte_cursor_from_c_str(name), &actual_value)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP, "id=%p: Response lacks required '%s' header", (void *)ws_bootstrap, name);
         return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
