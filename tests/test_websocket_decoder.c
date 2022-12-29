@@ -377,7 +377,7 @@ DECODER_TEST_CASE(websocket_decoder_extended_length_2byte) {
             aws_raise_error(-1); /* overwrite last-error */
 
             ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
-            ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, aws_last_error());
+            ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR, aws_last_error());
         }
     }
 
@@ -448,7 +448,7 @@ DECODER_TEST_CASE(websocket_decoder_extended_length_8byte) {
             aws_raise_error(-1); /* overwrite last-error */
 
             ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
-            ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, aws_last_error());
+            ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR, aws_last_error());
         }
     }
 
@@ -530,7 +530,7 @@ DECODER_TEST_CASE(websocket_decoder_fail_on_unknown_opcode) {
     bool frame_complete;
     struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
     ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, aws_last_error());
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR, aws_last_error());
 
     ASSERT_SUCCESS(s_decoder_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -626,7 +626,7 @@ DECODER_TEST_CASE(websocket_decoder_fail_on_bad_fragmentation) {
     struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
     ASSERT_SUCCESS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
     ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, aws_last_error());
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR, aws_last_error());
 
     ASSERT_SUCCESS(s_decoder_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -646,7 +646,7 @@ DECODER_TEST_CASE(websocket_decoder_control_frame_cannot_be_fragmented) {
     bool frame_complete;
     struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
     ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, aws_last_error());
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR, aws_last_error());
 
     ASSERT_SUCCESS(s_decoder_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
