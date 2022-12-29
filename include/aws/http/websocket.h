@@ -12,7 +12,7 @@ struct aws_http_message;
 
 /* TODO: Document lifetime stuff */
 /* TODO: Document CLOSE frame behavior (when auto-sent during close, when auto-closed) */
-/* TODO: Document auto-pong behavior */
+/* TODO: Accept payload as aws_input_stream */
 
 /**
  * A websocket connection.
@@ -346,13 +346,6 @@ struct aws_websocket_send_frame_options {
      * Indicates that this is the final fragment in a message. The first fragment MAY also be the final fragment.
      */
     bool fin;
-
-    /**
-     * If true, frame will be sent before those with normal priority.
-     * Useful for opcodes like PING and PONG where low latency is important.
-     * This feature may only be used with "control" opcodes, not "data" opcodes like BINARY and TEXT.
-     */
-    bool high_priority;
 
     /**
      * MUST be 0 unless an extension is negotiated that defines meanings for non-zero values.

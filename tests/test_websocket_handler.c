@@ -904,67 +904,6 @@ TEST_CASE(websocket_handler_send_payload_with_pauses) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(websocket_handler_send_high_priority_frame) {
-    (void)ctx;
-    struct tester tester;
-    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-
-    struct send_tester sending[] = {
-        {
-            .payload = aws_byte_cursor_from_c_str("A"),
-            .def =
-                {
-                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
-                    .fin = false,
-                },
-        },
-        {
-            .def =
-                {
-                    .opcode = AWS_WEBSOCKET_OPCODE_PING,
-                    .fin = true,
-                    .high_priority = true,
-                },
-        },
-        {
-            .payload = aws_byte_cursor_from_c_str("C"),
-            .def =
-                {
-                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
-                    .fin = true,
-                },
-        },
-        {
-            .def =
-                {
-                    .opcode = AWS_WEBSOCKET_OPCODE_PONG,
-                    .fin = true,
-                    .high_priority = true,
-                },
-        },
-    };
-
-    /* Send from user-thread to ensure that everything is queued.
-     * When queued frames are processed, the high-priority one should end up first. */
-    testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
-
-    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
-        ASSERT_SUCCESS(s_send_frame(&tester, &sending[i]));
-    }
-
-    testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
-    ASSERT_SUCCESS(s_drain_written_messages(&tester));
-
-    /* High-priority frames (index 1 and 3) should get sent first */
-    ASSERT_SUCCESS(s_check_written_message(&sending[1], 0));
-    ASSERT_SUCCESS(s_check_written_message(&sending[3], 1));
-    ASSERT_SUCCESS(s_check_written_message(&sending[0], 2));
-    ASSERT_SUCCESS(s_check_written_message(&sending[2], 3));
-
-    ASSERT_SUCCESS(s_tester_clean_up(&tester));
-    return AWS_OP_SUCCESS;
-}
-
 TEST_CASE(websocket_handler_sends_nothing_after_close_frame) {
     (void)ctx;
     struct tester tester;
