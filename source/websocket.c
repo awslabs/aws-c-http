@@ -24,16 +24,7 @@
 
 /* TODO: echo payload of peer CLOSE */
 
-/* TODO: Can we be sure socket will always mark aws_io_messages as complete? */
-
 /* TODO: If something goes wrong during normal shutdown, do I change the error_code? */
-
-/* TODO: Delayed payload works by sending 0-size io_msgs down pipe and trying again when they're compele.
- *       Do something more efficient? */
-
-/* TODO: don't fire send completion until data written to socket .. which also means delaying on_shutdown cb */
-
-/* TODO: stop using the HTTP_PARSE error, give websocket its own error */
 
 struct outgoing_frame {
     struct aws_websocket_send_frame_options def;
@@ -249,8 +240,6 @@ static void s_unlock_synced_data(struct aws_websocket *websocket) {
 }
 
 struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handler_options *options) {
-    /* TODO: validate options */
-
     struct aws_channel_slot *slot = NULL;
     struct aws_websocket *websocket = NULL;
     int err;
@@ -722,8 +711,7 @@ static void s_try_write_outgoing_frames(struct aws_websocket *websocket) {
         return;
     }
 
-    /* Prepare to send aws_io_message up the channel.
-     * Note that the write-completion callback may fire before send_message() returns */
+    /* Prepare to send aws_io_message up the channel. */
 
     /* If CLOSE frame was written, that's the last data we'll write */
     if (wrote_close_frame) {
@@ -863,7 +851,6 @@ static int s_handler_process_write_message(
 
     int err = s_send_frame(websocket, &options, false);
     if (err) {
-        /* TODO: mqtt handler needs to clean up messsages that fail to send. */
         return AWS_OP_ERR;
     }
 
