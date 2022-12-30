@@ -377,9 +377,6 @@ static int s_readpush_check(struct tester *tester, size_t frame_i, int expected_
     ASSERT_UINT_EQUALS(pushed->def.payload_length, received->def.payload_length);
     ASSERT_UINT_EQUALS(pushed->def.opcode, received->def.opcode);
     ASSERT_INT_EQUALS(pushed->def.fin, received->def.fin);
-    ASSERT_INT_EQUALS(pushed->def.rsv[0], received->def.rsv[0]);
-    ASSERT_INT_EQUALS(pushed->def.rsv[1], received->def.rsv[1]);
-    ASSERT_INT_EQUALS(pushed->def.rsv[2], received->def.rsv[2]);
 
     if (received->on_complete_error_code == AWS_ERROR_SUCCESS) {
         ASSERT_UINT_EQUALS(received->def.payload_length, received->payload.len);
@@ -621,9 +618,6 @@ static int s_check_written_message(struct send_tester *send, size_t expected_ord
     ASSERT_UINT_EQUALS(send->def.opcode, written->def.opcode);
     ASSERT_UINT_EQUALS(send->def.payload_length, written->def.payload_length);
     ASSERT_INT_EQUALS(send->def.fin, written->def.fin);
-    for (int i = 0; i < 3; i++) {
-        ASSERT_INT_EQUALS(send->def.rsv[i], written->def.rsv[i]);
-    }
 
     /* All payloads sent from client should have been masked (assuming client is being tested here) */
     ASSERT_TRUE(written->def.masked);

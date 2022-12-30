@@ -1291,9 +1291,6 @@ static int s_decoder_on_frame(const struct aws_websocket_frame *frame, void *use
     websocket->thread_data.current_incoming_frame->payload_length = frame->payload_length;
     websocket->thread_data.current_incoming_frame->opcode = frame->opcode;
     websocket->thread_data.current_incoming_frame->fin = frame->fin;
-    websocket->thread_data.current_incoming_frame->rsv[0] = frame->rsv[0];
-    websocket->thread_data.current_incoming_frame->rsv[1] = frame->rsv[1];
-    websocket->thread_data.current_incoming_frame->rsv[2] = frame->rsv[2];
 
     /* If CONTINUATION frames are expected, remember which type of data is being continued.
      * RFC-6455 Section 5.4 Fragmentation */
