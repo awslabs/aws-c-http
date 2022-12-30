@@ -1800,6 +1800,91 @@ TEST_CASE(websocket_midchannel_write_huge_message) {
     return AWS_OP_SUCCESS;
 }
 
+TEST_CASE(websocket_handler_sends_pong_automatically) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* Read PING with a payload */
+    struct readpush_frame read_ping_with_payload = {
+        .def =
+            {
+                .opcode = AWS_WEBSOCKET_OPCODE_PING,
+                .fin = true,
+            },
+        .payload = aws_byte_cursor_from_c_str("echo me pls"),
+    };
+    s_set_readpush_frames(&tester, &read_ping_with_payload, 1);
+    ASSERT_SUCCESS(s_do_readpush_all(&tester));
+
+    /* Check that PONG is automatically written, with payload echoing the PING */
+    s_drain_written_messages(&tester);
+    const struct written_frame *written_frame = &tester.written_frames[0];
+    ASSERT_UINT_EQUALS(AWS_WEBSOCKET_OPCODE_PONG, written_frame->def.opcode);
+    ASSERT_TRUE(written_frame->is_complete);
+    ASSERT_BIN_ARRAYS_EQUALS(
+        read_ping_with_payload.payload.ptr,
+        read_ping_with_payload.payload.len,
+        written_frame->payload.buffer,
+        written_frame->payload.len);
+
+    /* Read PING without empty payload */
+    struct readpush_frame read_ping_with_empty_payload = {
+        .def =
+            {
+                .opcode = AWS_WEBSOCKET_OPCODE_PING,
+                .fin = true,
+            },
+    };
+    s_set_readpush_frames(&tester, &read_ping_with_empty_payload, 1);
+    ASSERT_SUCCESS(s_do_readpush_all(&tester));
+
+    /* Check that PONG with empty payload is automatically written */
+    s_drain_written_messages(&tester);
+    written_frame = &tester.written_frames[1];
+    ASSERT_UINT_EQUALS(AWS_WEBSOCKET_OPCODE_PONG, written_frame->def.opcode);
+    ASSERT_TRUE(written_frame->is_complete);
+    ASSERT_UINT_EQUALS(0, written_frame->payload.len);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_wont_send_pong_after_close_frame) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* Send a CLOSE frame */
+    struct send_tester send_close = {
+        .def =
+            {
+                .opcode = AWS_WEBSOCKET_OPCODE_CLOSE,
+                .fin = true,
+            },
+    };
+    ASSERT_SUCCESS(s_send_frame(&tester, &send_close));
+
+    /* Now have the websocket read a PING */
+    struct readpush_frame read_ping = {
+        .def =
+            {
+                .opcode = AWS_WEBSOCKET_OPCODE_PING,
+                .fin = true,
+            },
+    };
+    s_set_readpush_frames(&tester, &read_ping, 1);
+    ASSERT_SUCCESS(s_do_readpush_all(&tester));
+
+    /* Check that PONG is NOT sent automatically, because a CLOSE was sent before it */
+    s_drain_written_messages(&tester);
+    ASSERT_TRUE(tester.num_written_frames == 1);
+    ASSERT_INT_EQUALS(AWS_WEBSOCKET_OPCODE_CLOSE, tester.written_frames[0].def.opcode);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 TEST_CASE(websocket_midchannel_read_message) {
     (void)ctx;
     struct tester tester;

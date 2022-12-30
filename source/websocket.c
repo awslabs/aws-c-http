@@ -1527,11 +1527,9 @@ static void s_complete_incoming_frame(struct aws_websocket *websocket, int error
                     .user_data = autopong,
                 };
 
-                if (s_send_frame(websocket, &pong_frame, false /*from_public_api*/)) {
-                    /* send_frame() could only fail here if the websocket is no longer writing,
-                     * in which case we're already shutting down, so who cares. */
-                    AWS_ASSERT(websocket->thread_data.is_writing_stopped);
-                }
+                int send_err = s_send_frame(websocket, &pong_frame, false /*from_public_api*/);
+                /* Failure should be impossible. We already checked that writing is not stopped */
+                AWS_FATAL_ASSERT(!send_err && "Unexpected failure sending websocket PONG");
             }
         }
     }
