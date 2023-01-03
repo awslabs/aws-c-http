@@ -60,7 +60,8 @@ static int s_on_payload(struct aws_byte_cursor data, void *user_data) {
 
 /* For resetting the decoder and its results mid-test */
 static void s_decoder_tester_reset(struct decoder_tester *tester) {
-    aws_websocket_decoder_init(&tester->decoder, s_on_frame, s_on_payload, tester);
+    aws_websocket_decoder_clean_up(&tester->decoder);
+    aws_websocket_decoder_init(&tester->decoder, tester->alloc, s_on_frame, s_on_payload, tester);
     AWS_ZERO_STRUCT(tester->frame);
     tester->on_frame_count = 0;
     tester->payload.len = 0;
@@ -89,6 +90,7 @@ static int s_decoder_tester_init(struct decoder_tester *tester, struct aws_alloc
 
 static int s_decoder_tester_clean_up(struct decoder_tester *tester) {
     aws_byte_buf_clean_up(&tester->payload);
+    aws_websocket_decoder_clean_up(&tester->decoder);
     aws_http_library_clean_up();
     aws_logger_clean_up(&tester->logger);
     return AWS_OP_SUCCESS;
@@ -645,6 +647,218 @@ DECODER_TEST_CASE(websocket_decoder_control_frame_cannot_be_fragmented) {
 
     bool frame_complete;
     struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
+    ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR, aws_last_error());
+
+    ASSERT_SUCCESS(s_decoder_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that we can process a TEXT frame with UTF-8 in it */
+DECODER_TEST_CASE(websocket_decoder_utf8_text) {
+    (void)ctx;
+    struct decoder_tester tester;
+    ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
+
+    uint8_t input[] = {
+        /* TEXT FRAME */
+        0x81, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x04, /* mask | 7bit payload len */
+        /* payload - codepoint U+10348 as 4-byte UTF-8 */
+        0xF0,
+        0x90,
+        0x8D,
+        0x88,
+    };
+
+    struct aws_websocket_frame expected_frame = {
+        .fin = true,
+        .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+        .payload_length = 4,
+    };
+    const char *expected_payload = "\xF0\x90\x8D\x88";
+
+    bool frame_complete;
+    struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
+    ASSERT_SUCCESS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
+
+    /* check result */
+    ASSERT_TRUE(frame_complete);
+    ASSERT_SUCCESS(s_compare_frame(&expected_frame, &tester.frame));
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&tester.payload, expected_payload));
+
+    ASSERT_SUCCESS(s_decoder_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that a TEXT frame with invalid UTF-8 fails */
+DECODER_TEST_CASE(websocket_decoder_fail_on_bad_utf8_text) {
+    (void)ctx;
+    struct decoder_tester tester;
+    ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
+
+    { /* Test validation failing when it hits totally bad byte values */
+        uint8_t input[] = {
+            /* TEXT FRAME */
+            0x81, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+            0x01, /* mask | 7bit payload len */
+            /* payload - illegal UTF-8 value */
+            0xFF,
+        };
+
+        bool frame_complete;
+        struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
+        ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
+        ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR, aws_last_error());
+    }
+
+    s_decoder_tester_reset(&tester);
+
+    { /* Test validation failing at the end, due to a 4-byte codepoint missing 1 byte */
+        uint8_t input[] = {
+            /* TEXT FRAME */
+            0x81, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+            0x03, /* mask | 7bit payload len */
+            /* payload - codepoint U+10348 as 4-byte UTF-8, but missing 4th byte */
+            0xF0,
+            0x90,
+            0x8D,
+            /* 0x88, <-- missing 4th byte */
+        };
+
+        bool frame_complete;
+        struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
+        ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
+        ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR, aws_last_error());
+    }
+
+    ASSERT_SUCCESS(s_decoder_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that UTF-8 can be validated even if it's fragmented across frames  */
+DECODER_TEST_CASE(websocket_decoder_fragmented_utf8_text) {
+    (void)ctx;
+    struct decoder_tester tester;
+    ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
+
+    /* Split a 4-byte UTF-8 codepoint across a fragmented message.
+     * codepoint U+10348 is UTF-8 bytes: 0xF0, 0x90, 0x8D, 0x88 */
+    uint8_t input[] = {
+        /* TEXT FRAME */
+        0x01, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload */
+        0xF0, /* 1/4 UTF-8 bytes */
+
+        /* CONTINUATION FRAME */
+        0x00, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x02, /* mask | 7bit payload len */
+        /* payload */
+        0x90, /* 2/4 UTF-8 bytes */
+        0x8D, /* 3/4 UTF-8 bytes */
+
+        /* PING FRAME - Control frames may be injected in the middle of a fragmented message. */
+        0x89, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload - PING payload should not interfere with validation */
+        0xFF,
+
+        /* CONTINUATION FRAME */
+        0x80, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload */
+        0x88, /* 4/4 UTF-8 bytes */
+    };
+
+    struct aws_websocket_frame expected_frames[] = {
+        {
+            .fin = false,
+            .opcode = 1,
+            .payload_length = 1,
+        },
+        {
+            .fin = false,
+            .opcode = 0,
+            .payload_length = 2,
+        },
+        {
+            .fin = true,
+            .opcode = 9,
+            .payload_length = 1,
+        },
+        {
+            .fin = true,
+            .opcode = 0,
+            .payload_length = 1,
+        },
+    };
+
+    struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(expected_frames); ++i) {
+        bool frame_complete;
+        ASSERT_SUCCESS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
+        ASSERT_TRUE(frame_complete);
+        ASSERT_UINT_EQUALS(i + 1, tester.on_frame_count);
+        ASSERT_SUCCESS(s_compare_frame(&expected_frames[i], &tester.frame));
+    }
+    ASSERT_UINT_EQUALS(0, input_cursor.len);
+
+    ASSERT_SUCCESS(s_decoder_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that UTF-8 validator works even when text is fragmented across multiple frames */
+DECODER_TEST_CASE(websocket_decoder_fail_on_fragmented_bad_utf8_text) {
+    (void)ctx;
+    struct decoder_tester tester;
+    ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
+
+    /* Split a 4-byte UTF-8 codepoint across a fragmented message, but omit he last byte.
+     * codepoint U+10348 is UTF-8 bytes: 0xF0, 0x90, 0x8D, 0x88 */
+    uint8_t input[] = {
+        /* TEXT FRAME */
+        0x01, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload */
+        0xF0, /* 1/4 UTF-8 bytes */
+
+        /* CONTINUATION FRAME */
+        0x00, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload */
+        0x90, /* 2/4 UTF-8 bytes */
+
+        /* PING FRAME - Control frames may be injected in the middle of a fragmented message. */
+        0x89, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload - PING payload shouldn't interfere with the TEXT's validation */
+        0x8D,
+
+        /* CONTINUATION FRAME */
+        0x80, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload */
+        0x8D, /* 3/4 UTF-8 bytes */
+        /* 0x88, <-- MISSING 4/4 UTF-8 bytes */
+    };
+
+    bool frame_complete;
+    struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
+
+    /* TEXT should pass */
+    ASSERT_SUCCESS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
+    ASSERT_TRUE(frame_complete);
+
+    /* CONTINUATION should pass */
+    ASSERT_SUCCESS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
+    ASSERT_TRUE(frame_complete);
+
+    /* PING should pass */
+    ASSERT_SUCCESS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
+    ASSERT_TRUE(frame_complete);
+
+    /* final CONTINUATION should fail because the message ended with an incomplete UTF-8 encoding */
     ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR, aws_last_error());
 

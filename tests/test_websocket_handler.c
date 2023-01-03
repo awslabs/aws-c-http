@@ -490,7 +490,8 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
     ASSERT_NOT_NULL(tester->websocket);
     testing_channel_drain_queued_tasks(&tester->testing_channel);
 
-    aws_websocket_decoder_init(&tester->written_frame_decoder, s_on_written_frame, s_on_written_frame_payload, tester);
+    aws_websocket_decoder_init(
+        &tester->written_frame_decoder, alloc, s_on_written_frame, s_on_written_frame_payload, tester);
     aws_websocket_encoder_init(&tester->readpush_encoder, s_stream_readpush_payload, tester);
 
     return AWS_OP_SUCCESS;
@@ -512,6 +513,7 @@ static int s_tester_clean_up(struct tester *tester) {
 
     aws_byte_buf_clean_up(&tester->all_writepush_data);
 
+    aws_websocket_decoder_clean_up(&tester->written_frame_decoder);
     aws_http_library_clean_up();
     aws_logger_clean_up(&tester->logger);
     return AWS_OP_SUCCESS;

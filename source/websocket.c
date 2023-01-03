@@ -304,7 +304,8 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
 
     aws_websocket_encoder_init(&websocket->thread_data.encoder, s_encoder_stream_outgoing_payload, websocket);
 
-    aws_websocket_decoder_init(&websocket->thread_data.decoder, s_decoder_on_frame, s_decoder_on_payload, websocket);
+    aws_websocket_decoder_init(
+        &websocket->thread_data.decoder, options->allocator, s_decoder_on_frame, s_decoder_on_payload, websocket);
 
     aws_linked_list_init(&websocket->synced_data.outgoing_frame_list);
 
@@ -346,6 +347,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Destroying websocket.", (void *)websocket);
 
+    aws_websocket_decoder_clean_up(&websocket->thread_data.decoder);
     aws_byte_buf_clean_up(&websocket->thread_data.incoming_ping_payload);
     aws_mutex_clean_up(&websocket->synced_data.lock);
     aws_mem_release(websocket->alloc, websocket);
