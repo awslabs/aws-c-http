@@ -662,12 +662,13 @@ DECODER_TEST_CASE(websocket_decoder_utf8_text) {
 
     uint8_t input[] = {
         /* TEXT FRAME */
-        0x81,   /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
-        0x04,   /* mask | 7bit payload len */
-        '\xF0', /* codepoint U+10348 as 4-byte UTF-8 */
-        '\x90',
-        '\x8D',
-        '\x88',
+        0x81, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x04, /* mask | 7bit payload len */
+        /* payload - codepoint U+10348 as 4-byte UTF-8 */
+        0xF0,
+        0x90,
+        0x8D,
+        0x88,
     };
 
     struct aws_websocket_frame expected_frame = {
@@ -699,9 +700,10 @@ DECODER_TEST_CASE(websocket_decoder_fail_on_bad_utf8_text) {
     { /* Test validation failing when it hits totally bad byte values */
         uint8_t input[] = {
             /* TEXT FRAME */
-            0x81,   /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
-            0x01,   /* mask | 7bit payload len */
-            '\xFF', /* illegal UTF-8 value */
+            0x81, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+            0x01, /* mask | 7bit payload len */
+            /* payload - illegal UTF-8 value */
+            0xFF,
         };
 
         bool frame_complete;
@@ -715,12 +717,13 @@ DECODER_TEST_CASE(websocket_decoder_fail_on_bad_utf8_text) {
     { /* Test validation failing at the end, due to a 4-byte codepoint missing 1 byte */
         uint8_t input[] = {
             /* TEXT FRAME */
-            0x81,   /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
-            0x03,   /* mask | 7bit payload len */
-            '\xF0', /* codepoint U+10348 as 4-byte UTF-8 */
-            '\x90',
-            '\x8D',
-            /* '\x88', <-- missing 4th byte */
+            0x81, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+            0x03, /* mask | 7bit payload len */
+            /* payload - codepoint U+10348 as 4-byte UTF-8, but missing 4th byte */
+            0xF0,
+            0x90,
+            0x8D,
+            /* 0x88, <-- missing 4th byte */
         };
 
         bool frame_complete;
@@ -743,25 +746,29 @@ DECODER_TEST_CASE(websocket_decoder_fragmented_utf8_text) {
      * codepoint U+10348 is UTF-8 bytes: 0xF0, 0x90, 0x8D, 0x88 */
     uint8_t input[] = {
         /* TEXT FRAME */
-        0x01,   /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
-        0x01,   /* mask | 7bit payload len */
-        '\xF0', /* 1/4 UTF-8 bytes */
+        0x01, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload */
+        0xF0, /* 1/4 UTF-8 bytes */
 
         /* CONTINUATION FRAME */
-        0x00,   /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
-        0x02,   /* mask | 7bit payload len */
-        '\x90', /* 2/4 UTF-8 bytes */
-        '\x8D', /* 3/4 UTF-8 bytes */
+        0x00, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x02, /* mask | 7bit payload len */
+        /* payload */
+        0x90, /* 2/4 UTF-8 bytes */
+        0x8D, /* 3/4 UTF-8 bytes */
 
         /* PING FRAME - Control frames may be injected in the middle of a fragmented message. */
-        0x89,   /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
-        0x01,   /* mask | 7bit payload len */
-        '\xFF', /* The PING payload should not interfere with validation */
+        0x89, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload - PING payload should not interfere with validation */
+        0xFF,
 
         /* CONTINUATION FRAME */
-        0x80,   /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
-        0x01,   /* mask | 7bit payload len */
-        '\x88', /* 4/4 UTF-8 bytes */
+        0x80, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload */
+        0x88, /* 4/4 UTF-8 bytes */
     };
 
     struct aws_websocket_frame expected_frames[] = {
@@ -811,25 +818,29 @@ DECODER_TEST_CASE(websocket_decoder_fail_on_fragmented_bad_utf8_text) {
      * codepoint U+10348 is UTF-8 bytes: 0xF0, 0x90, 0x8D, 0x88 */
     uint8_t input[] = {
         /* TEXT FRAME */
-        0x01,   /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
-        0x01,   /* mask | 7bit payload len */
-        '\xF0', /* 1/4 UTF-8 bytes */
+        0x01, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload */
+        0xF0, /* 1/4 UTF-8 bytes */
 
         /* CONTINUATION FRAME */
-        0x00,   /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
-        0x01,   /* mask | 7bit payload len */
-        '\x90', /* 2/4 UTF-8 bytes */
+        0x00, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload */
+        0x90, /* 2/4 UTF-8 bytes */
 
         /* PING FRAME - Control frames may be injected in the middle of a fragmented message. */
-        0x89,   /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
-        0x01,   /* mask | 7bit payload len */
-        '\x8D', /* Give PING frame a payload, it shouldn't interfere with the TEXT's validation */
+        0x89, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload - PING payload shouldn't interfere with the TEXT's validation */
+        0x8D,
 
         /* CONTINUATION FRAME */
-        0x80,   /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
-        0x01,   /* mask | 7bit payload len */
-        '\x8D', /* 3/4 UTF-8 bytes */
-        /* '\x88', <-- MISSING 4/4 UTF-8 bytes */
+        0x80, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        /* payload */
+        0x8D, /* 3/4 UTF-8 bytes */
+        /* 0x88, <-- MISSING 4/4 UTF-8 bytes */
     };
 
     bool frame_complete;
