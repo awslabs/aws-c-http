@@ -12,7 +12,7 @@ struct aws_http_message;
 
 /* TODO: Document lifetime stuff */
 /* TODO: Document CLOSE frame behavior (when auto-sent during close, when auto-closed) */
-/* TODO: Document auto-pong behavior */
+/* TODO: Accept payload as aws_input_stream */
 
 /**
  * A websocket connection.
@@ -82,7 +82,6 @@ struct aws_websocket_incoming_frame {
     uint64_t payload_length;
     uint8_t opcode;
     bool fin;
-    bool rsv[3];
 };
 
 /**
@@ -309,7 +308,7 @@ typedef void(
 /**
  * Options for sending a websocket frame.
  * This structure is copied immediately by aws_websocket_send().
- * For descriptions of opcode, fin, rsv, and payload_length see in RFC-6455 Section 5.2.
+ * For descriptions of opcode, fin, and payload_length see in RFC-6455 Section 5.2.
  */
 struct aws_websocket_send_frame_options {
     /**
@@ -346,18 +345,6 @@ struct aws_websocket_send_frame_options {
      * Indicates that this is the final fragment in a message. The first fragment MAY also be the final fragment.
      */
     bool fin;
-
-    /**
-     * If true, frame will be sent before those with normal priority.
-     * Useful for opcodes like PING and PONG where low latency is important.
-     * This feature may only be used with "control" opcodes, not "data" opcodes like BINARY and TEXT.
-     */
-    bool high_priority;
-
-    /**
-     * MUST be 0 unless an extension is negotiated that defines meanings for non-zero values.
-     */
-    bool rsv[3];
 };
 
 AWS_EXTERN_C_BEGIN
