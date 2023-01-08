@@ -5360,6 +5360,7 @@ TEST_CASE(h2_client_manual_data_write_with_body) {
     };
     size_t total_length = 0;
 
+    /* set request body */
     const char *body_src = "hello";
     struct aws_byte_cursor body_cursor = aws_byte_cursor_from_c_str(body_src);
     struct aws_input_stream *request_body = aws_input_stream_new_from_cursor(allocator, &body_cursor);
