@@ -91,23 +91,28 @@ void aws_http_headers_acquire(struct aws_http_headers *headers) {
 
 static int s_http_headers_add_header_impl(
     struct aws_http_headers *headers,
-    const struct aws_http_header *header,
+    const struct aws_http_header *header_orig,
     bool front) {
 
     AWS_PRECONDITION(headers);
-    AWS_PRECONDITION(header);
-    AWS_PRECONDITION(aws_byte_cursor_is_valid(&header->name) && aws_byte_cursor_is_valid(&header->value));
+    AWS_PRECONDITION(header_orig);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&header_orig->name) && aws_byte_cursor_is_valid(&header_orig->value));
 
-    if (header->name.len == 0) {
+    struct aws_http_header header_copy = *header_orig;
+
+    if (header_copy.name.len == 0) {
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_NAME);
     }
 
+    /* Whitespace around header values is ignored (RFC-7230 - Section 3.2).
+     * Trim it off here, so anyone querying this value has an easier time. */
+    header_copy.value = aws_strutil_trim_http_whitespace(header_copy.value);
+
     size_t total_len;
-    if (aws_add_size_checked(header->name.len, header->value.len, &total_len)) {
+    if (aws_add_size_checked(header_copy.name.len, header_copy.value.len, &total_len)) {
         return AWS_OP_ERR;
     }
 
-    struct aws_http_header header_copy = *header;
     /* Store our own copy of the strings.
      * We put the name and value into the same allocation. */
     uint8_t *strmem = aws_mem_acquire(headers->alloc, total_len);
@@ -307,6 +312,49 @@ int aws_http_headers_get_index(
     AWS_PRECONDITION(out_header);
 
     return aws_array_list_get_at(&headers->array_list, out_header, index);
+}
+
+/* RFC-9110 - 5.3
+ * A recipient MAY combine multiple field lines within a field section that
+ * have the same field name into one field line, without changing the semantics
+ * of the message, by appending each subsequent field line value to the initial
+ * field line value in order, separated by a comma (",") and optional whitespace
+ * (OWS, defined in Section 5.6.3). For consistency, use comma SP. */
+AWS_HTTP_API
+struct aws_string *aws_http_headers_get_all(const struct aws_http_headers *headers, struct aws_byte_cursor name) {
+
+    AWS_PRECONDITION(headers);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
+
+    struct aws_string *value_str = NULL;
+
+    const struct aws_byte_cursor separator = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(", ");
+
+    struct aws_byte_buf value_builder;
+    aws_byte_buf_init(&value_builder, headers->alloc, 0);
+    bool found = false;
+    struct aws_http_header *header = NULL;
+    const size_t count = aws_http_headers_count(headers);
+    for (size_t i = 0; i < count; ++i) {
+        aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
+        if (aws_http_header_name_eq(name, header->name)) {
+            if (!found) {
+                found = true;
+            } else {
+                aws_byte_buf_append_dynamic(&value_builder, &separator);
+            }
+            aws_byte_buf_append_dynamic(&value_builder, &header->value);
+        }
+    }
+
+    if (found) {
+        value_str = aws_string_new_from_buf(headers->alloc, &value_builder);
+    } else {
+        aws_raise_error(AWS_ERROR_HTTP_HEADER_NOT_FOUND);
+    }
+
+    aws_byte_buf_clean_up(&value_builder);
+    return value_str;
 }
 
 int aws_http_headers_get(

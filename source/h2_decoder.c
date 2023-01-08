@@ -37,7 +37,7 @@ static const size_t s_decoder_cookie_buffer_initial_size = 512;
 #define DECODER_CALL_VTABLE(decoder, fn)                                                                               \
     do {                                                                                                               \
         if ((decoder)->vtable->fn) {                                                                                   \
-            DECODER_LOG(TRACE, decoder, "Invoking callback " #fn)                                                      \
+            DECODER_LOG(TRACE, decoder, "Invoking callback " #fn);                                                     \
             struct aws_h2err vtable_err = (decoder)->vtable->fn((decoder)->userdata);                                  \
             if (aws_h2err_failed(vtable_err)) {                                                                        \
                 DECODER_LOGF(                                                                                          \
@@ -53,7 +53,7 @@ static const size_t s_decoder_cookie_buffer_initial_size = 512;
 #define DECODER_CALL_VTABLE_ARGS(decoder, fn, ...)                                                                     \
     do {                                                                                                               \
         if ((decoder)->vtable->fn) {                                                                                   \
-            DECODER_LOG(TRACE, decoder, "Invoking callback " #fn)                                                      \
+            DECODER_LOG(TRACE, decoder, "Invoking callback " #fn);                                                     \
             struct aws_h2err vtable_err = (decoder)->vtable->fn(__VA_ARGS__, (decoder)->userdata);                     \
             if (aws_h2err_failed(vtable_err)) {                                                                        \
                 DECODER_LOGF(                                                                                          \

@@ -5,7 +5,9 @@
 
 #include <aws/http/private/websocket_decoder.h>
 
-/* TODO: decoder logging */
+#include <aws/common/encoding.h>
+
+#include <inttypes.h>
 
 typedef int(state_fn)(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data);
 
@@ -46,7 +48,12 @@ static int s_state_opcode_byte(struct aws_websocket_decoder *decoder, struct aws
         case AWS_WEBSOCKET_OPCODE_PONG:
             break;
         default:
-            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET,
+                "id=%p: Received frame with unknown opcode 0x%" PRIx8,
+                (void *)decoder->user_data,
+                decoder->current_frame.opcode);
+            return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR);
     }
 
     /* RFC-6455 Section 5.2 Fragmentation
@@ -61,7 +68,11 @@ static int s_state_opcode_byte(struct aws_websocket_decoder *decoder, struct aws
         bool is_continuation_frame = AWS_WEBSOCKET_OPCODE_CONTINUATION == decoder->current_frame.opcode;
 
         if (decoder->expecting_continuation_data_frame != is_continuation_frame) {
-            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET,
+                "id=%p: Fragmentation error. Received start of new message before end of previous message",
+                (void *)decoder->user_data);
+            return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR);
         }
 
         decoder->expecting_continuation_data_frame = !decoder->current_frame.fin;
@@ -69,8 +80,16 @@ static int s_state_opcode_byte(struct aws_websocket_decoder *decoder, struct aws
     } else {
         /* Control frames themselves MUST NOT be fragmented. */
         if (!decoder->current_frame.fin) {
-            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET,
+                "id=%p: Received fragmented control frame. This is illegal",
+                (void *)decoder->user_data);
+            return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR);
         }
+    }
+
+    if (decoder->current_frame.opcode == AWS_WEBSOCKET_OPCODE_TEXT) {
+        decoder->processing_text_message = true;
     }
 
     decoder->state = AWS_WEBSOCKET_DECODER_STATE_LENGTH_BYTE;
@@ -150,21 +169,17 @@ static int s_state_extended_length(struct aws_websocket_decoder *decoder, struct
     struct aws_byte_cursor cache_cursor = aws_byte_cursor_from_array(decoder->state_cache, total_bytes_extended_length);
     if (total_bytes_extended_length == 2) {
         uint16_t val;
-        if (!aws_byte_cursor_read_be16(&cache_cursor, &val)) {
-            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-        }
-
+        aws_byte_cursor_read_be16(&cache_cursor, &val);
         decoder->current_frame.payload_length = val;
     } else {
-        if (!aws_byte_cursor_read_be64(&cache_cursor, &decoder->current_frame.payload_length)) {
-            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-        }
+        aws_byte_cursor_read_be64(&cache_cursor, &decoder->current_frame.payload_length);
     }
 
     if (decoder->current_frame.payload_length < min_acceptable_value ||
         decoder->current_frame.payload_length > max_acceptable_value) {
 
-        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+        AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET, "id=%p: Failed to decode payload length", (void *)decoder->user_data);
+        return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR);
     }
 
     decoder->state = AWS_WEBSOCKET_DECODER_STATE_MASKING_KEY_CHECK;
@@ -225,7 +240,7 @@ static int s_state_payload_check(struct aws_websocket_decoder *decoder, struct a
         decoder->state_bytes_processed = 0;
         decoder->state = AWS_WEBSOCKET_DECODER_STATE_PAYLOAD;
     } else {
-        decoder->state = AWS_WEBSOCKET_DECODER_STATE_DONE;
+        decoder->state = AWS_WEBSOCKET_DECODER_STATE_FRAME_END;
     }
 
     return AWS_OP_SUCCESS;
@@ -257,8 +272,15 @@ static int s_state_payload(struct aws_websocket_decoder *decoder, struct aws_byt
         }
     }
 
-    /* TODO: validate utf-8 */
     /* TODO: validate payload of CLOSE frame */
+
+    /* Validate the UTF-8 for TEXT messages (a TEXT frame and any subsequent CONTINUATION frames) */
+    if (decoder->processing_text_message && aws_websocket_is_data_frame(decoder->current_frame.opcode)) {
+        if (aws_utf8_validator_update(decoder->text_message_validator, payload)) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET, "id=%p: Received invalid UTF-8", (void *)decoder->user_data);
+            return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR);
+        }
+    }
 
     /* Invoke on_payload() callback to inform user of payload data */
     int err = decoder->on_payload(payload, decoder->user_data);
@@ -271,9 +293,34 @@ static int s_state_payload(struct aws_websocket_decoder *decoder, struct aws_byt
 
     /* If all data consumed, proceed to next state. */
     if (decoder->state_bytes_processed == decoder->current_frame.payload_length) {
-        decoder->state++;
+        decoder->state = AWS_WEBSOCKET_DECODER_STATE_FRAME_END;
     }
 
+    return AWS_OP_SUCCESS;
+}
+
+/* FRAME_END: Perform checks once we reach the end of the frame. */
+static int s_state_frame_end(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
+    (void)data;
+
+    /* If we're done processing a text message (a TEXT frame and any subsequent CONTINUATION frames),
+     * complete the UTF-8 validation */
+    if (decoder->processing_text_message && aws_websocket_is_data_frame(decoder->current_frame.opcode) &&
+        decoder->current_frame.fin) {
+
+        if (aws_utf8_validator_finalize(decoder->text_message_validator)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET,
+                "id=%p: Received invalid UTF-8 (incomplete encoding)",
+                (void *)decoder->user_data);
+            return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR);
+        }
+
+        decoder->processing_text_message = false;
+    }
+
+    /* Done! */
+    decoder->state = AWS_WEBSOCKET_DECODER_STATE_DONE;
     return AWS_OP_SUCCESS;
 }
 
@@ -286,6 +333,7 @@ static state_fn *s_state_functions[AWS_WEBSOCKET_DECODER_STATE_DONE] = {
     s_state_masking_key,
     s_state_payload_check,
     s_state_payload,
+    s_state_frame_end,
 };
 
 int aws_websocket_decoder_process(
@@ -321,6 +369,7 @@ int aws_websocket_decoder_process(
 
 void aws_websocket_decoder_init(
     struct aws_websocket_decoder *decoder,
+    struct aws_allocator *alloc,
     aws_websocket_decoder_frame_fn *on_frame,
     aws_websocket_decoder_payload_fn *on_payload,
     void *user_data) {
@@ -329,4 +378,10 @@ void aws_websocket_decoder_init(
     decoder->user_data = user_data;
     decoder->on_frame = on_frame;
     decoder->on_payload = on_payload;
+    decoder->text_message_validator = aws_utf8_validator_new(alloc);
+}
+
+void aws_websocket_decoder_clean_up(struct aws_websocket_decoder *decoder) {
+    aws_utf8_validator_destroy(decoder->text_message_validator);
+    AWS_ZERO_STRUCT(*decoder);
 }
