@@ -187,7 +187,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_release(struct aws_htt
 AWS_HTTP_API
 struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     struct aws_allocator *allocator,
-    struct aws_http2_stream_manager_options *options);
+    const struct aws_http2_stream_manager_options *options);
 
 /**
  * Acquire a stream from stream manager asynchronously.

@@ -1052,7 +1052,7 @@ void s_stream_manager_on_zero_external_ref(struct aws_http2_stream_manager *stre
 
 struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     struct aws_allocator *allocator,
-    struct aws_http2_stream_manager_options *options) {
+    const struct aws_http2_stream_manager_options *options) {
 
     AWS_PRECONDITION(allocator);
     /* The other options are validated by the aws_http_connection_manager_new */
