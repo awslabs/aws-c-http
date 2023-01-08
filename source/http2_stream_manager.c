@@ -871,6 +871,7 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
         .on_complete = s_on_stream_complete,
         .on_destroy = s_on_stream_destroy,
         .user_data = pending_stream_acquisition,
+        .http2_use_manual_data_writes = pending_stream_acquisition->options.http2_use_manual_data_writes,
     };
     /* TODO: we could put the pending acquisition back to the list if the connection is not available for new request.
      */
