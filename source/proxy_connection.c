@@ -1421,6 +1421,19 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_tunneling_from_proxy_opt
     return s_aws_http_proxy_config_new(allocator, proxy_options, AWS_HPCT_HTTP_TUNNEL);
 }
 
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options_with_tls_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_options *proxy_options,
+    const struct aws_tls_connection_options *tls_connection_options) {
+    AWS_FATAL_ASSERT(proxy_options != NULL);
+    AWS_FATAL_ASSERT(tls_connection_options != NULL);
+
+    return s_aws_http_proxy_config_new(
+        allocator,
+        proxy_options,
+        s_determine_proxy_connection_type(proxy_options->connection_type, tls_connection_options));
+}
+
 struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options(
     struct aws_allocator *allocator,
     const struct aws_http_proxy_options *proxy_options) {

@@ -507,6 +507,20 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options(
     const struct aws_http_proxy_options *options);
 
 /**
+ * Create a persistent proxy configuration from non-persistent proxy options.
+ *
+ * @param allocator memory allocator to use
+ * @param options http proxy options to source proxy configuration from
+ * @param tls_connection_options tls connection options to determine connection_type if connection type is legacy
+ * @return
+ */
+AWS_HTTP_API
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options_with_tls_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_options *proxy_options,
+    const struct aws_tls_connection_options *tls_connection_options);
+
+/**
  * Clones an existing proxy configuration.  A refactor could remove this (do a "move" between the old and new user
  * data in the one spot it's used) but that should wait until we have better test cases for the logic where this
  * gets invoked (ntlm/kerberos chains).
