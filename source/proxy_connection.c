@@ -1426,7 +1426,6 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options_with_
     const struct aws_http_proxy_options *proxy_options,
     const struct aws_tls_connection_options *tls_connection_options) {
     AWS_FATAL_ASSERT(proxy_options != NULL);
-    AWS_FATAL_ASSERT(tls_connection_options != NULL);
 
     return s_aws_http_proxy_config_new(
         allocator,
