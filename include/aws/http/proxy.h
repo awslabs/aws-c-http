@@ -518,7 +518,7 @@ AWS_HTTP_API
 struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options_with_tls_info(
     struct aws_allocator *allocator,
     const struct aws_http_proxy_options *proxy_options,
-    bool *is_tls_connection);
+    bool is_tls_connection);
 
 /**
  * Clones an existing proxy configuration.  A refactor could remove this (do a "move" between the old and new user
@@ -529,7 +529,8 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options_with_
  * @param proxy_config http proxy configuration to clone
  * @return
  */
-AWS_HTTP_API struct aws_http_proxy_config *aws_http_proxy_config_new_clone(
+AWS_HTTP_API
+struct aws_http_proxy_config *aws_http_proxy_config_new_clone(
     struct aws_allocator *allocator,
     const struct aws_http_proxy_config *proxy_config);
 
