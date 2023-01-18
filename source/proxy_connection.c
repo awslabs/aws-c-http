@@ -1123,14 +1123,14 @@ static int s_aws_http_client_connect_via_tunneling_proxy(
     return s_create_tunneling_connection(user_data);
 }
 
-static enum aws_http_proxy_connection_type s_determine_proxy_connection_type(
+enum aws_http_proxy_connection_type s_determine_proxy_connection_type(
     enum aws_http_proxy_connection_type proxy_connection_type,
-    const struct aws_tls_connection_options *tls_options) {
+    bool tls_options) {
     if (proxy_connection_type != AWS_HPCT_HTTP_LEGACY) {
         return proxy_connection_type;
     }
 
-    if (tls_options != NULL) {
+    if (tls_options) {
         return AWS_HPCT_HTTP_TUNNEL;
     } else {
         return AWS_HPCT_HTTP_FORWARD;
@@ -1184,7 +1184,7 @@ static int s_connect_proxy(const struct aws_http_client_connection_options *opti
     }
 
     enum aws_http_proxy_connection_type proxy_connection_type =
-        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_options);
+        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_options != NULL);
 
     switch (proxy_connection_type) {
         case AWS_HPCT_HTTP_FORWARD:
@@ -1399,7 +1399,7 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_from_connection_options(
     return s_aws_http_proxy_config_new(
         allocator,
         options->proxy_options,
-        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_options));
+        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_options != NULL));
 }
 
 struct aws_http_proxy_config *aws_http_proxy_config_new_from_manager_options(
@@ -1411,7 +1411,8 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_from_manager_options(
     return s_aws_http_proxy_config_new(
         allocator,
         options->proxy_options,
-        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_connection_options));
+        s_determine_proxy_connection_type(
+            options->proxy_options->connection_type, options->tls_connection_options != NULL));
 }
 
 struct aws_http_proxy_config *aws_http_proxy_config_new_tunneling_from_proxy_options(
@@ -1419,18 +1420,6 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_tunneling_from_proxy_opt
     const struct aws_http_proxy_options *proxy_options) {
 
     return s_aws_http_proxy_config_new(allocator, proxy_options, AWS_HPCT_HTTP_TUNNEL);
-}
-
-struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options_with_tls_options(
-    struct aws_allocator *allocator,
-    const struct aws_http_proxy_options *proxy_options,
-    const struct aws_tls_connection_options *tls_connection_options) {
-    AWS_FATAL_ASSERT(proxy_options != NULL);
-
-    return s_aws_http_proxy_config_new(
-        allocator,
-        proxy_options,
-        s_determine_proxy_connection_type(proxy_options->connection_type, tls_connection_options));
 }
 
 struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options(
