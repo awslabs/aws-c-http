@@ -507,16 +507,18 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options(
     const struct aws_http_proxy_options *options);
 
 /**
- * @brief Determine proxy_connection_type based on tls_options configuration if connection_type is legacy.
+ * Create a persistent proxy configuration from non-persistent proxy options.
  *
- * @param proxy_connection_type
- * @param tls_options
- * @return AWS_HTTP_API enum
+ * @param allocator memory allocator to use
+ * @param options http proxy options to source proxy configuration from
+ * @param is_tls_connection tls connection info to determine connection_type if connection type is legacy
+ * @return
  */
 AWS_HTTP_API
-enum aws_http_proxy_connection_type s_determine_proxy_connection_type(
-    enum aws_http_proxy_connection_type proxy_connection_type,
-    bool tls_options);
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options_with_tls_info(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_options *proxy_options,
+    bool *is_tls_connection);
 
 /**
  * Clones an existing proxy configuration.  A refactor could remove this (do a "move" between the old and new user
