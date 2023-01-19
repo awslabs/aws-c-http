@@ -511,7 +511,7 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options(
  *
  * @param allocator memory allocator to use
  * @param options http proxy options to source proxy configuration from
- * @param is_tls_connection tls connection info to determine connection_type if connection type is legacy
+ * @param is_tls_connection tls connection info of the main connection to determine connection_type if connection type is legacy
  * @return
  */
 AWS_HTTP_API
