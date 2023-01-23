@@ -6,6 +6,7 @@
 #include <aws/common/math.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
+#include <aws/common/trace_event.h>
 #include <aws/http/private/h1_connection.h>
 #include <aws/http/private/h1_decoder.h>
 #include <aws/http/private/h1_stream.h>
@@ -867,6 +868,8 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
         return;
     }
 
+    AWS_TRACE_EVENT_BEGIN_SCOPED("aws-io", "HTTP::Write");
+
     /* Determine whether we have data available to send, and end task immediately if there's not.
      * The outgoing stream task will be kicked off again when user adds more data (new stream, new chunk, etc) */
     struct aws_h1_stream *outgoing_stream = s_update_outgoing_stream_ptr(connection);
@@ -881,6 +884,7 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
                 waiting_for_chunks);
         }
         connection->thread_data.is_outgoing_stream_task_active = false;
+        AWS_TRACE_EVENT_END_SCOPED();
         return;
     }
 
@@ -946,12 +950,14 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
         aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
     }
 
+    AWS_TRACE_EVENT_END_SCOPED();
     return;
 error:
     if (msg) {
         aws_mem_release(msg->allocator, msg);
     }
     s_shutdown_due_to_error(connection, aws_last_error());
+    AWS_TRACE_EVENT_END_SCOPED();
 }
 
 static int s_decoder_on_request(
@@ -1633,7 +1639,9 @@ static int s_handler_process_read_message(
     connection->thread_data.read_buffer.pending_bytes += message_size;
 
     /* Try to process messages in queue */
+    AWS_TRACE_EVENT_BEGIN_SCOPED("aws-io", "HTTP::Read");
     aws_h1_connection_try_process_read_messages(connection);
+    AWS_TRACE_EVENT_END_SCOPED();
     return AWS_OP_SUCCESS;
 }
 
