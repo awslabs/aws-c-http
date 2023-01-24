@@ -868,7 +868,7 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
         return;
     }
 
-    AWS_TRACE_EVENT_BEGIN_SCOPED("aws-io", "HTTP::Write");
+    AWS_TRACE_EVENT_BEGIN_SCOPED("", "HTTP::Write");
 
     /* Determine whether we have data available to send, and end task immediately if there's not.
      * The outgoing stream task will be kicked off again when user adds more data (new stream, new chunk, etc) */
@@ -1639,7 +1639,7 @@ static int s_handler_process_read_message(
     connection->thread_data.read_buffer.pending_bytes += message_size;
 
     /* Try to process messages in queue */
-    AWS_TRACE_EVENT_BEGIN_SCOPED("aws-io", "HTTP::Read");
+    AWS_TRACE_EVENT_BEGIN_SCOPED("", "HTTP::Read");
     aws_h1_connection_try_process_read_messages(connection);
     AWS_TRACE_EVENT_END_SCOPED();
     return AWS_OP_SUCCESS;
