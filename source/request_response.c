@@ -116,9 +116,6 @@ static int s_http_headers_add_header_impl(
     /* Store our own copy of the strings.
      * We put the name and value into the same allocation. */
     uint8_t *strmem = aws_mem_acquire(headers->alloc, total_len);
-    if (!strmem) {
-        return AWS_OP_ERR;
-    }
 
     struct aws_byte_buf strbuf = aws_byte_buf_from_empty_array(strmem, total_len);
     aws_byte_buf_append_and_update(&strbuf, &header_copy.name);
