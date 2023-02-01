@@ -42,7 +42,7 @@ struct aws_websocket_decoder {
     /* True while processing a TEXT "message" (from the start of a TEXT frame,
      * until the end of the TEXT or CONTINUATION frame with the FIN bit set). */
     bool processing_text_message;
-    struct aws_utf8_validator *text_message_validator;
+    struct aws_utf8_decoder *text_message_validator;
 
     void *user_data;
     aws_websocket_decoder_frame_fn *on_frame;

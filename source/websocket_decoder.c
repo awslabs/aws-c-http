@@ -276,7 +276,7 @@ static int s_state_payload(struct aws_websocket_decoder *decoder, struct aws_byt
 
     /* Validate the UTF-8 for TEXT messages (a TEXT frame and any subsequent CONTINUATION frames) */
     if (decoder->processing_text_message && aws_websocket_is_data_frame(decoder->current_frame.opcode)) {
-        if (aws_utf8_validator_update(decoder->text_message_validator, payload)) {
+        if (aws_utf8_decoder_update(decoder->text_message_validator, payload)) {
             AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET, "id=%p: Received invalid UTF-8", (void *)decoder->user_data);
             return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR);
         }
@@ -308,7 +308,7 @@ static int s_state_frame_end(struct aws_websocket_decoder *decoder, struct aws_b
     if (decoder->processing_text_message && aws_websocket_is_data_frame(decoder->current_frame.opcode) &&
         decoder->current_frame.fin) {
 
-        if (aws_utf8_validator_finalize(decoder->text_message_validator)) {
+        if (aws_utf8_decoder_finalize(decoder->text_message_validator)) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_WEBSOCKET,
                 "id=%p: Received invalid UTF-8 (incomplete encoding)",
@@ -378,10 +378,10 @@ void aws_websocket_decoder_init(
     decoder->user_data = user_data;
     decoder->on_frame = on_frame;
     decoder->on_payload = on_payload;
-    decoder->text_message_validator = aws_utf8_validator_new(alloc);
+    decoder->text_message_validator = aws_utf8_decoder_new(alloc, NULL /*options*/);
 }
 
 void aws_websocket_decoder_clean_up(struct aws_websocket_decoder *decoder) {
-    aws_utf8_validator_destroy(decoder->text_message_validator);
+    aws_utf8_decoder_destroy(decoder->text_message_validator);
     AWS_ZERO_STRUCT(*decoder);
 }
