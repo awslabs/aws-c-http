@@ -244,12 +244,6 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     stream->base.on_destroy = options->on_destroy;
     stream->base.client_data = &stream->base.client_or_server_data.client;
     stream->base.client_data->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
-    struct aws_byte_cursor method;
-    AWS_ZERO_STRUCT(method);
-    if (aws_http_message_get_request_method(options->request, &method)) {
-        goto error;
-    }
-    stream->base.request_method = aws_http_str_to_method(method);
     aws_linked_list_init(&stream->thread_data.outgoing_writes);
     aws_linked_list_init(&stream->synced_data.pending_write_list);
 
@@ -276,6 +270,12 @@ struct aws_h2_stream *aws_h2_stream_new_request(
             aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
             goto error;
     }
+    struct aws_byte_cursor method;
+    AWS_ZERO_STRUCT(method);
+    if (aws_http_message_get_request_method(options->request, &method)) {
+        goto error;
+    }
+    stream->base.request_method = aws_http_str_to_method(method);
 
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
@@ -289,7 +289,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
         struct aws_h2_stream_data_write *body_write =
             aws_mem_calloc(stream->base.alloc, 1, sizeof(struct aws_h2_stream_data_write));
         body_write->data_stream = aws_input_stream_acquire(body_stream);
-        body_write->end_stream = true;
+        body_write->end_stream = !stream->manual_write;
         aws_linked_list_push_back(&stream->thread_data.outgoing_writes, &body_write->node);
     }
 

@@ -382,7 +382,7 @@ int aws_hpack_encode_header_block(
                     ERROR,
                     encoder,
                     "Integer encoding failed for table size update entry, integer: %zu",
-                    smallest_update_value)
+                    smallest_update_value);
                 return AWS_OP_ERR;
             }
         }
@@ -396,7 +396,7 @@ int aws_hpack_encode_header_block(
         uint8_t num_prefix_bits = s_hpack_entry_num_prefix_bits[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
         if (aws_hpack_encode_integer(last_update_value, starting_bit_pattern, num_prefix_bits, output)) {
             HPACK_LOGF(
-                ERROR, encoder, "Integer encoding failed for table size update entry, integer: %zu", last_update_value)
+                ERROR, encoder, "Integer encoding failed for table size update entry, integer: %zu", last_update_value);
             return AWS_OP_ERR;
         }
 

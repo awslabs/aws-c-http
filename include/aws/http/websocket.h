@@ -12,7 +12,7 @@ struct aws_http_message;
 
 /* TODO: Document lifetime stuff */
 /* TODO: Document CLOSE frame behavior (when auto-sent during close, when auto-closed) */
-/* TODO: Document auto-pong behavior */
+/* TODO: Accept payload as aws_input_stream */
 
 /**
  * A websocket connection.
@@ -37,27 +37,35 @@ enum aws_websocket_opcode {
 #define AWS_WEBSOCKET_CLOSE_TIMEOUT 1000000000 // nanos -> 1 sec
 
 /**
- * Called when websocket setup is complete.
- * An error_code of zero indicates that setup was completely successful.
- * Called exactly once on the websocket's event-loop thread.
+ * Data passed to the websocket on_connection_setup callback.
  *
- * websocket: if successful, a valid pointer to the websocket, otherwise NULL.
- * error_code: the operation was completely successful if this value is zero.
- * handshake_response_status: The response status code of the HTTP handshake, 101 if successful,
- *                            -1 if the connection failed before a response was received.
- * handshake_response_header_array: Headers from the HTTP handshake response.
- *                            May be NULL if num_handshake_response_headers is 0.
- *                            Copy if necessary, this memory becomes invalid once the callback completes.
- * num_handshake_response_headers: Number of entries in handshake_response_header_array.
- *                            May be 0 if the response did not complete, or was invalid.
+ * An error_code of zero indicates that setup was completely successful.
+ * You own the websocket pointer now and must call aws_websocket_release() when you are done with it.
+ * You can inspect the response headers, if you're interested.
+ *
+ * A non-zero error_code indicates that setup failed.
+ * The websocket pointer will be NULL.
+ * If the server sent a response, you can inspect its status-code, headers, and body,
+ * but this data will NULL if setup failed before a full response could be received.
+ * If you wish to persist data from the response make a deep copy.
+ * The response data becomes invalid once the callback completes.
  */
-typedef void(aws_websocket_on_connection_setup_fn)(
-    struct aws_websocket *websocket,
-    int error_code,
-    int handshake_response_status,
-    const struct aws_http_header *handshake_response_header_array,
-    size_t num_handshake_response_headers,
-    void *user_data);
+struct aws_websocket_on_connection_setup_data {
+    int error_code;
+    struct aws_websocket *websocket;
+    const int *handshake_response_status;
+    const struct aws_http_header *handshake_response_header_array;
+    size_t num_handshake_response_headers;
+    const struct aws_byte_cursor *handshake_response_body;
+};
+
+/**
+ * Called when websocket setup is complete.
+ * Called exactly once on the websocket's event-loop thread.
+ * See `aws_websocket_on_connection_setup_data`.
+ */
+typedef void(
+    aws_websocket_on_connection_setup_fn)(const struct aws_websocket_on_connection_setup_data *setup, void *user_data);
 
 /**
  * Called when the websocket has finished shutting down.
@@ -74,7 +82,6 @@ struct aws_websocket_incoming_frame {
     uint64_t payload_length;
     uint8_t opcode;
     bool fin;
-    bool rsv[3];
 };
 
 /**
@@ -237,14 +244,14 @@ struct aws_websocket_client_connection_options {
 
     /**
      * Called repeatedly as payload data arrives.
-     * Required if `on_incoming_frame_begin` is set.
+     * Optional.
      * See `aws_websocket_on_incoming_frame_payload_fn`.
      */
     aws_websocket_on_incoming_frame_payload_fn *on_incoming_frame_payload;
 
     /**
      * Called when done processing an incoming frame.
-     * Required if `on_incoming_frame_begin` is set.
+     * Optional.
      * See `aws_websocket_on_incoming_frame_complete_fn`.
      */
     aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
@@ -301,7 +308,7 @@ typedef void(
 /**
  * Options for sending a websocket frame.
  * This structure is copied immediately by aws_websocket_send().
- * For descriptions of opcode, fin, rsv, and payload_length see in RFC-6455 Section 5.2.
+ * For descriptions of opcode, fin, and payload_length see in RFC-6455 Section 5.2.
  */
 struct aws_websocket_send_frame_options {
     /**
@@ -338,18 +345,6 @@ struct aws_websocket_send_frame_options {
      * Indicates that this is the final fragment in a message. The first fragment MAY also be the final fragment.
      */
     bool fin;
-
-    /**
-     * If true, frame will be sent before those with normal priority.
-     * Useful for opcodes like PING and PONG where low latency is important.
-     * This feature may only be used with "control" opcodes, not "data" opcodes like BINARY and TEXT.
-     */
-    bool high_priority;
-
-    /**
-     * MUST be 0 unless an extension is negotiated that defines meanings for non-zero values.
-     */
-    bool rsv[3];
 };
 
 AWS_EXTERN_C_BEGIN

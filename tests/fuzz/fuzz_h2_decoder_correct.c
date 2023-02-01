@@ -253,7 +253,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
             struct aws_stream_status body_status;
             aws_input_stream_get_status(body, &body_status);
-            AWS_FATAL_ASSERT(body_complete == body_status.is_end_of_stream)
+            AWS_FATAL_ASSERT(body_complete == body_status.is_end_of_stream);
             aws_input_stream_release(body);
             break;
         }

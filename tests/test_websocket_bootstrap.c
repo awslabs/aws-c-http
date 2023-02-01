@@ -8,7 +8,6 @@
 #include <aws/common/atomics.h>
 #include <aws/http/connection.h>
 #include <aws/http/request_response.h>
-#include <aws/io/logging.h>
 #include <aws/io/uri.h>
 #include <aws/testing/aws_test_harness.h>
 
@@ -48,31 +47,58 @@ static const struct aws_websocket_client_bootstrap_system_vtable s_mock_system_v
     .aws_websocket_handler_new = s_mock_websocket_handler_new,
 };
 
-static const struct aws_http_header s_handshake_response_headers[] = {
-    {
-        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
-        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
-    },
-    {
-        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
-        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
-    },
-    {
-        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
-        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
-    },
+/* Hardcoded value for "Sec-WebSocket-Key" header in handshake request. */
+static const char *s_sec_websocket_key_value = "dGhlIHNhbXBsZSBub25jZQ==";
+
+struct test_response {
+    int status_code;
+    struct aws_http_header headers[10];
+    const char *body;
 };
 
-/* If fail_at_step is set to one of these, that step will explicitly fail and raise its enum value as the error code */
+static const struct test_response s_accepted_response = {
+    .status_code = 101,
+    .headers =
+        {
+            {
+                .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+            },
+            {
+                .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+            },
+            {
+                .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+            },
+        },
+};
+
+static const struct test_response s_rejected_response = {
+    .status_code = 403,
+    .headers =
+        {
+            {
+                .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+                .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("43"),
+            },
+        },
+    .body = "your request is bad and you should feel bad",
+};
+
+/* If fail_at_step is set to one of these, that step will explicitly fail.
+ * These represent the steps where an external system could fail. */
 enum boot_step {
     BOOT_STEP_HTTP_CONNECT = 0x4000000, /* Use values that don't overlap with another aws-c-xyz library */
     BOOT_STEP_HTTP_CONNECT_COMPLETE,
     BOOT_STEP_REQUEST_NEW,
-    BOOT_STEP_HEADERS,
-    BOOT_STEP_HEADERS_DONE,
-    /* If the response validation steps fail, we expect a specific error */
-    BOOT_STEP_VALIDATE_RESPONSE_STATUS = AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE,
-    BOOT_STEP_WEBSOCKET_NEW = 0x50000000, /* Back to using made-up error-codes */
+    BOOT_STEP_REQUEST_ACTIVATE,
+    BOOT_STEP_BEFORE_HEADERS,
+    BOOT_STEP_BEFORE_HEADERS_DONE,
+    BOOT_STEP_BEFORE_REJECTION_BODY,
+    BOOT_STEP_BEFORE_REJECTION_STREAM_COMPLETE,
+    BOOT_STEP_WEBSOCKET_NEW,
     BOOT_STEP_HTTP_SHUTDOWN,
 };
 
@@ -82,13 +108,14 @@ static struct tester {
     struct aws_allocator *alloc;
     enum boot_step fail_at_step;
 
+    struct aws_http_header *extra_handshake_request_header_array;
+    size_t num_extra_handshake_request_headers;
     struct aws_http_message *handshake_request;
-    const struct aws_http_header *handshake_response_headers;
+
+    const struct test_response *handshake_response;
     size_t num_handshake_response_headers;
 
     /* State */
-    struct aws_logger logger;
-
     bool http_connect_called_successfully;
 
     aws_http_on_client_connection_setup_fn *http_connect_setup_callback;
@@ -101,16 +128,22 @@ static struct tester {
     bool http_stream_new_called_successfully;
     aws_http_on_incoming_headers_fn *http_stream_on_response_headers;
     aws_http_on_incoming_header_block_done_fn *http_stream_on_response_header_block_done;
+    aws_http_on_incoming_body_fn *http_stream_on_response_body;
     aws_http_on_stream_complete_fn *http_stream_on_complete;
     void *http_stream_user_data;
+
+    bool http_stream_on_complete_invoked;
 
     bool websocket_new_called_successfully;
 
     bool http_stream_release_called;
-    bool http_stream_activate_called;
+    bool http_stream_activate_called_successfully;
 
     bool websocket_setup_invoked;
     int websocket_setup_error_code;
+    bool websocket_setup_had_response_status;
+    bool websocket_setup_had_response_headers;
+    bool websocket_setup_had_response_body;
 
     bool websocket_shutdown_invoked;
     int websocket_shutdown_error_code;
@@ -122,22 +155,21 @@ static struct tester {
 static int s_tester_init(struct aws_allocator *alloc) {
     aws_http_library_init(alloc);
 
-    struct aws_logger_standard_options logger_options = {
-        .level = AWS_LOG_LEVEL_TRACE,
-        .file = stderr,
-    };
-    ASSERT_SUCCESS(aws_logger_init_standard(&s_tester.logger, alloc, &logger_options));
-    aws_logger_set(&s_tester.logger);
-
     aws_websocket_client_bootstrap_set_system_vtable(&s_mock_system_vtable);
 
     /* Set default settings for tester (unless the test already configured it) */
-    if (!s_tester.alloc) {
-        s_tester.alloc = alloc;
+    s_tester.alloc = alloc;
+
+    if (!s_tester.handshake_response) {
+        s_tester.handshake_response = &s_accepted_response;
     }
-    if (!s_tester.handshake_response_headers) {
-        s_tester.handshake_response_headers = s_handshake_response_headers;
-        s_tester.num_handshake_response_headers = AWS_ARRAY_SIZE(s_handshake_response_headers);
+
+    /* Count number of headers being sent */
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(s_tester.handshake_response->headers); ++i) {
+        if (s_tester.handshake_response->headers[i].name.len == 0) {
+            break;
+        }
+        s_tester.num_handshake_response_headers = i + 1;
     }
 
     return AWS_OP_SUCCESS;
@@ -145,7 +177,6 @@ static int s_tester_init(struct aws_allocator *alloc) {
 
 static int s_tester_clean_up(void) {
     aws_http_library_clean_up();
-    aws_logger_clean_up(&s_tester.logger);
     return AWS_OP_SUCCESS;
 }
 
@@ -159,25 +190,13 @@ static bool s_headers_eq(
         return false;
     }
 
-    for (size_t a_i = 0; a_i < num_headers_a; ++a_i) {
-        struct aws_http_header a = headers_a[a_i];
+    for (size_t i = 0; i < num_headers_a; ++i) {
+        struct aws_http_header a = headers_a[i];
+        struct aws_http_header b = headers_b[i];
 
-        bool found_match = false;
-
-        for (size_t b_i = 0; b_i < num_headers_b; ++b_i) {
-            struct aws_http_header b = headers_b[b_i];
-
-            if (aws_byte_cursor_eq_ignore_case(&a.name, &b.name) &&
-                aws_byte_cursor_eq_ignore_case(&a.value, &b.value)) {
-
-                found_match = true;
-                break;
-            }
-        }
-
-        if (!found_match) {
+        if (!aws_byte_cursor_eq_ignore_case(&a.name, &b.name) || !aws_byte_cursor_eq(&a.value, &b.value)) {
             printf(
-                "Failed to find header '" PRInSTR ": " PRInSTR "'\n",
+                "Header did not match '" PRInSTR ": " PRInSTR "'\n",
                 AWS_BYTE_CURSOR_PRI(a.name),
                 AWS_BYTE_CURSOR_PRI(a.value));
             return false;
@@ -234,7 +253,7 @@ static struct aws_websocket *s_mock_websocket = (void *)"websocket";
 
 static int s_mock_http_client_connect(const struct aws_http_client_connection_options *options) {
     AWS_FATAL_ASSERT(options);
-    AWS_FATAL_ASSERT(!s_tester.http_connect_called_successfully)
+    AWS_FATAL_ASSERT(!s_tester.http_connect_called_successfully);
 
     if (s_tester.fail_at_step == BOOT_STEP_HTTP_CONNECT) {
         return aws_raise_error(BOOT_STEP_HTTP_CONNECT);
@@ -248,6 +267,9 @@ static int s_mock_http_client_connect(const struct aws_http_client_connection_op
 }
 
 static void s_mock_http_connection_release(struct aws_http_connection *connection) {
+    if (connection == NULL) {
+        return;
+    }
     AWS_FATAL_ASSERT(connection == s_mock_http_connection);
     AWS_FATAL_ASSERT(!s_tester.http_connection_release_called);
     s_tester.http_connection_release_called = true;
@@ -285,6 +307,7 @@ static struct aws_http_stream *s_mock_http_connection_make_request(
     s_tester.http_stream_new_called_successfully = true;
     s_tester.http_stream_on_response_headers = options->on_response_headers;
     s_tester.http_stream_on_response_header_block_done = options->on_response_header_block_done;
+    s_tester.http_stream_on_response_body = options->on_response_body;
     s_tester.http_stream_on_complete = options->on_complete;
     s_tester.http_stream_user_data = options->user_data;
     return s_mock_stream;
@@ -294,12 +317,20 @@ static int s_mock_http_stream_activate(struct aws_http_stream *stream) {
     AWS_FATAL_ASSERT(stream == s_mock_stream);
     AWS_FATAL_ASSERT(!s_tester.http_connection_release_called);
     AWS_FATAL_ASSERT(!s_tester.http_stream_release_called);
-    s_tester.http_stream_activate_called = true;
 
+    if (s_tester.fail_at_step == BOOT_STEP_REQUEST_ACTIVATE) {
+        return aws_raise_error(BOOT_STEP_REQUEST_ACTIVATE);
+    }
+
+    s_tester.http_stream_activate_called_successfully = true;
     return AWS_OP_SUCCESS;
 }
 
 static void s_mock_http_stream_release(struct aws_http_stream *stream) {
+    if (stream == NULL) {
+        return;
+    }
+
     AWS_FATAL_ASSERT(stream == s_mock_stream);
     AWS_FATAL_ASSERT(!s_tester.http_connection_release_called);
     AWS_FATAL_ASSERT(!s_tester.http_stream_release_called);
@@ -326,11 +357,7 @@ static int s_mock_http_stream_get_incoming_response_status(const struct aws_http
     AWS_FATAL_ASSERT(!s_tester.http_stream_release_called);
     AWS_FATAL_ASSERT(out_status);
 
-    if (s_tester.fail_at_step == BOOT_STEP_VALIDATE_RESPONSE_STATUS) {
-        *out_status = 403;
-    } else {
-        *out_status = 101;
-    }
+    *out_status = s_tester.handshake_response->status_code;
     return AWS_OP_SUCCESS;
 }
 
@@ -348,33 +375,47 @@ static struct aws_websocket *s_mock_websocket_handler_new(const struct aws_webso
     return s_mock_websocket;
 }
 
-static void s_on_websocket_setup(
-    struct aws_websocket *websocket,
-    int error_code,
-    int handshake_response_status,
-    const struct aws_http_header *handshake_response_header_array,
-    size_t num_handshake_response_headers,
-    void *user_data) {
+static void s_on_websocket_setup(const struct aws_websocket_on_connection_setup_data *setup, void *user_data) {
 
-    if (error_code) {
-        AWS_FATAL_ASSERT(!websocket);
-    } else {
-        AWS_FATAL_ASSERT(websocket == s_mock_websocket);
+    /* error-code is set XOR websocket is set. Must be one, but not both. */
+    AWS_FATAL_ASSERT((setup->error_code != 0) ^ (setup->websocket != NULL));
 
-        /* Check that headers passed by mock response carry through. */
+    /* We may not get the full handshake response.
+     * But any parts we do get should match what the mock sent us. */
+
+    if (setup->handshake_response_status) {
+        s_tester.websocket_setup_had_response_status = true;
+        AWS_FATAL_ASSERT(*setup->handshake_response_status == s_tester.handshake_response->status_code);
+
+        /* If we're reporting a status code, we should also be reporting the headers */
+        AWS_FATAL_ASSERT(setup->handshake_response_header_array != NULL);
+    }
+
+    if (setup->handshake_response_header_array) {
+        s_tester.websocket_setup_had_response_headers = true;
         AWS_FATAL_ASSERT(s_headers_eq(
-            s_tester.handshake_response_headers,
+            s_tester.handshake_response->headers,
             s_tester.num_handshake_response_headers,
-            handshake_response_header_array,
-            num_handshake_response_headers));
+            setup->handshake_response_header_array,
+            setup->num_handshake_response_headers));
 
-        AWS_FATAL_ASSERT(handshake_response_status == 101);
+        /* If we're reporting headers, we should also be reporting the status code */
+        AWS_FATAL_ASSERT(setup->handshake_response_status != NULL);
+    }
+
+    if (setup->handshake_response_body) {
+        s_tester.websocket_setup_had_response_body = true;
+        AWS_FATAL_ASSERT(aws_byte_cursor_eq_c_str(setup->handshake_response_body, s_tester.handshake_response->body));
+
+        /* If we're reporting the body, we should also be reporting the headers and status code */
+        AWS_FATAL_ASSERT(setup->handshake_response_status != NULL);
+        AWS_FATAL_ASSERT(setup->handshake_response_header_array != NULL);
     }
 
     AWS_FATAL_ASSERT(user_data == &s_tester);
 
     s_tester.websocket_setup_invoked = true;
-    s_tester.websocket_setup_error_code = error_code;
+    s_tester.websocket_setup_error_code = setup->error_code;
 
     /* Don't need the request anymore */
     aws_http_message_destroy(s_tester.handshake_request);
@@ -390,7 +431,9 @@ static void s_on_websocket_shutdown(struct aws_websocket *websocket, int error_c
 }
 
 static void s_complete_http_stream_and_connection(int error_code) {
-    s_tester.http_stream_on_complete(s_mock_stream, error_code, s_tester.http_stream_user_data);
+    if (s_tester.http_stream_activate_called_successfully && !s_tester.http_stream_on_complete_invoked) {
+        s_tester.http_stream_on_complete(s_mock_stream, error_code, s_tester.http_stream_user_data);
+    }
     s_tester.http_connect_shutdown_callback(s_mock_http_connection, error_code, s_tester.http_stream_user_data);
 }
 
@@ -402,7 +445,7 @@ static int s_drive_websocket_connect(int *out_error_code) {
     bool websocket_connect_called_successfully = false;
     bool http_connect_setup_reported_success = false;
 
-    /* Call websocket_connect() */
+    /* Build handshake request */
     static struct aws_byte_cursor path = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("/");
     static const struct aws_byte_cursor host = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("server.example.com");
 
@@ -411,6 +454,17 @@ static int s_drive_websocket_connect(int *out_error_code) {
         goto finishing_checks;
     }
 
+    struct aws_http_headers *request_headers = aws_http_message_get_headers(s_tester.handshake_request);
+    ASSERT_SUCCESS(aws_http_headers_set(
+        request_headers,
+        aws_byte_cursor_from_c_str("Sec-WebSocket-Key"),
+        aws_byte_cursor_from_c_str(s_sec_websocket_key_value)));
+
+    for (size_t i = 0; i < s_tester.num_extra_handshake_request_headers; ++i) {
+        ASSERT_SUCCESS(aws_http_headers_add_header(request_headers, &s_tester.extra_handshake_request_header_array[i]));
+    }
+
+    /* Call websocket_connect() */
     struct aws_websocket_client_connection_options ws_options = {
         .allocator = s_tester.alloc,
         .bootstrap = (void *)"client channel bootstrap",
@@ -446,24 +500,28 @@ static int s_drive_websocket_connect(int *out_error_code) {
      * shutdown callback */
     if (s_tester.http_connection_close_called) {
         s_tester.http_connect_shutdown_callback(
-            s_mock_http_connection, AWS_OP_SUCCESS, s_tester.http_connect_user_data);
+            s_mock_http_connection, AWS_ERROR_SUCCESS, s_tester.http_connect_user_data);
         goto finishing_checks;
     }
 
     /* Bootstrap should have created new stream */
     ASSERT_TRUE(s_tester.http_stream_new_called_successfully);
+    ASSERT_TRUE(s_tester.http_stream_activate_called_successfully);
 
     /* HTTP connection could fail before any headers arrive */
-    if (s_tester.fail_at_step == BOOT_STEP_HEADERS) {
-        s_complete_http_stream_and_connection(BOOT_STEP_HEADERS);
+    if (s_tester.fail_at_step == BOOT_STEP_BEFORE_HEADERS) {
+        s_complete_http_stream_and_connection(BOOT_STEP_BEFORE_HEADERS);
         goto finishing_checks;
     }
 
     /* Headers arrive, HTTP connection ends if callback returns error */
+    enum aws_http_header_block header_block = s_tester.handshake_response->status_code / 100 == 1
+                                                  ? AWS_HTTP_HEADER_BLOCK_INFORMATIONAL
+                                                  : AWS_HTTP_HEADER_BLOCK_MAIN;
     if (s_tester.http_stream_on_response_headers(
             s_mock_stream,
-            AWS_HTTP_HEADER_BLOCK_MAIN,
-            s_tester.handshake_response_headers,
+            header_block,
+            s_tester.handshake_response->headers,
             s_tester.num_handshake_response_headers,
             s_tester.http_stream_user_data)) {
 
@@ -472,19 +530,66 @@ static int s_drive_websocket_connect(int *out_error_code) {
     }
 
     /* HTTP connection could fail before headers are done */
-    if (s_tester.fail_at_step == BOOT_STEP_HEADERS_DONE) {
-        s_complete_http_stream_and_connection(BOOT_STEP_HEADERS_DONE);
+    if (s_tester.fail_at_step == BOOT_STEP_BEFORE_HEADERS_DONE) {
+        s_complete_http_stream_and_connection(BOOT_STEP_BEFORE_HEADERS_DONE);
         goto finishing_checks;
     }
 
     /* Headers are done, HTTP connection ends if error returned */
-    if (s_tester.http_stream_on_response_header_block_done(s_mock_stream, false, s_tester.http_stream_user_data)) {
+    if (s_tester.http_stream_on_response_header_block_done(
+            s_mock_stream, header_block, s_tester.http_stream_user_data)) {
         s_complete_http_stream_and_connection(aws_last_error());
         goto finishing_checks;
     }
 
     if (s_tester.http_connection_close_called) {
-        s_complete_http_stream_and_connection(AWS_OP_SUCCESS);
+        s_complete_http_stream_and_connection(AWS_ERROR_SUCCESS);
+        goto finishing_checks;
+    }
+
+    if (header_block == AWS_HTTP_HEADER_BLOCK_MAIN) {
+        /* If the response is a rejection, it will have a body */
+        struct aws_byte_cursor body = aws_byte_cursor_from_c_str(s_tester.handshake_response->body);
+
+        /* HTTP connection could fail before the body is delivered */
+        if (s_tester.fail_at_step == BOOT_STEP_BEFORE_REJECTION_BODY) {
+            s_complete_http_stream_and_connection(BOOT_STEP_BEFORE_REJECTION_BODY);
+            goto finishing_checks;
+        }
+
+        /* Response body arrives, HTTP connection ends if error returned */
+        if (body.len > 0) {
+
+            /* If we're testing the stream dying before the whole body is delivered, then only deliver a bit of it */
+            if (s_tester.fail_at_step == BOOT_STEP_BEFORE_REJECTION_STREAM_COMPLETE) {
+                body.len = 1;
+            }
+
+            if (s_tester.http_stream_on_response_body(s_mock_stream, &body, s_tester.http_stream_user_data)) {
+                s_complete_http_stream_and_connection(aws_last_error());
+                goto finishing_checks;
+            }
+
+            if (s_tester.http_connection_close_called) {
+                s_complete_http_stream_and_connection(AWS_ERROR_SUCCESS);
+                goto finishing_checks;
+            }
+        }
+
+        /* HTTP connection could fail before the stream completes on its own */
+        if (s_tester.fail_at_step == BOOT_STEP_BEFORE_REJECTION_STREAM_COMPLETE) {
+            s_complete_http_stream_and_connection(BOOT_STEP_BEFORE_REJECTION_STREAM_COMPLETE);
+            goto finishing_checks;
+        }
+
+        /* HTTP stream completes on its own after delivering rejection */
+        s_tester.http_stream_on_complete(s_mock_stream, AWS_ERROR_SUCCESS, s_tester.http_stream_user_data);
+        s_tester.http_stream_on_complete_invoked = true;
+
+        /* Bootstrap should have closed the connection after receiving the completed response */
+        ASSERT_TRUE(s_tester.http_connection_close_called);
+        s_tester.http_connect_shutdown_callback(
+            s_mock_http_connection, AWS_ERROR_SUCCESS, s_tester.http_stream_user_data);
         goto finishing_checks;
     }
 
@@ -503,7 +608,7 @@ static int s_drive_websocket_connect(int *out_error_code) {
         goto finishing_checks;
     }
 
-    s_complete_http_stream_and_connection(AWS_OP_SUCCESS);
+    s_complete_http_stream_and_connection(AWS_ERROR_SUCCESS);
 
 finishing_checks:
 
@@ -536,7 +641,6 @@ finishing_checks:
 
     /* If request was created, it must be released eventually. */
     if (s_tester.http_stream_new_called_successfully) {
-        ASSERT_TRUE(s_tester.http_stream_activate_called);
         ASSERT_TRUE(s_tester.http_stream_release_called);
     }
 
@@ -564,6 +668,9 @@ TEST_CASE(websocket_boot_golden_path) {
     int websocket_connect_error_code;
     ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, websocket_connect_error_code);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_status);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_headers);
+    ASSERT_FALSE(s_tester.websocket_setup_had_response_body);
 
     ASSERT_SUCCESS(s_tester_clean_up());
     return AWS_OP_SUCCESS;
@@ -595,16 +702,16 @@ TEST_CASE(websocket_boot_fail_at_new_request) {
     return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_REQUEST_NEW);
 }
 
+TEST_CASE(websocket_boot_fail_at_activate_request) {
+    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_REQUEST_ACTIVATE);
+}
+
 TEST_CASE(websocket_boot_fail_before_response_headers) {
-    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_HEADERS);
+    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_BEFORE_HEADERS);
 }
 
 TEST_CASE(websocket_boot_fail_before_response_headers_done) {
-    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_HEADERS);
-}
-
-TEST_CASE(websocket_boot_fail_at_response_status) {
-    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_VALIDATE_RESPONSE_STATUS);
+    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_BEFORE_HEADERS_DONE);
 }
 
 TEST_CASE(websocket_boot_fail_at_new_handler) {
@@ -613,6 +720,412 @@ TEST_CASE(websocket_boot_fail_at_new_handler) {
 
 TEST_CASE(websocket_boot_report_unexpected_http_shutdown) {
     return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_HTTP_SHUTDOWN);
+}
+
+/* Test receiving a 4xx rejection response from the server.
+ * Note that this test doesn't use fail_at_step, because we're not modeling
+ * an "unexpected" HTTP failure. */
+TEST_CASE(websocket_boot_fail_from_handshake_rejection) {
+    (void)ctx;
+    s_tester.handshake_response = &s_rejected_response;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE, websocket_connect_error_code);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+/* Test the connection dying early, while processing a 4xx rejection response.
+ * Specifically, after the headers are received but before the body is received. */
+TEST_CASE(websocket_boot_fail_before_handshake_rejection_body) {
+    (void)ctx;
+    s_tester.handshake_response = &s_rejected_response;
+    s_tester.fail_at_step = BOOT_STEP_BEFORE_REJECTION_BODY;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+
+    /* It's ambiguous what the error-code should be here.
+     * The connection died early, AND we know from the status code that it was an UPGRADE_FAILURE.
+     * Currently, the bootstrap is programmed to report it as a normal UPGRADE_FAILURE,
+     * but don't report a body, because we didn't receive any */
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE, websocket_connect_error_code);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_status);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_headers);
+    ASSERT_FALSE(s_tester.websocket_setup_had_response_body);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+/* Test the connection dying early, while processing a 4xx rejection response.
+ * Specifically, after some of the body is received, but before the stream completes. */
+TEST_CASE(websocket_boot_fail_before_handshake_rejection_stream_complete) {
+    (void)ctx;
+    s_tester.handshake_response = &s_rejected_response;
+    s_tester.fail_at_step = BOOT_STEP_BEFORE_REJECTION_STREAM_COMPLETE;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+
+    /* It's ambiguous what the error-code should be here.
+     * The connection died early, AND we know from the status code that it was an UPGRADE_FAILURE.
+     * Currently, the bootstrap is programmed to report it as a normal UPGRADE_FAILURE,
+     * but don't report a body, because we can't be 100% sure we got the whole thing.  */
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE, websocket_connect_error_code);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_status);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_headers);
+    ASSERT_FALSE(s_tester.websocket_setup_had_response_body);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+/* Function to be reused by all tests that pass a bad 101 response */
+static int s_websocket_boot_fail_from_bad_101_response(
+    struct aws_allocator *alloc,
+    const struct test_response *bad_response) {
+
+    ASSERT_INT_EQUALS(101, bad_response->status_code, "This helper function is only for bad 101 responses");
+
+    s_tester.handshake_response = bad_response;
+    ASSERT_SUCCESS(s_tester_init(alloc));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE, websocket_connect_error_code);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_status);
+    ASSERT_TRUE(s_tester.websocket_setup_had_response_headers);
+    ASSERT_FALSE(s_tester.websocket_setup_had_response_body);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_boot_fail_from_invalid_upgrade_header) {
+    (void)ctx;
+    struct test_response bad_response = {
+        .status_code = 101,
+        .headers =
+            {
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/9000"), /* ought to be "websocket" */
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                },
+            },
+    };
+    return s_websocket_boot_fail_from_bad_101_response(allocator, &bad_response);
+}
+
+TEST_CASE(websocket_boot_fail_from_missing_upgrade_header) {
+    (void)ctx;
+    struct test_response bad_response = {
+        .status_code = 101,
+        .headers =
+            {
+                /* Commenting out required header
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+                },
+                */
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                },
+            },
+    };
+    return s_websocket_boot_fail_from_bad_101_response(allocator, &bad_response);
+}
+
+TEST_CASE(websocket_boot_fail_from_invalid_connection_header) {
+    (void)ctx;
+    struct test_response bad_response = {
+        .status_code = 101,
+        .headers =
+            {
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HeartToHeart"), /* ought to be "Upgrade" */
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                },
+            },
+    };
+    return s_websocket_boot_fail_from_bad_101_response(allocator, &bad_response);
+}
+
+TEST_CASE(websocket_boot_fail_from_invalid_sec_websocket_accept_header) {
+    (void)ctx;
+    struct test_response bad_response = {
+        .status_code = 101,
+        .headers =
+            {
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    /* ought to be "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="*/
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("S3PPLMBITXAQ9KYGZZHZRBK+XOO="),
+                },
+            },
+    };
+    return s_websocket_boot_fail_from_bad_101_response(allocator, &bad_response);
+}
+
+TEST_CASE(websocket_boot_fail_from_unsupported_sec_websocket_extensions_in_request) {
+    (void)ctx;
+    struct aws_http_header extra_request_headers[] = {
+        /* extensions are not currently supported */
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Extensions"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("permessage-deflate"),
+        },
+    };
+    s_tester.extra_handshake_request_header_array = extra_request_headers;
+    s_tester.num_extra_handshake_request_headers = AWS_ARRAY_SIZE(extra_request_headers);
+
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+    ASSERT_INT_EQUALS(AWS_ERROR_INVALID_ARGUMENT, websocket_connect_error_code);
+    ASSERT_FALSE(s_tester.websocket_setup_invoked);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_boot_fail_from_unsupported_sec_websocket_extensions_in_response) {
+    (void)ctx;
+    struct test_response bad_response = {
+        .status_code = 101,
+        .headers =
+            {
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                },
+                {
+                    /* extensions are not currently supported */
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Extensions"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("permessage-deflate"),
+                },
+            },
+    };
+    return s_websocket_boot_fail_from_bad_101_response(allocator, &bad_response);
+}
+
+/* If client requests a specific protocol, the server response must say it's being used */
+TEST_CASE(websocket_boot_ok_with_sec_websocket_protocol_header) {
+    (void)ctx;
+    struct aws_http_header extra_request_headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt"),
+        },
+    };
+    s_tester.extra_handshake_request_header_array = extra_request_headers;
+    s_tester.num_extra_handshake_request_headers = AWS_ARRAY_SIZE(extra_request_headers);
+
+    struct test_response response = {
+        .status_code = 101,
+        .headers =
+            {
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt"),
+                },
+            },
+    };
+    s_tester.handshake_response = &response;
+
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+    ASSERT_INT_EQUALS(0, websocket_connect_error_code);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+/* The client can request a list of acceptable protocols (may be split across headers), and server must pick one */
+TEST_CASE(websocket_boot_ok_with_sec_websocket_protocol_split_across_headers) {
+    (void)ctx;
+    struct aws_http_header extra_request_headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("http/1.1, http/2"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt, mqtt5, mqtt6"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("klingon, esperanto"),
+        },
+    };
+    s_tester.extra_handshake_request_header_array = extra_request_headers;
+    s_tester.num_extra_handshake_request_headers = AWS_ARRAY_SIZE(extra_request_headers);
+
+    struct test_response response = {
+        .status_code = 101,
+        .headers =
+            {
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt5"),
+                },
+            },
+    };
+    s_tester.handshake_response = &response;
+
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+    ASSERT_INT_EQUALS(0, websocket_connect_error_code);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_boot_fail_from_missing_sec_websocket_protocol_header) {
+    (void)ctx;
+    struct aws_http_header extra_request_headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt, mqtt5"),
+        },
+    };
+    s_tester.extra_handshake_request_header_array = extra_request_headers;
+    s_tester.num_extra_handshake_request_headers = AWS_ARRAY_SIZE(extra_request_headers);
+
+    struct test_response bad_response = {
+        .status_code = 101,
+        .headers =
+            {
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                },
+                /* commenting out required header
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt5"),
+                },
+                */
+            },
+    };
+    return s_websocket_boot_fail_from_bad_101_response(allocator, &bad_response);
+}
+
+TEST_CASE(websocket_boot_fail_from_invalid_sec_websocket_protocol_header) {
+    (void)ctx;
+    struct aws_http_header extra_request_headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt, mqtt5"),
+        },
+    };
+    s_tester.extra_handshake_request_header_array = extra_request_headers;
+    s_tester.num_extra_handshake_request_headers = AWS_ARRAY_SIZE(extra_request_headers);
+
+    struct test_response bad_response = {
+        .status_code = 101,
+        .headers =
+            {
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+                },
+                {
+                    .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Protocol"),
+                    /* ought to be "mqtt" or "mqtt5" */
+                    .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("mqtt, mqtt5"),
+                },
+            },
+    };
+    return s_websocket_boot_fail_from_bad_101_response(allocator, &bad_response);
 }
 
 /* Check that AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH is sufficiently large */
