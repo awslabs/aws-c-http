@@ -1332,10 +1332,10 @@ static struct aws_http_proxy_config *s_aws_http_proxy_config_new(
         return NULL;
     }
 
+    config->allocator = allocator;
     config->connection_type = override_proxy_connection_type;
 
     if (aws_byte_buf_init_copy_from_cursor(&config->host, allocator, proxy_options->host)) {
-
         goto on_error;
     }
 
@@ -1346,7 +1346,6 @@ static struct aws_http_proxy_config *s_aws_http_proxy_config_new(
         }
     }
 
-    config->allocator = allocator;
     config->port = proxy_options->port;
 
     if (proxy_options->proxy_strategy != NULL) {
