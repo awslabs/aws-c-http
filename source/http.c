@@ -3,13 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-#include <aws/common/hash_table.h>
 #include <aws/compression/compression.h>
 #include <aws/http/private/hpack.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
-
+#include <aws/common/hash_table.h>
 #include <ctype.h>
 
 #define AWS_DEFINE_ERROR_INFO_HTTP(CODE, STR) [(CODE)-0x0800] = AWS_DEFINE_ERROR_INFO(CODE, STR, "aws-c-http")
