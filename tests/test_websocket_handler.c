@@ -10,7 +10,7 @@
 #include <aws/io/logging.h>
 #include <aws/testing/io_testing_channel.h>
 
-#if _MSC_VER
+#ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 

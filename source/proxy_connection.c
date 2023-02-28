@@ -18,7 +18,7 @@
 #include <aws/io/tls_channel_handler.h>
 #include <aws/io/uri.h>
 
-#if _MSC_VER
+#ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #    pragma warning(disable : 4232) /* function pointer to dll symbol */
 #endif
