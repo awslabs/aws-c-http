@@ -13,7 +13,7 @@
 #include <aws/common/clock.h>
 #include <aws/common/logging.h>
 
-#if _MSC_VER
+#ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
