@@ -1293,13 +1293,13 @@ static int s_stream_write_data(
 
             if (stream->synced_data.manual_write_ended) {
                 s_unlock_synced_data(stream);
-                s_stream_data_write_destroy(stream, pending_write, AWS_ERROR_INVALID_STATE);
+                s_stream_data_write_destroy(stream, pending_write, AWS_ERROR_HTTP_MANUAL_WRITES_HAS_COMPLETED);
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,
-                    "Cannot write DATA frames to a stream after end, stream=%p",
+                    "Cannot write DATA frames to a stream after manual write ended, stream=%p",
                     (void *)stream_base);
                 /* Fail with error, otherwise, people can wait for on_complete callback that will never be invoked. */
-                return aws_raise_error(AWS_ERROR_INVALID_STATE);
+                return aws_raise_error(AWS_ERROR_HTTP_MANUAL_WRITES_HAS_COMPLETED);
             }
             /* Not setting this until we're sure we succeeded, so that callback doesn't fire on cleanup if we fail */
             if (options->end_stream) {
