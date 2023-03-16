@@ -20,6 +20,10 @@ class LocalServerSetup(Builder.Action):
     """
 
     def run(self, env):
+        if not env.project.needs_tests(env):
+            print("Skipping local server setup because tests disabled for project")
+            return
+
         self.env = env
         python_path = sys.executable
         # Install dependency for mock server.
