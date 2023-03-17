@@ -546,6 +546,19 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
         }
     }
 
+    if (error_code == AWS_ERROR_HTTP_CONNECTION_CLOSED && stream->base.client_data &&
+        stream->is_incoming_message_done) {
+        AWS_ASSERT(stream->is_outgoing_message_done == false);
+        /* As a request that finished receiving the response, we should ignore the connection closed error and consider
+         * we finished successfully */
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Stream haven't finished sending, but connection closing and response received. Stop sending and "
+            "treated as succeed",
+            (void *)&stream->base);
+        error_code = AWS_ERROR_SUCCESS;
+    }
+
     /* Remove stream from list. */
     aws_linked_list_remove(&stream->node);
 
@@ -1057,15 +1070,31 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
         if (!ignore_connection_close && aws_byte_cursor_eq_c_str_ignore_case(&header->value_data, "close")) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_STREAM,
-                "id=%p: Received 'Connection: close' header. This will be the final stream on this connection.",
+                "id=%p: Received 'Connection: close' header. This will be the final stream on this connection. And "
+                "stops sending any more on the connection.",
                 (void *)&incoming_stream->base);
-
+            /**
+             * RFC-9112 section 9.6.
+             * A client that receives a "close" connection option MUST cease sending requests on that connection and
+             * close the connection after reading the response message containing the "close" connection option.
+             *
+             * Mark the stream has no outgoing_message
+             **/
+            incoming_stream->is_outgoing_message_done = true;
             incoming_stream->is_final_stream = true;
             { /* BEGIN CRITICAL SECTION */
                 aws_h1_connection_lock_synced_data(connection);
                 connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
                 aws_h1_connection_unlock_synced_data(connection);
             } /* END CRITICAL SECTION */
+
+            /* Stop writing right now and the shutdown will be scheduled right after finishing parsing the response */
+            s_stop(
+                connection,
+                false /*stop_reading*/,
+                true /*stop_writing*/,
+                false /*schedule_shutdown*/,
+                AWS_ERROR_SUCCESS);
         }
     }
 
