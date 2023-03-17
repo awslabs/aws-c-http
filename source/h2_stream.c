@@ -1255,11 +1255,11 @@ static int s_stream_write_data(
     const struct aws_http2_stream_write_data_options *options) {
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     if (!stream->manual_write) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM,
+        AWS_H2_STREAM_LOG(
+            ERROR,
+            stream,
             "Manual writes are not enabled. You need to enable manual writes using by setting "
-            "`http2_use_manual_data_writes` to true in `aws_http_make_request_options`, stream=%p",
-            (void *)stream_base);
+            "'http2_use_manual_data_writes' to true in 'aws_http_make_request_options'");
         return aws_raise_error(AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED);
     }
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
@@ -1284,20 +1284,14 @@ static int s_stream_write_data(
                                      ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
                                      : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
                 s_stream_data_write_destroy(stream, pending_write, error_code);
-                AWS_LOGF_ERROR(
-                    AWS_LS_HTTP_STREAM,
-                    "Cannot write DATA frames to an inactive or closed stream, stream=%p",
-                    (void *)stream_base);
+                AWS_H2_STREAM_LOG(ERROR, stream, "Cannot write DATA frames to an inactive or closed stream");
                 return aws_raise_error(error_code);
             }
 
             if (stream->synced_data.manual_write_ended) {
                 s_unlock_synced_data(stream);
                 s_stream_data_write_destroy(stream, pending_write, AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED);
-                AWS_LOGF_ERROR(
-                    AWS_LS_HTTP_STREAM,
-                    "Cannot write DATA frames to a stream after manual write ended, stream=%p",
-                    (void *)stream_base);
+                AWS_H2_STREAM_LOG(ERROR, stream, "Cannot write DATA frames to a stream after manual write ended");
                 /* Fail with error, otherwise, people can wait for on_complete callback that will never be invoked. */
                 return aws_raise_error(AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED);
             }
