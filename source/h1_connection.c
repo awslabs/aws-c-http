@@ -557,6 +557,7 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
                 (void *)&stream->base,
                 error_code,
                 aws_error_name(error_code));
+            error_code = AWS_ERROR_SUCCESS;
         }
         if (stream->base.server_data && stream->is_outgoing_message_done && stream->is_incoming_message_done == false) {
             /* As a server finished sending the response, but still failed with the request was not finished receiving.
@@ -569,8 +570,8 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
                 (void *)&stream->base,
                 error_code,
                 aws_error_name(error_code));
+            error_code = AWS_ERROR_SUCCESS;
         }
-        error_code = AWS_ERROR_SUCCESS;
     }
 
     /* Remove stream from list. */
