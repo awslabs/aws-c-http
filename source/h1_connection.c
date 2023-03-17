@@ -546,16 +546,30 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
         }
     }
 
-    if (error_code == AWS_ERROR_HTTP_CONNECTION_CLOSED && stream->base.client_data &&
-        stream->is_incoming_message_done) {
-        AWS_ASSERT(stream->is_outgoing_message_done == false);
-        /* As a request that finished receiving the response, we should ignore the connection closed error and consider
-         * we finished successfully */
-        AWS_LOGF_DEBUG(
-            AWS_LS_HTTP_STREAM,
-            "id=%p: Stream haven't finished sending, but connection closing and response received. Stop sending and "
-            "treated as succeed",
-            (void *)&stream->base);
+    if (error_code != AWS_ERROR_SUCCESS) {
+        if (stream->base.client_data && stream->is_incoming_message_done && stream->is_outgoing_message_done == false) {
+            /* As a request that finished receiving the response, we ignore error and
+             * consider it finished successfully */
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Request stream haven't finished sending, but error code %d (%s) happened and full response "
+                "received. Stop sending and treated as succeed",
+                (void *)&stream->base,
+                error_code,
+                aws_error_name(error_code));
+        }
+        if (stream->base.server_data && stream->is_outgoing_message_done && stream->is_incoming_message_done == false) {
+            /* As a server finished sending the response, but still failed with the request was not finished receiving.
+             * We ignore error and consider it finished successfully
+             */
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Server finishes sending response, but error code %d (%s) happens before receives the full "
+                "response. Treated as succeed",
+                (void *)&stream->base,
+                error_code,
+                aws_error_name(error_code));
+        }
         error_code = AWS_ERROR_SUCCESS;
     }
 
@@ -1070,8 +1084,7 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
         if (!ignore_connection_close && aws_byte_cursor_eq_c_str_ignore_case(&header->value_data, "close")) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_STREAM,
-                "id=%p: Received 'Connection: close' header. This will be the final stream on this connection. And "
-                "stops sending any more on the connection.",
+                "id=%p: Received 'Connection: close' header. This will be the final stream on this connection.",
                 (void *)&incoming_stream->base);
 
             incoming_stream->is_final_stream = true;
@@ -1081,16 +1094,20 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
                 aws_h1_connection_unlock_synced_data(connection);
             } /* END CRITICAL SECTION */
 
-            /* For server side, server should finish sending the response. */
             if (connection->base.client_data) {
                 /**
                  * RFC-9112 section 9.6.
                  * A client that receives a "close" connection option MUST cease sending
-                 *requests on that connection and close the connection after reading the
-                 *response message containing the "close" connection option.
+                 * requests on that connection and close the connection after reading the
+                 * response message containing the "close" connection option.
                  *
                  * Mark the stream has no outgoing_message
                  **/
+                AWS_LOGF_DEBUG(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Request stream receives a \"close\" connection option. Stop writing to the connection "
+                    "anymore.",
+                    (void *)&incoming_stream->base);
                 incoming_stream->is_outgoing_message_done = true;
                 /* Stop writing right now and the shutdown will be scheduled right after finishing parsing the response
                  */
