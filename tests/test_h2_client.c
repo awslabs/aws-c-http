@@ -5374,8 +5374,7 @@ TEST_CASE(h2_client_manual_data_write_not_enabled) {
     struct aws_http2_stream_write_data_options write_options = {
         .data = data_stream,
     };
-    ASSERT_FAILS(aws_http2_stream_write_data(stream, &write_options));
-    ASSERT_INT_EQUALS(aws_last_error(), AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED);
+    ASSERT_ERROR(AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED, aws_http2_stream_write_data(stream, &write_options));
     aws_input_stream_release(data_stream);
     aws_http_message_release(request);
     aws_http_stream_release(stream);
