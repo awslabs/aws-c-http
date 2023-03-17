@@ -130,6 +130,7 @@ struct aws_http_connection_monitoring_options {
      * as unhealthy.
      */
     uint32_t allowable_throughput_failure_interval_seconds;
+    uint32_t allowable_throughput_failure_interval_milliseconds;
 
     /**
      * invoked on each statistics publish by the underlying IO channel. Install this callback to receive the statistics

@@ -161,19 +161,17 @@ static void s_process_statistics(
         (void *)channel,
         impl->throughput_failure_time_ms);
 
-    uint64_t maximum_failure_time_ms = aws_timestamp_convert(
-        impl->options.allowable_throughput_failure_interval_seconds, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL);
-    if (impl->throughput_failure_time_ms <= maximum_failure_time_ms) {
+    if (impl->throughput_failure_time_ms <= impl->options.allowable_throughput_failure_interval_milliseconds) {
         return;
     }
 
     AWS_LOGF_INFO(
         AWS_LS_IO_CHANNEL,
         "id=%p: Channel low throughput threshold exceeded (< %" PRIu64
-        " bytes per second for more than %u seconds).  Shutting down.",
+        " bytes per second for more than %u milliseconds).  Shutting down.",
         (void *)channel,
         impl->options.minimum_throughput_bytes_per_second,
-        impl->options.allowable_throughput_failure_interval_seconds);
+        impl->options.allowable_throughput_failure_interval_milliseconds);
 
     aws_channel_shutdown(channel, AWS_ERROR_HTTP_CHANNEL_THROUGHPUT_FAILURE);
 }
@@ -217,6 +215,10 @@ struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connectio
     AWS_ZERO_STRUCT(*handler);
     AWS_ZERO_STRUCT(*impl);
     impl->options = *options;
+    if (impl->options.allowable_throughput_failure_interval_seconds > 0) {
+        impl->options.allowable_throughput_failure_interval_milliseconds =
+            impl->options.allowable_throughput_failure_interval_seconds * 1000;
+    }
 
     handler->vtable = &s_http_connection_monitor_vtable;
     handler->allocator = allocator;
@@ -230,6 +232,7 @@ bool aws_http_connection_monitoring_options_is_valid(const struct aws_http_conne
         return false;
     }
 
-    return options->allowable_throughput_failure_interval_seconds > 0 &&
+    return (options->allowable_throughput_failure_interval_seconds > 0 ||
+            options->allowable_throughput_failure_interval_milliseconds > 0) &&
            options->minimum_throughput_bytes_per_second > 0;
 }

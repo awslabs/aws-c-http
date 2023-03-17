@@ -13,6 +13,7 @@
 #include <aws/http/private/request_response_impl.h>
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
+#include <aws/io/socket.h>
 
 #include <inttypes.h>
 
@@ -550,6 +551,53 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     /* Remove stream from list. */
     aws_linked_list_remove(&stream->node);
 
+#define GRAEBM 1
+#if GRAEBM
+    struct graebm *graebm = &connection->thread_data.graebm;
+    uint64_t endtime_u;
+    aws_high_res_clock_get_ticks(&endtime_u);
+    double starttime_f = (graebm->start - g_app_start_time) / 1e9;
+    double endtime_f = (endtime_u - g_app_start_time) / 1e9;
+    double duration_f = endtime_f - starttime_f;
+
+    double send_duration_f = 0.0;
+    // double send_gap_f = 0.0;
+    if (graebm->send_end != 0) {
+        send_duration_f = (graebm->send_end - graebm->start) / 1e9;
+        // send_gap_f = graebm->send_gap / 1e9;
+    }
+
+    double send_to_recv_gap_f = 0.0;
+    double recv_duration_f = 0.0;
+    // double recv_gap_f = 0.0;
+    if (!error_code) {
+        send_to_recv_gap_f = ((int64_t)graebm->recv_start - (int64_t)graebm->send_end) / 1e9;
+        recv_duration_f = (endtime_u - graebm->recv_start) / 1e9;
+        // recv_gap_f = graebm->recv_gap / 1e9;
+    }
+
+    const char *errname = error_code ? aws_error_name(error_code) : "";
+    const struct aws_socket *socket = aws_channel_get_socket(connection->base.channel_slot->channel);
+    fprintf(
+        stderr,
+        "%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%d,%s,%d,%s,%p,%p,%s,%s,%s\n",
+        duration_f,
+        starttime_f,
+        endtime_f,
+        send_duration_f,
+        send_to_recv_gap_f,
+        recv_duration_f,
+        graebm->total_count,
+        errname,
+        stream->base.client_data->response_status,
+        socket->remote_endpoint.address,
+        (void *)connection,
+        (void *)aws_thread_current_thread_id(),
+        graebm->path,
+        graebm->x_amz_request_id,
+        graebm->x_amz_id_2);
+#endif /* GRAEBM */
+
     /* Nice logging */
     if (error_code) {
         AWS_LOGF_DEBUG(
@@ -706,6 +754,11 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
     if (current && !aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
         current->is_outgoing_message_done = true;
 
+        /* GRAEBM */
+        struct graebm *graebm = &connection->thread_data.graebm;
+        aws_high_res_clock_get_ticks(&graebm->send_end);
+        /* GRAEBM */
+
         /* RFC-7230 section 6.6: Tear-down.
          * If this was the final stream, don't allows any further streams to be sent */
         if (current->is_final_stream) {
@@ -779,6 +832,32 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
                 &connection->thread_data.encoder, &current->encoder_message, &current->base);
             (void)err;
             AWS_ASSERT(!err);
+
+            /* GRAEBM */
+            struct graebm *graebm = &connection->thread_data.graebm;
+            graebm->total_count++;
+
+            aws_high_res_clock_get_ticks(&graebm->start);
+            graebm->send_prev = graebm->start;
+            graebm->send_gap = 0;
+            graebm->send_end = 0;
+            graebm->recv_start = 0;
+            graebm->recv_prev = 0;
+            graebm->recv_gap = 0;
+
+            const char *head = (const char *)current->encoder_message.outgoing_head_buf.buffer;
+            const char *path_end = strchr(strchr(head, ' ') + 1, ' ');
+            const char *path_amp = strchr(head, '&');
+            if (path_amp) {
+                path_end = path_amp;
+            }
+            size_t len = aws_min_size((path_end - head), sizeof(graebm->path) - 1);
+            memcpy(graebm->path, head, len);
+            graebm->path[len] = 0;
+
+            memset(graebm->x_amz_request_id, 0, sizeof(graebm->x_amz_request_id));
+            memset(graebm->x_amz_id_2, 0, sizeof(graebm->x_amz_id_2));
+            /* GRAEBM */
         }
 
         /* incoming_stream update is only for client */
@@ -870,6 +949,13 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
 
     AWS_TRACE_EVENT_BEGIN_SCOPED("", "HTTP::Write");
 
+    /* GRAEBM */
+    struct graebm *graebm = &connection->thread_data.graebm;
+    uint64_t now = 0;
+    aws_high_res_clock_get_ticks(&now);
+    graebm->send_gap += now - graebm->send_prev;
+    /* GRAEBM */
+
     /* Determine whether we have data available to send, and end task immediately if there's not.
      * The outgoing stream task will be kicked off again when user adds more data (new stream, new chunk, etc) */
     struct aws_h1_stream *outgoing_stream = s_update_outgoing_stream_ptr(connection);
@@ -949,6 +1035,10 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
 
         aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
     }
+
+    /* GRAEBM */
+    aws_high_res_clock_get_ticks(&graebm->send_prev);
+    /* GRAEBM */
 
     AWS_TRACE_EVENT_END_SCOPED();
     return;
@@ -1073,6 +1163,16 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
                 aws_h1_connection_unlock_synced_data(connection);
             } /* END CRITICAL SECTION */
         }
+    } else if (aws_byte_cursor_eq_c_str_ignore_case(&header->name_data, "x-amz-request-id")) {
+        memcpy(
+            connection->thread_data.graebm.x_amz_request_id,
+            header->value_data.ptr,
+            aws_min_size(header->value_data.len, sizeof(connection->thread_data.graebm.x_amz_request_id) - 1));
+    } else if (aws_byte_cursor_eq_c_str_ignore_case(&header->name_data, "x-amz-id-2")) {
+        memcpy(
+            connection->thread_data.graebm.x_amz_id_2,
+            header->value_data.ptr,
+            aws_min_size(header->value_data.len, sizeof(connection->thread_data.graebm.x_amz_id_2) - 1));
     }
 
     if (incoming_stream->base.on_incoming_headers) {
@@ -1639,9 +1739,9 @@ static int s_handler_process_read_message(
     connection->thread_data.read_buffer.pending_bytes += message_size;
 
     /* Try to process messages in queue */
-    AWS_TRACE_EVENT_BEGIN_SCOPED("", "HTTP::Read");
+    // AWS_TRACE_EVENT_BEGIN_SCOPED("", "HTTP::Read");
     aws_h1_connection_try_process_read_messages(connection);
-    AWS_TRACE_EVENT_END_SCOPED();
+    // AWS_TRACE_EVENT_END_SCOPED();
     return AWS_OP_SUCCESS;
 }
 
@@ -1775,6 +1875,18 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
 
     bool body_headers_ignored = incoming_stream->base.request_method == AWS_HTTP_METHOD_HEAD;
     aws_h1_decoder_set_body_headers_ignored(connection->thread_data.incoming_stream_decoder, body_headers_ignored);
+
+    /* GRAEBM */
+    struct graebm *graebm = &connection->thread_data.graebm;
+    uint64_t now = 0;
+    aws_high_res_clock_get_ticks(&now);
+    if (graebm->recv_start == 0) {
+        graebm->recv_start = now;
+    } else {
+        graebm->recv_gap += now - graebm->recv_prev;
+    }
+    graebm->recv_prev = now;
+    /* GRAEBM */
 
     /* As decoder runs, it invokes the internal s_decoder_X callbacks, which in turn invoke user callbacks.
      * The decoder will stop once it hits the end of the request/response OR the end of the message data. */

@@ -112,6 +112,20 @@ struct aws_h1_connection {
         bool is_outgoing_stream_task_active : 1;
 
         bool is_processing_read_messages : 1;
+
+        struct graebm {
+            uint64_t start;
+            uint64_t send_prev;
+            uint64_t send_gap;
+            uint64_t send_end;
+            uint64_t recv_start;
+            uint64_t recv_prev;
+            uint64_t recv_gap;
+            int total_count;
+            char path[64];
+            char x_amz_request_id[32];
+            char x_amz_id_2[128];
+        } graebm;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
