@@ -1073,14 +1073,7 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
                 "id=%p: Received 'Connection: close' header. This will be the final stream on this connection. And "
                 "stops sending any more on the connection.",
                 (void *)&incoming_stream->base);
-            /**
-             * RFC-9112 section 9.6.
-             * A client that receives a "close" connection option MUST cease sending requests on that connection and
-             * close the connection after reading the response message containing the "close" connection option.
-             *
-             * Mark the stream has no outgoing_message
-             **/
-            incoming_stream->is_outgoing_message_done = true;
+
             incoming_stream->is_final_stream = true;
             { /* BEGIN CRITICAL SECTION */
                 aws_h1_connection_lock_synced_data(connection);
@@ -1088,13 +1081,26 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
                 aws_h1_connection_unlock_synced_data(connection);
             } /* END CRITICAL SECTION */
 
-            /* Stop writing right now and the shutdown will be scheduled right after finishing parsing the response */
-            s_stop(
-                connection,
-                false /*stop_reading*/,
-                true /*stop_writing*/,
-                false /*schedule_shutdown*/,
-                AWS_ERROR_SUCCESS);
+            /* For server side, server should finish sending the response. */
+            if (connection->base.client_data) {
+                /**
+                 * RFC-9112 section 9.6.
+                 * A client that receives a "close" connection option MUST cease sending
+                 *requests on that connection and close the connection after reading the
+                 *response message containing the "close" connection option.
+                 *
+                 * Mark the stream has no outgoing_message
+                 **/
+                incoming_stream->is_outgoing_message_done = true;
+                /* Stop writing right now and the shutdown will be scheduled right after finishing parsing the response
+                 */
+                s_stop(
+                    connection,
+                    false /*stop_reading*/,
+                    true /*stop_writing*/,
+                    false /*schedule_shutdown*/,
+                    AWS_ERROR_SUCCESS);
+            }
         }
     }
 
