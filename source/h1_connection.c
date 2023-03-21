@@ -561,8 +561,7 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
         }
         if (stream->base.server_data && stream->is_outgoing_message_done) {
             /* As a server finished sending the response, but still failed with the request was not finished receiving.
-             * We ignore error and consider it finished successfully
-             */
+             * We ignore error and consider it finished successfully */
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Ignoring error code %d (%s). The response has been fully sent,"
