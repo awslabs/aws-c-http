@@ -4160,7 +4160,7 @@ H1_CLIENT_TEST_CASE(h1_client_switching_protocols_requires_downstream_handler) {
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_server_close_connection_before_request_finishes) {
+H1_CLIENT_TEST_CASE(h1_client_connection_close_before_request_finishes) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));

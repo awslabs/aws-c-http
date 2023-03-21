@@ -547,26 +547,26 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     }
 
     if (error_code != AWS_ERROR_SUCCESS) {
-        if (stream->base.client_data && stream->is_incoming_message_done && stream->is_outgoing_message_done == false) {
+        if (stream->base.client_data && stream->is_incoming_message_done) {
             /* As a request that finished receiving the response, we ignore error and
              * consider it finished successfully */
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_STREAM,
-                "id=%p: Request stream haven't finished sending, but error code %d (%s) happened and full response "
-                "received. Stop sending and treated as succeed",
+                "id=%p: Ignoring error code %d (%s). The response has been fully received,"
+                "so the stream will complete successfully.",
                 (void *)&stream->base,
                 error_code,
                 aws_error_name(error_code));
             error_code = AWS_ERROR_SUCCESS;
         }
-        if (stream->base.server_data && stream->is_outgoing_message_done && stream->is_incoming_message_done == false) {
+        if (stream->base.server_data && stream->is_outgoing_message_done) {
             /* As a server finished sending the response, but still failed with the request was not finished receiving.
              * We ignore error and consider it finished successfully
              */
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_STREAM,
-                "id=%p: Server finishes sending response, but error code %d (%s) happens before receives the full "
-                "response. Treated as succeed",
+                "id=%p: Ignoring error code %d (%s). The response has been fully sent,"
+                " so the stream will complete successfully",
                 (void *)&stream->base,
                 error_code,
                 aws_error_name(error_code));
@@ -1102,16 +1102,18 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
                  * requests on that connection and close the connection after reading the
                  * response message containing the "close" connection option.
                  *
-                 * Mark the stream has no outgoing_message
+                 * Mark the stream's outgoing message as complete,
+                 * so that we stop sending, and stop waiting for it to finish sending.
                  **/
-                AWS_LOGF_DEBUG(
-                    AWS_LS_HTTP_STREAM,
-                    "id=%p: Request stream receives a \"close\" connection option. Stop writing to the connection "
-                    "anymore.",
-                    (void *)&incoming_stream->base);
-                incoming_stream->is_outgoing_message_done = true;
-                /* Stop writing right now and the shutdown will be scheduled right after finishing parsing the response
-                 */
+                if (!incoming_stream->is_outgoing_message_done) {
+                    AWS_LOGF_DEBUG(
+                        AWS_LS_HTTP_STREAM,
+                        "id=%p: Received 'Connection: close' header, no more request data will be sent.",
+                        (void *)&incoming_stream->base);
+                    incoming_stream->is_outgoing_message_done = true;
+                }
+                /* Stop writing right now.
+                 * Shutdown will be scheduled after we finishing parsing the response */
                 s_stop(
                     connection,
                     false /*stop_reading*/,
