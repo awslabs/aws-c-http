@@ -142,6 +142,8 @@ add_test_case(h1_client_midchannel_requires_switching_protocols)
 add_test_case(h1_client_switching_protocols_fails_pending_requests)
 add_test_case(h1_client_switching_protocols_fails_subsequent_requests)
 add_test_case(h1_client_switching_protocols_requires_downstream_handler)
+add_test_case(h1_client_connection_close_before_request_finishes)
+add_test_case(h1_client_response_close_connection_before_request_finishes)
 
 add_test_case(strutil_trim_http_whitespace)
 add_test_case(strutil_is_http_token)
@@ -199,6 +201,7 @@ add_test_case(websocket_handler_delayed_write_completion)
 add_test_case(websocket_handler_send_halts_if_payload_fn_returns_false)
 add_test_case(websocket_handler_shutdown_automatically_sends_close_frame)
 add_test_case(websocket_handler_shutdown_handles_queued_close_frame)
+
 # add_test_case(websocket_handler_shutdown_immediately_in_emergency) disabled until channel API exposes immediate shutdown
 add_test_case(websocket_handler_shutdown_handles_unexpected_write_error)
 add_test_case(websocket_handler_close_on_thread)
@@ -268,7 +271,7 @@ add_test_case(hpack_dynamic_table_empty_value)
 add_test_case(hpack_dynamic_table_with_empty_header)
 add_test_case(hpack_dynamic_table_size_update_from_setting)
 
-if (ENABLE_LOCALHOST_INTEGRATION_TESTS)
+if(ENABLE_LOCALHOST_INTEGRATION_TESTS)
     # Tests should be named with localhost_integ_*
     add_net_test_case(localhost_integ_hpack_stress)
     add_net_test_case(localhost_integ_hpack_compression_stress)
@@ -401,7 +404,8 @@ add_test_case(h2_client_unactivated_stream_cleans_up)
 add_test_case(h2_client_connection_preface_sent)
 add_test_case(h2_client_auto_ping_ack)
 add_test_case(h2_client_auto_ping_ack_higher_priority)
-#TODO add_test_case(h2_client_auto_ping_ack_higher_priority_not_break_encoding_frame)
+
+# TODO add_test_case(h2_client_auto_ping_ack_higher_priority_not_break_encoding_frame)
 add_test_case(h2_client_auto_settings_ack)
 add_test_case(h2_client_stream_complete)
 add_test_case(h2_client_close)
@@ -444,7 +448,8 @@ add_test_case(h2_client_push_promise_automatically_rejected)
 add_test_case(h2_client_conn_receive_goaway)
 add_test_case(h2_client_conn_receive_goaway_debug_data)
 add_test_case(h2_client_conn_err_invalid_last_stream_id_goaway)
-#TODO add_test_case(h2_client_send_goaway_with_push_promises) id of 1st should be in GOAWAY 2nd should be ignored
+
+# TODO add_test_case(h2_client_send_goaway_with_push_promises) id of 1st should be in GOAWAY 2nd should be ignored
 add_test_case(h2_client_change_settings_succeed)
 add_test_case(h2_client_change_settings_failed_no_ack_received)
 add_test_case(h2_client_manual_window_management_disabled_auto_window_update)
@@ -454,10 +459,11 @@ add_test_case(h2_client_manual_window_management_user_send_stream_window_update_
 add_test_case(h2_client_manual_window_management_user_send_conn_window_update)
 add_test_case(h2_client_manual_window_management_user_send_conn_window_update_with_padding)
 add_test_case(h2_client_manual_window_management_user_send_connection_window_update_overflow)
+
 # Build these when we address window_update() differences in H1 vs H2
-#TODO add_test_case(h2_client_manual_updated_window_ignored_when_automatical_on)
-#TODO add_test_case(h2_client_manual_stream_updated_window_ignored_invalid_state)
-#TODO add_test_case(h2_client_manual_window_management_window_overflow) #we cannot ensure the increment_size is safe or not, let our peer detect the maximum exceed or not. But we can test the obviously overflows here.
+# TODO add_test_case(h2_client_manual_updated_window_ignored_when_automatical_on)
+# TODO add_test_case(h2_client_manual_stream_updated_window_ignored_invalid_state)
+# TODO add_test_case(h2_client_manual_window_management_window_overflow) #we cannot ensure the increment_size is safe or not, let our peer detect the maximum exceed or not. But we can test the obviously overflows here.
 add_test_case(h2_client_send_ping_successfully_receive_ack)
 add_test_case(h2_client_send_ping_no_ack_received)
 add_test_case(h2_client_conn_err_extraneous_ping_ack_received)
@@ -496,10 +502,11 @@ add_test_case(connection_h2_prior_knowledge)
 add_test_case(connection_h2_prior_knowledge_not_work_with_tls)
 add_test_case(connection_customized_alpn)
 add_test_case(connection_customized_alpn_error_with_unknown_return_string)
+
 # These server tests occasionally fail. Resurrect if/when we get back to work on HTTP server.
-#add_test_case(connection_destroy_server_with_connection_existing)
-#add_test_case(connection_destroy_server_with_multiple_connections_existing)
-#add_test_case(connection_server_shutting_down_new_connection_setup_fail)
+# add_test_case(connection_destroy_server_with_connection_existing)
+# add_test_case(connection_destroy_server_with_multiple_connections_existing)
+# add_test_case(connection_server_shutting_down_new_connection_setup_fail)
 
 # connection manager tests
 # unit tests where connections are mocked
@@ -526,7 +533,7 @@ add_net_test_case(test_connection_manager_acquire_release_mix)
 
 # Integration test that requires proxy envrionment in us-east-1 region.
 # TODO: test the server name validation properly
-if (ENABLE_PROXY_INTEGRATION_TESTS)
+if(ENABLE_PROXY_INTEGRATION_TESTS)
     add_net_test_case(connection_manager_proxy_integration_forwarding_proxy_no_auth)
     add_net_test_case(connection_manager_proxy_integration_forwarding_proxy_no_auth_env)
     add_net_test_case(connection_manager_proxy_integration_legacy_http_no_auth)
@@ -646,8 +653,9 @@ add_net_test_case(h2_sm_acquire_stream)
 add_net_test_case(h2_sm_acquire_stream_multiple_connections)
 add_net_test_case(h2_sm_closing_before_connection_acquired)
 add_net_test_case(h2_sm_close_connection_on_server_error)
+
 # Tests against local server
-if (ENABLE_LOCALHOST_INTEGRATION_TESTS)
+if(ENABLE_LOCALHOST_INTEGRATION_TESTS)
     # Tests should be named with localhost_integ_*
     add_net_test_case(localhost_integ_h2_sm_prior_knowledge)
     add_net_test_case(localhost_integ_h2_sm_acquire_stream_stress)
@@ -669,7 +677,7 @@ generate_test_driver(${TEST_BINARY_NAME})
 file(GLOB FUZZ_TESTS "fuzz/*.c")
 aws_add_fuzz_tests("${FUZZ_TESTS}" "" "")
 
-#SSL certificates to use for testing.
+# SSL certificates to use for testing.
 add_custom_command(TARGET ${TEST_BINARY_NAME} PRE_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/resources $<TARGET_FILE_DIR:${TEST_BINARY_NAME}>)
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources $<TARGET_FILE_DIR:${TEST_BINARY_NAME}>)
