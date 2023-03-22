@@ -84,7 +84,7 @@ struct aws_http_connection_manager_options {
      * Optional.
      * HTTP/2 specific configuration. Check `struct aws_http2_connection_options` for details of each config
      */
-    struct aws_http2_setting *initial_settings_array;
+    const struct aws_http2_setting *initial_settings_array;
     size_t num_initial_settings;
     size_t max_closed_streams;
     bool http2_conn_manual_window_management;

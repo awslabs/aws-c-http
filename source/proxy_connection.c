@@ -18,7 +18,7 @@
 #include <aws/io/tls_channel_handler.h>
 #include <aws/io/uri.h>
 
-#if _MSC_VER
+#ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #    pragma warning(disable : 4232) /* function pointer to dll symbol */
 #endif
@@ -1125,12 +1125,12 @@ static int s_aws_http_client_connect_via_tunneling_proxy(
 
 static enum aws_http_proxy_connection_type s_determine_proxy_connection_type(
     enum aws_http_proxy_connection_type proxy_connection_type,
-    const struct aws_tls_connection_options *tls_options) {
+    bool is_tls_connection) {
     if (proxy_connection_type != AWS_HPCT_HTTP_LEGACY) {
         return proxy_connection_type;
     }
 
-    if (tls_options != NULL) {
+    if (is_tls_connection) {
         return AWS_HPCT_HTTP_TUNNEL;
     } else {
         return AWS_HPCT_HTTP_FORWARD;
@@ -1184,7 +1184,7 @@ static int s_connect_proxy(const struct aws_http_client_connection_options *opti
     }
 
     enum aws_http_proxy_connection_type proxy_connection_type =
-        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_options);
+        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_options != NULL);
 
     switch (proxy_connection_type) {
         case AWS_HPCT_HTTP_FORWARD:
@@ -1332,10 +1332,10 @@ static struct aws_http_proxy_config *s_aws_http_proxy_config_new(
         return NULL;
     }
 
+    config->allocator = allocator;
     config->connection_type = override_proxy_connection_type;
 
     if (aws_byte_buf_init_copy_from_cursor(&config->host, allocator, proxy_options->host)) {
-
         goto on_error;
     }
 
@@ -1346,7 +1346,6 @@ static struct aws_http_proxy_config *s_aws_http_proxy_config_new(
         }
     }
 
-    config->allocator = allocator;
     config->port = proxy_options->port;
 
     if (proxy_options->proxy_strategy != NULL) {
@@ -1399,7 +1398,7 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_from_connection_options(
     return s_aws_http_proxy_config_new(
         allocator,
         options->proxy_options,
-        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_options));
+        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_options != NULL));
 }
 
 struct aws_http_proxy_config *aws_http_proxy_config_new_from_manager_options(
@@ -1411,7 +1410,8 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_from_manager_options(
     return s_aws_http_proxy_config_new(
         allocator,
         options->proxy_options,
-        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_connection_options));
+        s_determine_proxy_connection_type(
+            options->proxy_options->connection_type, options->tls_connection_options != NULL));
 }
 
 struct aws_http_proxy_config *aws_http_proxy_config_new_tunneling_from_proxy_options(
@@ -1430,6 +1430,16 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options(
     }
 
     return s_aws_http_proxy_config_new(allocator, proxy_options, proxy_options->connection_type);
+}
+
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options_with_tls_info(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_options *proxy_options,
+    bool is_tls_connection) {
+    AWS_FATAL_ASSERT(proxy_options != NULL);
+
+    return s_aws_http_proxy_config_new(
+        allocator, proxy_options, s_determine_proxy_connection_type(proxy_options->connection_type, is_tls_connection));
 }
 
 struct aws_http_proxy_config *aws_http_proxy_config_new_clone(

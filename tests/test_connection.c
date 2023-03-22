@@ -22,7 +22,7 @@
 #include <aws/io/tls_channel_handler.h>
 #include <aws/testing/aws_test_harness.h>
 
-#if _MSC_VER
+#ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 

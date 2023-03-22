@@ -139,6 +139,15 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_STREAM_MANAGER_UNEXPECTED_HTTP_VERSION,
         "Stream acquisition failed because stream manager got an unexpected version of HTTP connection"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR,
+        "Websocket protocol rules violated by peer"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED,
+        "Manual write failed because manual writes are not enabled."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED,
+        "Manual write failed because manual writes are already completed."),
 };
 /* clang-format on */
 
