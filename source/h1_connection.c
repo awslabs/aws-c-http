@@ -739,6 +739,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
     if (current && !aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
         current->is_outgoing_message_done = true;
         if (current->base.on_metrics) {
+            AWS_ASSERT(current->base.metrics.send_end_timestamp_ns == 0);
             aws_high_res_clock_get_ticks(&current->base.metrics.send_end_timestamp_ns);
             AWS_ASSERT(current->base.metrics.send_start_timestamp_ns != 0);
             AWS_ASSERT(current->base.metrics.send_end_timestamp_ns >= current->base.metrics.send_start_timestamp_ns);
@@ -816,6 +817,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
 
         if (current) {
             if (current->base.on_metrics) {
+                AWS_ASSERT(current->base.metrics.send_start_timestamp_ns == 0);
                 aws_high_res_clock_get_ticks(&current->base.metrics.send_start_timestamp_ns);
             }
             err = aws_h1_encoder_start_message(
@@ -1849,9 +1851,10 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
     aws_h1_decoder_set_body_headers_ignored(connection->thread_data.incoming_stream_decoder, body_headers_ignored);
 
     if (incoming_stream->base.on_metrics) {
-        AWS_ASSERT(incoming_stream->base.metrics.receive_start_timestamp_ns == 0);
-        /* That's the first time for the stream receives any message */
-        aws_high_res_clock_get_ticks(&incoming_stream->base.metrics.receive_start_timestamp_ns);
+        if (incoming_stream->base.metrics.receive_start_timestamp_ns == 0) {
+            /* That's the first time for the stream receives any message */
+            aws_high_res_clock_get_ticks(&incoming_stream->base.metrics.receive_start_timestamp_ns);
+        }
     }
 
     /* As decoder runs, it invokes the internal s_decoder_X callbacks, which in turn invoke user callbacks.

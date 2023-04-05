@@ -116,6 +116,14 @@ static int s_on_body(struct aws_http_stream *stream, const struct aws_byte_curso
     ASSERT_SUCCESS(aws_byte_buf_append_dynamic(&tester->response_body, data));
     return AWS_OP_SUCCESS;
 }
+static void s_on_metrics(
+    struct aws_http_stream *stream,
+    const struct aws_http_stream_metrics *metrics,
+    void *user_data) {
+    (void)stream;
+    struct client_stream_tester *tester = user_data;
+    tester->metrics = *metrics;
+}
 
 static void s_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     struct client_stream_tester *tester = user_data;
@@ -173,6 +181,7 @@ int client_stream_tester_init(
         .on_response_headers = s_on_headers,
         .on_response_header_block_done = s_on_header_block_done,
         .on_response_body = s_on_body,
+        .on_metrics = s_on_metrics,
         .on_complete = s_on_complete,
         .on_destroy = s_on_destroy,
     };

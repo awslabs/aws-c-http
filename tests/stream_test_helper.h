@@ -43,6 +43,7 @@ struct client_stream_tester {
 
     /* Whether connection is open when on_complete fires */
     bool on_complete_connection_is_open;
+    struct aws_http_stream_metrics metrics;
 
     bool destroyed;
 };

@@ -199,9 +199,9 @@ typedef void(aws_http_on_stream_destroy_fn)(void *user_data);
  * Data maybe not be available if the data of stream was never sent/received before it completes.
  */
 struct aws_http_stream_metrics {
-    /* The time stamp when the request started to be sent from HTTP level. 0 means data not available. */
+    /* The time stamp when the request started to be sent to HTTP level. 0 means data not available. */
     uint64_t send_start_timestamp_ns;
-    /* The time stamp when the request finished to be sent from HTTP level. 0 means data not available. */
+    /* The time stamp when the request finished to be sent to HTTP level. 0 means data not available. */
     uint64_t send_end_timestamp_ns;
     /* The time duration for the request from start sending to finish sending. send_end_timestamp_ns -
      * send_start_timestamp_ns. -1 means data not available. */
@@ -215,7 +215,7 @@ struct aws_http_stream_metrics {
      * send_start_timestamp_ns. -1 means data not available. */
     int64_t receiving_duration_ns;
 
-    /* The stream-id on the connection when this stream was activated */
+    /* The stream-id on the connection when this stream was activated, 0 means data not available */
     uint32_t stream_id;
 };
 

@@ -5,6 +5,7 @@
 
 #include <aws/http/private/h2_stream.h>
 
+#include <aws/common/clock.h>
 #include <aws/http/private/h2_connection.h>
 #include <aws/http/private/strutil.h>
 #include <aws/http/status_code.h>
@@ -714,6 +715,7 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
     }
     if (stream->base.on_metrics) {
         stream->base.metrics.stream_id = stream->base.id;
+        AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns == 0);
         aws_high_res_clock_get_ticks(&stream->base.metrics.send_start_timestamp_ns);
     }
     /* Initialize the flow-control window size */
@@ -745,6 +747,7 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
     aws_h2_connection_enqueue_outgoing_frame(connection, headers_frame);
     if (stream->base.on_metrics && !with_data) {
         /* The frame has not sent by the connection, but the stream is considered to end sending more data. */
+        AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == 0);
         aws_high_res_clock_get_ticks(&stream->base.metrics.send_end_timestamp_ns);
         stream->base.metrics.sending_duration_ns =
             stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
@@ -806,20 +809,19 @@ int aws_h2_stream_encode_data_frame(
     if (input_stream_complete) {
         s_h2_stream_write_data_complete(stream, &waiting_writes);
     }
-
-    if (ends_stream && stream->base.on_metrics) {
-        AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns != 0);
-        AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == 0);
-        aws_high_res_clock_get_ticks(&stream->base.metrics.send_end_timestamp_ns);
-        AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns >= stream->base.metrics.send_start_timestamp_ns);
-        stream->base.metrics.sending_duration_ns =
-            stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
-    }
     /*
      * input_stream_complete for manual writes just means the current outgoing_write is complete. The body is not
      * complete for real until the stream is told to close
      */
     if (input_stream_complete && ends_stream) {
+        if (stream->base.on_metrics) {
+            AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns != 0);
+            AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == 0);
+            aws_high_res_clock_get_ticks(&stream->base.metrics.send_end_timestamp_ns);
+            AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns >= stream->base.metrics.send_start_timestamp_ns);
+            stream->base.metrics.sending_duration_ns =
+                stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
+        }
         /* Done sending data. No more data will be sent. */
         if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE) {
             /* Both sides have sent END_STREAM */
@@ -865,7 +867,7 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *st
         return s_send_rst_and_close_stream(stream, stream_err);
     }
     if (stream->base.on_metrics) {
-        aws_high_res_clock_get_ticks(stream->base.metrics.receive_start_timestamp_ns);
+        aws_high_res_clock_get_ticks(&stream->base.metrics.receive_start_timestamp_ns);
     }
 
     return AWS_H2ERR_SUCCESS;
