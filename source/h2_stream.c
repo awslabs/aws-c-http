@@ -240,10 +240,13 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     stream->base.on_incoming_headers = options->on_response_headers;
     stream->base.on_incoming_header_block_done = options->on_response_header_block_done;
     stream->base.on_incoming_body = options->on_response_body;
+    stream->base.on_metrics = options->on_metrics;
     stream->base.on_complete = options->on_complete;
     stream->base.on_destroy = options->on_destroy;
     stream->base.client_data = &stream->base.client_or_server_data.client;
     stream->base.client_data->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
+    stream->base.metrics.receiving_duration_ns = -1;
+    stream->base.metrics.sending_duration_ns = -1;
     aws_linked_list_init(&stream->thread_data.outgoing_writes);
     aws_linked_list_init(&stream->synced_data.pending_write_list);
 
@@ -446,6 +449,9 @@ void aws_h2_stream_complete(struct aws_h2_stream *stream, int error_code) {
     s_h2_stream_destroy_pending_writes(stream);
 
     /* Invoke callback */
+    if (stream->base.on_metrics) {
+        stream->base.on_metrics(&stream->base, &stream->base.metrics, stream->base.user_data);
+    }
     if (stream->base.on_complete) {
         stream->base.on_complete(&stream->base, error_code, stream->base.user_data);
     }
@@ -706,7 +712,10 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
         AWS_H2_STREAM_LOGF(ERROR, stream, "Failed to create HEADERS frame: %s", aws_error_name(aws_last_error()));
         goto error;
     }
-
+    if (stream->base.on_metrics) {
+        stream->base.metrics.stream_id = stream->base.id;
+        aws_high_res_clock_get_ticks(&stream->base.metrics.send_start_timestamp_ns);
+    }
     /* Initialize the flow-control window size */
     stream->thread_data.window_size_peer =
         connection->thread_data.settings_peer[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
@@ -734,6 +743,12 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
         }
     }
     aws_h2_connection_enqueue_outgoing_frame(connection, headers_frame);
+    if (stream->base.on_metrics && !with_data) {
+        /* The frame has not sent by the connection, but the stream is considered to end sending more data. */
+        aws_high_res_clock_get_ticks(&stream->base.metrics.send_end_timestamp_ns);
+        stream->base.metrics.sending_duration_ns =
+            stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
+    }
     return AWS_OP_SUCCESS;
 
 error:
@@ -792,6 +807,14 @@ int aws_h2_stream_encode_data_frame(
         s_h2_stream_write_data_complete(stream, &waiting_writes);
     }
 
+    if (ends_stream && stream->base.on_metrics) {
+        AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns != 0);
+        AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == 0);
+        aws_high_res_clock_get_ticks(&stream->base.metrics.send_end_timestamp_ns);
+        AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns >= stream->base.metrics.send_start_timestamp_ns);
+        stream->base.metrics.sending_duration_ns =
+            stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
+    }
     /*
      * input_stream_complete for manual writes just means the current outgoing_write is complete. The body is not
      * complete for real until the stream is told to close
@@ -840,6 +863,9 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *st
     struct aws_h2err stream_err = s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_HEADERS);
     if (aws_h2err_failed(stream_err)) {
         return s_send_rst_and_close_stream(stream, stream_err);
+    }
+    if (stream->base.on_metrics) {
+        aws_high_res_clock_get_ticks(stream->base.metrics.receive_start_timestamp_ns);
     }
 
     return AWS_H2ERR_SUCCESS;
@@ -1149,7 +1175,14 @@ struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *strea
     /* Not calling s_check_state_allows_frame_type() here because END_STREAM isn't
      * an actual frame type. It's a flag on DATA or HEADERS frames, and we
      * already checked the legality of those frames in their respective callbacks. */
-
+    if (stream->base.on_metrics) {
+        AWS_ASSERT(stream->base.metrics.receive_start_timestamp_ns != 0);
+        AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns == 0);
+        aws_high_res_clock_get_ticks(&stream->base.metrics.receive_end_timestamp_ns);
+        AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns >= stream->base.metrics.receive_start_timestamp_ns);
+        stream->base.metrics.receiving_duration_ns =
+            stream->base.metrics.receive_end_timestamp_ns - stream->base.metrics.receive_start_timestamp_ns;
+    }
     if (stream->thread_data.content_length_received) {
         if (stream->base.request_method != AWS_HTTP_METHOD_HEAD &&
             stream->base.client_data->response_status != AWS_HTTP_STATUS_CODE_304_NOT_MODIFIED) {

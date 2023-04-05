@@ -371,6 +371,9 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
 
     /* connection keeps activated stream alive until stream completes */
     aws_atomic_fetch_add(&stream->refcount, 1);
+    if (stream->on_metrics) {
+        stream->metrics.stream_id = stream->id;
+    }
 
     if (should_schedule_task) {
         AWS_LOGF_TRACE(
@@ -634,7 +637,6 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     }
 
     if (stream->base.on_metrics) {
-        stream->base.metrics.stream_id = stream->base.id;
         stream->base.on_metrics(&stream->base, &stream->base.metrics, stream->base.user_data);
     }
 
