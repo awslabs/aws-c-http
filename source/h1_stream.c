@@ -361,6 +361,8 @@ static struct aws_h1_stream *s_stream_new_common(
     stream->base.on_incoming_body = on_incoming_body;
     stream->base.on_complete = on_complete;
     stream->base.on_destroy = on_destroy;
+    stream->base.metrics.receiving_duration_ns = -1;
+    stream->base.metrics.sending_duration_ns = -1;
 
     aws_channel_task_init(
         &stream->cross_thread_work_task, s_stream_cross_thread_work_task, stream, "http1_stream_cross_thread_work");
@@ -401,6 +403,7 @@ struct aws_h1_stream *aws_h1_stream_new_request(
 
     stream->base.client_data = &stream->base.client_or_server_data.client;
     stream->base.client_data->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
+    stream->base.on_metrics = options->on_metrics;
 
     /* Validate request and cache info that the encoder will eventually need */
     if (aws_h1_encoder_message_init_from_request(

@@ -195,6 +195,42 @@ typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int
 typedef void(aws_http_on_stream_destroy_fn)(void *user_data);
 
 /**
+ * Tracing metrics for aws_http_stream.
+ * Data maybe not be available if the data of stream was never sent/received before it completes.
+ */
+struct aws_http_stream_metrics {
+    /* The time stamp when the request started to be sent from HTTP level. 0 means data not available. */
+    uint64_t send_start_timestamp_ns;
+    /* The time stamp when the request finished to be sent from HTTP level. 0 means data not available. */
+    uint64_t send_end_timestamp_ns;
+    /* The time duration for the request from start sending to finish sending. send_end_timestamp_ns -
+     * send_start_timestamp_ns. -1 means data not available. */
+    int64_t sending_duration_ns;
+
+    /* The time stamp when the response started to be received from HTTP level. 0 means data not available. */
+    uint64_t receive_start_timestamp_ns;
+    /* The time stamp when the response finished to be received from HTTP level. 0 means data not available. */
+    uint64_t receive_end_timestamp_ns;
+    /* The time duration for the request from start sending to finish sending. send_end_timestamp_ns -
+     * send_start_timestamp_ns. -1 means data not available. */
+    int64_t receiving_duration_ns;
+
+    /* The stream-id on the connection when this stream was activated */
+    uint32_t stream_id;
+};
+
+/**
+ * Invoked right before request/response stream is complete to report the tracing metrics for aws_http_stream.
+ * This may be invoked synchronously when aws_http_stream_release() is called.
+ * This is invoked even if the stream is never activated.
+ * See `aws_http_stream_metrics` for details.
+ */
+typedef void(aws_http_on_stream_metrics_fn)(
+    struct aws_http_stream *stream,
+    const struct aws_http_stream_metrics *metrics,
+    void *user_data);
+
+/**
  * Options for creating a stream which sends a request from the client and receives a response from the server.
  */
 struct aws_http_make_request_options {
@@ -233,6 +269,13 @@ struct aws_http_make_request_options {
      * See `aws_http_on_incoming_body_fn`.
      */
     aws_http_on_incoming_body_fn *on_response_body;
+
+    /**
+     * Invoked right before stream is complete, whether successful or unsuccessful
+     * Optional.
+     * See `aws_http_on_stream_metrics_fn`
+     */
+    aws_http_on_stream_metrics_fn *on_metrics;
 
     /**
      * Invoked when request/response stream is complete, whether successful or unsuccessful

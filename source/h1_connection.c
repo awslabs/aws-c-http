@@ -633,6 +633,11 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
         aws_h1_chunk_complete_and_destroy(chunk, &stream->base, AWS_ERROR_HTTP_STREAM_HAS_COMPLETED);
     }
 
+    if (stream->base.on_metrics) {
+        stream->base.metrics.stream_id = stream->base.id;
+        stream->base.on_metrics(&stream->base, &stream->base.metrics, stream->base.user_data);
+    }
+
     /* Invoke callback and clean up stream. */
     if (stream->base.on_complete) {
         stream->base.on_complete(&stream->base, error_code, stream->base.user_data);
@@ -731,6 +736,13 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
     /* If current stream is done sending data... */
     if (current && !aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
         current->is_outgoing_message_done = true;
+        if (current->base.on_metrics) {
+            aws_high_res_clock_get_ticks(&current->base.metrics.send_end_timestamp_ns);
+            AWS_ASSERT(current->base.metrics.send_start_timestamp_ns != 0);
+            AWS_ASSERT(current->base.metrics.send_end_timestamp_ns >= current->base.metrics.send_start_timestamp_ns);
+            current->base.metrics.sending_duration_ns =
+                current->base.metrics.send_end_timestamp_ns - current->base.metrics.send_start_timestamp_ns;
+        }
 
         /* RFC-7230 section 6.6: Tear-down.
          * If this was the final stream, don't allows any further streams to be sent */
@@ -801,6 +813,9 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
         s_set_outgoing_stream_ptr(connection, current);
 
         if (current) {
+            if (current->base.on_metrics) {
+                aws_high_res_clock_get_ticks(&current->base.metrics.send_start_timestamp_ns);
+            }
             err = aws_h1_encoder_start_message(
                 &connection->thread_data.encoder, &current->encoder_message, &current->base);
             (void)err;
@@ -1260,6 +1275,15 @@ static int s_decoder_on_done(void *user_data) {
     int err = s_mark_head_done(incoming_stream);
     if (err) {
         return AWS_OP_ERR;
+    }
+    if (incoming_stream->base.on_metrics) {
+        aws_high_res_clock_get_ticks(&incoming_stream->base.metrics.receive_end_timestamp_ns);
+        AWS_ASSERT(incoming_stream->base.metrics.receive_start_timestamp_ns != 0);
+        AWS_ASSERT(
+            incoming_stream->base.metrics.receive_end_timestamp_ns >=
+            incoming_stream->base.metrics.receive_start_timestamp_ns);
+        incoming_stream->base.metrics.receiving_duration_ns = incoming_stream->base.metrics.receive_end_timestamp_ns -
+                                                              incoming_stream->base.metrics.receive_start_timestamp_ns;
     }
     /* If it is a informational response, we stop here, keep waiting for new response */
     enum aws_http_header_block header_block =
@@ -1821,6 +1845,12 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
 
     bool body_headers_ignored = incoming_stream->base.request_method == AWS_HTTP_METHOD_HEAD;
     aws_h1_decoder_set_body_headers_ignored(connection->thread_data.incoming_stream_decoder, body_headers_ignored);
+
+    if (incoming_stream->base.on_metrics) {
+        AWS_ASSERT(incoming_stream->base.metrics.receive_start_timestamp_ns == 0);
+        /* That's the first time for the stream receives any message */
+        aws_high_res_clock_get_ticks(&incoming_stream->base.metrics.receive_start_timestamp_ns);
+    }
 
     /* As decoder runs, it invokes the internal s_decoder_X callbacks, which in turn invoke user callbacks.
      * The decoder will stop once it hits the end of the request/response OR the end of the message data. */
