@@ -126,6 +126,8 @@ struct aws_http_proxy_user_data {
     struct aws_http_proxy_config *proxy_config;
 
     struct aws_event_loop *requested_event_loop;
+
+    const struct aws_host_resolution_config *host_resolution_config;
 };
 
 struct aws_http_proxy_system_vtable {
