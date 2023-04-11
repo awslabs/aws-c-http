@@ -280,6 +280,12 @@ struct aws_websocket_client_connection_options {
      * a single thread.
      */
     struct aws_event_loop *requested_event_loop;
+
+    /**
+     * Optional
+     * Host resolution override that allows the user to override DNS behavior for this particular connection.
+     */
+    const struct aws_host_resolution_config *host_resolution_config;
 };
 
 /**
