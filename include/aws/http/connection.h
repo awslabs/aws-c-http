@@ -401,8 +401,7 @@ struct aws_http_client_connection_options {
 
     /**
      * Optional
-     * Host resolution override that allows the user to override DNS behavior for this particular connection, relative
-     * to the client bootstrap's host resolution behavior.
+     * Host resolution override that allows the user to override DNS behavior for this particular connection.
      */
     const struct aws_host_resolution_config *host_resolution_config;
 };
