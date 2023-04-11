@@ -507,6 +507,12 @@ AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
 
 /**
+ * Returns the remote endpoint of the HTTP connection.
+ */
+AWS_HTTP_API
+struct aws_byte_cursor aws_http_connection_get_remote_endpoint_address(struct aws_http_connection *connection);
+
+/**
  * Initialize an map copied from the *src map, which maps `struct aws_string *` to `enum aws_http_version`.
  */
 AWS_HTTP_API

@@ -716,7 +716,7 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
     if (stream->base.on_metrics) {
         stream->base.metrics.stream_id = stream->base.id;
         AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns == 0);
-        aws_high_res_clock_get_ticks(&stream->base.metrics.send_start_timestamp_ns);
+        aws_sys_clock_get_ticks(&stream->base.metrics.send_start_timestamp_ns);
     }
     /* Initialize the flow-control window size */
     stream->thread_data.window_size_peer =
@@ -748,7 +748,7 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
     if (stream->base.on_metrics && !with_data) {
         /* The frame has not sent by the connection, but the stream is considered to end sending more data. */
         AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == 0);
-        aws_high_res_clock_get_ticks(&stream->base.metrics.send_end_timestamp_ns);
+        aws_sys_clock_get_ticks(&stream->base.metrics.send_end_timestamp_ns);
         stream->base.metrics.sending_duration_ns =
             stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
     }
@@ -814,6 +814,7 @@ int aws_h2_stream_encode_data_frame(
      * complete for real until the stream is told to close
      */
     if (input_stream_complete && ends_stream) {
+        /* Done sending data. No more data will be sent. */
         if (stream->base.on_metrics) {
             AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns != 0);
             AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == 0);
@@ -822,7 +823,6 @@ int aws_h2_stream_encode_data_frame(
             stream->base.metrics.sending_duration_ns =
                 stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
         }
-        /* Done sending data. No more data will be sent. */
         if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE) {
             /* Both sides have sent END_STREAM */
             stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
@@ -1177,6 +1177,7 @@ struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *strea
     /* Not calling s_check_state_allows_frame_type() here because END_STREAM isn't
      * an actual frame type. It's a flag on DATA or HEADERS frames, and we
      * already checked the legality of those frames in their respective callbacks. */
+
     if (stream->base.on_metrics) {
         AWS_ASSERT(stream->base.metrics.receive_start_timestamp_ns != 0);
         AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns == 0);

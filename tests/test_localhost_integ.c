@@ -369,6 +369,9 @@ static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool comp
     }
 
     aws_string_destroy(http_localhost_host);
+    struct aws_byte_cursor remote_ip = aws_http_connection_get_remote_endpoint_address(s_tester.connection);
+    /* Local host IP should always be 127.0.0.1 */
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&remote_ip, "127.0.0.1"));
     return s_tester_clean_up(&s_tester);
 }
 
