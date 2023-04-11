@@ -1100,6 +1100,7 @@ int aws_http_client_connect_internal(
         .enable_read_back_pressure = options.manual_window_management,
         .user_data = http_bootstrap,
         .requested_event_loop = options.requested_event_loop,
+        .host_resolution_override_config = options.host_resolution_config,
     };
 
     err = s_system_vtable_ptr->new_socket_channel(&channel_options);
