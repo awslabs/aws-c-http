@@ -1505,6 +1505,7 @@ static int s_proxy_integration_test_helper_general(
         .env_configured_tls = configured_tls ? &proxy_tls_options : NULL,
         .proxy_options = use_env ? NULL : &proxy_options,
         .use_tls = s_get_use_tls_from_proxy_test_type(proxy_test_type),
+        .self_lib_init = true,
     };
 
     struct aws_http2_setting settings_array[] = {
