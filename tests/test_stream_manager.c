@@ -128,7 +128,7 @@ static void s_testing_channel_shutdown(int error_code, void *user_data) {
         return;
     }
     if (fake_connection->options.on_shutdown) {
-        /* In real world, this is trigger by the bootstrp */
+        /* In real world, this is trigger by the bootstrap */
         fake_connection->options.on_shutdown(
             fake_connection->connection, error_code, fake_connection->options.user_data);
     }
