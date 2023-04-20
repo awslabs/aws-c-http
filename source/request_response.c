@@ -1107,6 +1107,17 @@ int aws_http_stream_send_response(struct aws_http_stream *stream, struct aws_htt
     return stream->owning_connection->vtable->stream_send_response(stream, response);
 }
 
+struct aws_http_stream *aws_http_stream_acquire(struct aws_http_stream *stream) {
+    if (!stream) {
+        return stream;
+    }
+
+    size_t prev_refcount = aws_atomic_fetch_add(&stream->refcount, 1);
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_STREAM, "id=%p: Stream refcount acquired, %zu remaining.", (void *)stream, prev_refcount + 1);
+    return stream;
+}
+
 void aws_http_stream_release(struct aws_http_stream *stream) {
     if (!stream) {
         return;

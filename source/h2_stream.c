@@ -701,9 +701,8 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
 
     struct aws_http_headers *h2_headers = aws_http_message_get_headers(msg);
 
-    struct aws_h2_frame *headers_frame = aws_h2_frame_new_headers(
-        stream->base.alloc,
-        stream->base.id,
+    struct aws_h2_frame *headers_frame = aws_h2_frame_new_headers_with_stream(
+        stream,
         h2_headers,
         !with_data /* end_stream */,
         0 /* padding - not currently configurable via public API */,
@@ -712,11 +711,6 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
     if (!headers_frame) {
         AWS_H2_STREAM_LOGF(ERROR, stream, "Failed to create HEADERS frame: %s", aws_error_name(aws_last_error()));
         goto error;
-    }
-    if (stream->base.on_metrics) {
-        stream->base.metrics.stream_id = stream->base.id;
-        AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns == 0);
-        aws_sys_clock_get_ticks(&stream->base.metrics.send_start_timestamp_ns);
     }
     /* Initialize the flow-control window size */
     stream->thread_data.window_size_peer =
@@ -745,13 +739,6 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
         }
     }
     aws_h2_connection_enqueue_outgoing_frame(connection, headers_frame);
-    if (stream->base.on_metrics && !with_data) {
-        /* The frame has not sent by the connection, but the stream is considered to end sending more data. */
-        AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == 0);
-        aws_sys_clock_get_ticks(&stream->base.metrics.send_end_timestamp_ns);
-        stream->base.metrics.sending_duration_ns =
-            stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
-    }
     return AWS_OP_SUCCESS;
 
 error:
@@ -816,12 +803,7 @@ int aws_h2_stream_encode_data_frame(
     if (input_stream_complete && ends_stream) {
         /* Done sending data. No more data will be sent. */
         if (stream->base.on_metrics) {
-            AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns != 0);
-            AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == 0);
-            aws_sys_clock_get_ticks(&stream->base.metrics.send_end_timestamp_ns);
-            AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns >= stream->base.metrics.send_start_timestamp_ns);
-            stream->base.metrics.sending_duration_ns =
-                stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
+            encoder->finish_encoding_stream = &stream->base;
         }
         if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE) {
             /* Both sides have sent END_STREAM */

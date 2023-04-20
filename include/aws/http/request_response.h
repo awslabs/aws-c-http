@@ -1016,6 +1016,12 @@ struct aws_http_stream *aws_http_stream_new_server_request_handler(
     const struct aws_http_request_handler_options *options);
 
 /**
+ * Acquire refcount on the stream to prevent it from being cleaned up until it is released.
+ */
+AWS_HTTP_API
+struct aws_http_stream *aws_http_stream_acquire(struct aws_http_stream *stream);
+
+/**
  * Users must release the stream when they are done with it, or its memory will never be cleaned up.
  * This will not cancel the stream, its callbacks will still fire if the stream is still in progress.
  *

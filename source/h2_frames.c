@@ -4,6 +4,7 @@
  */
 
 #include <aws/http/private/h2_frames.h>
+#include <aws/http/private/h2_stream.h>
 
 #include <aws/compression/huffman.h>
 
@@ -467,6 +468,7 @@ struct aws_h2_frame_headers {
     struct aws_h2_frame base;
 
     /* Common data */
+    struct aws_http_stream *stream_base;
     const struct aws_http_headers *headers;
     uint8_t pad_length; /* Set to 0 to disable AWS_H2_FRAME_F_PADDED */
 
@@ -575,6 +577,29 @@ struct aws_h2_frame *aws_h2_frame_new_headers(
         0 /* HEADERS doesn't have promised_stream_id */);
 }
 
+struct aws_h2_frame *aws_h2_frame_new_headers_with_stream(
+    struct aws_h2_stream *h2_stream,
+    const struct aws_http_headers *headers,
+    bool end_stream,
+    uint8_t pad_length,
+    const struct aws_h2_frame_priority_settings *optional_priority) {
+
+    struct aws_h2_frame *frame_base = s_frame_new_headers_or_push_promise(
+        h2_stream->base.alloc,
+        AWS_H2_FRAME_T_HEADERS,
+        h2_stream->base.id,
+        headers,
+        pad_length,
+        end_stream,
+        optional_priority,
+        0 /* HEADERS doesn't have promised_stream_id */);
+    if (frame_base && h2_stream->base.on_metrics) {
+        struct aws_h2_frame_headers *headers_frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_headers, base);
+        headers_frame->stream_base = aws_http_stream_acquire(&h2_stream->base);
+    }
+    return frame_base;
+}
+
 struct aws_h2_frame *aws_h2_frame_new_push_promise(
     struct aws_allocator *allocator,
     uint32_t stream_id,
@@ -597,6 +622,7 @@ static void s_frame_headers_destroy(struct aws_h2_frame *frame_base) {
     struct aws_h2_frame_headers *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_headers, base);
     aws_http_headers_release((struct aws_http_headers *)frame->headers);
     aws_byte_buf_clean_up(&frame->whole_encoded_header_block);
+    aws_http_stream_release(frame->stream_base);
     aws_mem_release(frame->base.alloc, frame);
 }
 
@@ -764,6 +790,9 @@ static int s_frame_headers_encode(
 
         frame->header_block_cursor = aws_byte_cursor_from_buf(&frame->whole_encoded_header_block);
         frame->state = AWS_H2_HEADERS_STATE_FIRST_FRAME;
+        if (frame->stream_base) {
+            encoder->start_encoding_stream = frame->stream_base;
+        }
     }
 
     /* Write frames (HEADER or PUSH_PROMISE, followed by N CONTINUATION frames)
@@ -774,6 +803,12 @@ static int s_frame_headers_encode(
     }
 
     *complete = frame->state == AWS_H2_HEADERS_STATE_COMPLETE;
+    if (*complete) {
+        if (frame->stream_base && frame->end_stream) {
+            /* The last frame get encoded */
+            encoder->finish_encoding_stream = frame->stream_base;
+        }
+    }
     return AWS_OP_SUCCESS;
 
 error:
