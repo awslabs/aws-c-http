@@ -740,7 +740,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
         current->is_outgoing_message_done = true;
         if (current->base.on_metrics) {
             AWS_ASSERT(current->base.metrics.send_end_timestamp_ns == 0);
-            aws_sys_clock_get_ticks(&current->base.metrics.send_end_timestamp_ns);
+            aws_high_res_clock_get_ticks(&current->base.metrics.send_end_timestamp_ns);
             AWS_ASSERT(current->base.metrics.send_start_timestamp_ns != 0);
             AWS_ASSERT(current->base.metrics.send_end_timestamp_ns >= current->base.metrics.send_start_timestamp_ns);
             current->base.metrics.sending_duration_ns =
@@ -818,7 +818,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
         if (current) {
             if (current->base.on_metrics) {
                 AWS_ASSERT(current->base.metrics.send_start_timestamp_ns == 0);
-                aws_sys_clock_get_ticks(&current->base.metrics.send_start_timestamp_ns);
+                aws_high_res_clock_get_ticks(&current->base.metrics.send_start_timestamp_ns);
             }
             err = aws_h1_encoder_start_message(
                 &connection->thread_data.encoder, &current->encoder_message, &current->base);
@@ -1290,7 +1290,7 @@ static int s_decoder_on_done(void *user_data) {
     /* Otherwise the incoming stream is finished decoding and we will update it if needed */
     incoming_stream->is_incoming_message_done = true;
     if (incoming_stream->base.on_metrics) {
-        aws_sys_clock_get_ticks(&incoming_stream->base.metrics.receive_end_timestamp_ns);
+        aws_high_res_clock_get_ticks(&incoming_stream->base.metrics.receive_end_timestamp_ns);
         AWS_ASSERT(incoming_stream->base.metrics.receive_start_timestamp_ns != 0);
         AWS_ASSERT(
             incoming_stream->base.metrics.receive_end_timestamp_ns >=
@@ -1853,7 +1853,7 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
     if (incoming_stream->base.on_metrics) {
         if (incoming_stream->base.metrics.receive_start_timestamp_ns == 0) {
             /* That's the first time for the stream receives any message */
-            aws_sys_clock_get_ticks(&incoming_stream->base.metrics.receive_start_timestamp_ns);
+            aws_high_res_clock_get_ticks(&incoming_stream->base.metrics.receive_start_timestamp_ns);
         }
     }
 

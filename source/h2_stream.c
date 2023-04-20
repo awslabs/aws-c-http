@@ -849,7 +849,7 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *st
         return s_send_rst_and_close_stream(stream, stream_err);
     }
     if (stream->base.on_metrics) {
-        aws_sys_clock_get_ticks(&stream->base.metrics.receive_start_timestamp_ns);
+        aws_high_res_clock_get_ticks(&stream->base.metrics.receive_start_timestamp_ns);
     }
 
     return AWS_H2ERR_SUCCESS;
@@ -1163,7 +1163,7 @@ struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *strea
     if (stream->base.on_metrics) {
         AWS_ASSERT(stream->base.metrics.receive_start_timestamp_ns != 0);
         AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns == 0);
-        aws_sys_clock_get_ticks(&stream->base.metrics.receive_end_timestamp_ns);
+        aws_high_res_clock_get_ticks(&stream->base.metrics.receive_end_timestamp_ns);
         AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns >= stream->base.metrics.receive_start_timestamp_ns);
         stream->base.metrics.receiving_duration_ns =
             stream->base.metrics.receive_end_timestamp_ns - stream->base.metrics.receive_start_timestamp_ns;

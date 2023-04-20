@@ -630,7 +630,7 @@ static void s_on_channel_write_complete(
         struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
         AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns != 0);
         AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == 0);
-        aws_sys_clock_get_ticks(&stream->base.metrics.send_end_timestamp_ns);
+        aws_high_res_clock_get_ticks(&stream->base.metrics.send_end_timestamp_ns);
         AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns >= stream->base.metrics.send_start_timestamp_ns);
         stream->base.metrics.sending_duration_ns =
             stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
@@ -818,7 +818,7 @@ static int s_encode_outgoing_frames_queue(struct aws_h2_connection *connection, 
             AWS_ASSERT(h2_stream->base.on_metrics);
             AWS_ASSERT(h2_stream->base.metrics.send_start_timestamp_ns == 0);
             /* Get the start time for the stream */
-            aws_sys_clock_get_ticks(&h2_stream->base.metrics.send_start_timestamp_ns);
+            aws_high_res_clock_get_ticks(&h2_stream->base.metrics.send_start_timestamp_ns);
             connection->thread_data.encoder.start_encoding_stream = NULL;
         }
         if (connection->thread_data.encoder.finish_encoding_stream) {
