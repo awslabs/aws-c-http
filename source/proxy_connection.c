@@ -162,6 +162,7 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     user_data->original_channel_on_setup = on_channel_setup;
     user_data->original_channel_on_shutdown = on_channel_shutdown;
     user_data->requested_event_loop = options.requested_event_loop;
+    user_data->host_resolution_config = options.host_resolution_config;
     user_data->prior_knowledge_http2 = options.prior_knowledge_http2;
 
     /* one and only one setup callback must be valid */
@@ -1048,6 +1049,7 @@ static int s_aws_http_client_connect_via_forwarding_proxy(const struct aws_http_
     options_copy.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
     options_copy.tls_options = options->proxy_options->tls_options;
     options_copy.requested_event_loop = options->requested_event_loop;
+    options_copy.host_resolution_config = options->host_resolution_config;
     options_copy.prior_knowledge_http2 = false; /* ToDo, expose the protocol specific config for proxy connection. */
 
     int result = aws_http_client_connect_internal(&options_copy, s_proxy_http_request_transform);
@@ -1084,6 +1086,7 @@ static int s_create_tunneling_connection(struct aws_http_proxy_user_data *user_d
     connect_options.http1_options = NULL; /* ToDo, expose the protocol specific config for proxy connection. */
     connect_options.http2_options = NULL; /* ToDo */
     connect_options.requested_event_loop = user_data->requested_event_loop;
+    connect_options.host_resolution_config = user_data->host_resolution_config;
 
     int result = aws_http_client_connect(&connect_options);
     if (result == AWS_OP_ERR) {
@@ -1642,6 +1645,7 @@ int aws_http_proxy_new_socket_channel(
     http_connection_options.on_setup = NULL;    /* use channel callbacks, not http callbacks */
     http_connection_options.on_shutdown = NULL; /* use channel callbacks, not http callbacks */
     http_connection_options.requested_event_loop = channel_options->requested_event_loop;
+    http_connection_options.host_resolution_config = channel_options->host_resolution_override_config;
 
     if (s_aws_http_client_connect_via_tunneling_proxy(
             &http_connection_options, s_http_proxied_socket_channel_setup, s_http_proxied_socket_channel_shutdown)) {

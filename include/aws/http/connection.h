@@ -398,6 +398,12 @@ struct aws_http_client_connection_options {
      * event loop group associated with the client bootstrap.
      */
     struct aws_event_loop *requested_event_loop;
+
+    /**
+     * Optional
+     * Host resolution override that allows the user to override DNS behavior for this particular connection.
+     */
+    const struct aws_host_resolution_config *host_resolution_config;
 };
 
 /* Predefined settings identifiers (RFC-7540 6.5.2) */

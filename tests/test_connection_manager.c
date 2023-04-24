@@ -1505,15 +1505,17 @@ static int s_proxy_integration_test_helper_general(
         .env_configured_tls = configured_tls ? &proxy_tls_options : NULL,
         .proxy_options = use_env ? NULL : &proxy_options,
         .use_tls = s_get_use_tls_from_proxy_test_type(proxy_test_type),
+        .self_lib_init = true,
+    };
+
+    struct aws_http2_setting settings_array[] = {
+        {
+            .id = AWS_HTTP2_SETTINGS_ENABLE_PUSH,
+            .value = 0,
+        },
     };
 
     if (h2) {
-        struct aws_http2_setting settings_array[] = {
-            {
-                .id = AWS_HTTP2_SETTINGS_ENABLE_PUSH,
-                .value = 0,
-            },
-        };
         options.http2 = true;
         options.initial_settings_array = settings_array;
         options.num_initial_settings = AWS_ARRAY_SIZE(settings_array);
@@ -1560,11 +1562,11 @@ static int s_proxy_integration_test_helper_general(
 
     aws_http_stream_release(stream);
     aws_http_message_destroy(request);
+    aws_tls_connection_options_clean_up(&proxy_tls_options);
     s_proxy_environment_configurations_clean_up(&configs);
     ASSERT_SUCCESS(s_release_connections(1, false));
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
-    aws_tls_connection_options_clean_up(&proxy_tls_options);
     aws_http_library_clean_up();
 
     return AWS_OP_SUCCESS;
