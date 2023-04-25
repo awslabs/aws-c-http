@@ -451,7 +451,16 @@ void aws_h2_stream_complete(struct aws_h2_stream *stream, int error_code) {
 
     /* Invoke callback */
     if (stream->base.on_metrics) {
+        if (stream->base.metrics.send_end_timestamp_ns == 0) {
+            /* The stream completes before the message finish sending. Set the end time now. */
+            AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns != 0);
+            aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_end_timestamp_ns);
+            AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns >= stream->base.metrics.send_start_timestamp_ns);
+            stream->base.metrics.sending_duration_ns =
+                stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
+        }
         stream->base.on_metrics(&stream->base, &stream->base.metrics, stream->base.user_data);
+        stream->base.on_metrics = NULL;
     }
     if (stream->base.on_complete) {
         stream->base.on_complete(&stream->base, error_code, stream->base.user_data);
@@ -849,7 +858,7 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *st
         return s_send_rst_and_close_stream(stream, stream_err);
     }
     if (stream->base.on_metrics) {
-        aws_high_res_clock_get_ticks(&stream->base.metrics.receive_start_timestamp_ns);
+        aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.receive_start_timestamp_ns);
     }
 
     return AWS_H2ERR_SUCCESS;
@@ -1163,7 +1172,7 @@ struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *strea
     if (stream->base.on_metrics) {
         AWS_ASSERT(stream->base.metrics.receive_start_timestamp_ns != 0);
         AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns == 0);
-        aws_high_res_clock_get_ticks(&stream->base.metrics.receive_end_timestamp_ns);
+        aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.receive_end_timestamp_ns);
         AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns >= stream->base.metrics.receive_start_timestamp_ns);
         stream->base.metrics.receiving_duration_ns =
             stream->base.metrics.receive_end_timestamp_ns - stream->base.metrics.receive_start_timestamp_ns;

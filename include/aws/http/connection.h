@@ -10,6 +10,7 @@
 
 struct aws_client_bootstrap;
 struct aws_socket_options;
+struct aws_socket_endpoint;
 struct aws_tls_connection_options;
 struct aws_http2_setting;
 struct proxy_env_var_settings;
@@ -516,7 +517,7 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
  * Returns the remote endpoint of the HTTP connection.
  */
 AWS_HTTP_API
-struct aws_byte_cursor aws_http_connection_get_remote_endpoint_address(struct aws_http_connection *connection);
+const struct aws_socket_endpoint *aws_http_connection_get_remote_endpoint(const struct aws_http_connection *connection);
 
 /**
  * Initialize an map copied from the *src map, which maps `struct aws_string *` to `enum aws_http_version`.

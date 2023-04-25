@@ -199,22 +199,22 @@ typedef void(aws_http_on_stream_destroy_fn)(void *user_data);
  * Data maybe not be available if the data of stream was never sent/received before it completes.
  */
 struct aws_http_stream_metrics {
-    /* The time stamp when the request started to be sent to the network channel. 0 means data not available. Timestamp
+    /* The time stamp when the request started to be sent to the network channel. -1 means data not available. Timestamp
      * are from `aws_high_res_clock_get_ticks` */
-    uint64_t send_start_timestamp_ns;
-    /* The time stamp when the request finished to be sent to the network channel. 0 means data not available. Timestamp
-     * are from `aws_high_res_clock_get_ticks` */
-    uint64_t send_end_timestamp_ns;
+    int64_t send_start_timestamp_ns;
+    /* The time stamp when the request finished to be sent to the network channel. -1 means data not available.
+     * Timestamp are from `aws_high_res_clock_get_ticks` */
+    int64_t send_end_timestamp_ns;
     /* The time duration for the request from start sending to finish sending. send_end_timestamp_ns -
      * send_start_timestamp_ns. -1 means data not available. */
     int64_t sending_duration_ns;
 
-    /* The time stamp when the response started to be received from the network channel. 0 means data not available.
+    /* The time stamp when the response started to be received from the network channel. -1 means data not available.
      * Timestamp are from `aws_high_res_clock_get_ticks` */
-    uint64_t receive_start_timestamp_ns;
-    /* The time stamp when the response finished to be received from the network channel. 0 means data not available.
+    int64_t receive_start_timestamp_ns;
+    /* The time stamp when the response finished to be received from the network channel. -1 means data not available.
      * Timestamp are from `aws_high_res_clock_get_ticks` */
-    uint64_t receive_end_timestamp_ns;
+    int64_t receive_end_timestamp_ns;
     /* The time duration for the request from start sending to finish sending. send_end_timestamp_ns -
      * send_start_timestamp_ns. -1 means data not available. */
     int64_t receiving_duration_ns;

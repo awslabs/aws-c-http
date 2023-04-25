@@ -367,13 +367,14 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
     return connection->channel_slot->channel;
 }
 
-struct aws_byte_cursor aws_http_connection_get_remote_endpoint_address(struct aws_http_connection *connection) {
+const struct aws_socket_endpoint *aws_http_connection_get_remote_endpoint(
+    const struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     struct aws_channel *channel = connection->channel_slot->channel;
     /* The first slot for an HTTP connection is always socket */
     struct aws_channel_slot *socket_slot = aws_channel_get_first_slot(channel);
     const struct aws_socket *socket = aws_socket_handler_get_socket(socket_slot->handler);
-    return aws_byte_cursor_from_c_str(socket->remote_endpoint.address);
+    return &socket->remote_endpoint;
 }
 
 int aws_http_alpn_map_init(struct aws_allocator *allocator, struct aws_hash_table *map) {
