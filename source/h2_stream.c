@@ -451,9 +451,8 @@ void aws_h2_stream_complete(struct aws_h2_stream *stream, int error_code) {
 
     /* Invoke callback */
     if (stream->base.on_metrics) {
-        if (stream->base.metrics.send_end_timestamp_ns == 0) {
+        if (stream->base.metrics.send_end_timestamp_ns == 0 && stream->base.metrics.send_start_timestamp_ns != 0) {
             /* The stream completes before the message finish sending. Set the end time now. */
-            AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns != 0);
             aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_end_timestamp_ns);
             AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns >= stream->base.metrics.send_start_timestamp_ns);
             stream->base.metrics.sending_duration_ns =
