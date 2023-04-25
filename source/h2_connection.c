@@ -638,6 +638,7 @@ static void s_on_channel_write_complete(
         }
         aws_http_stream_release(stream_base);
         error |= aws_array_list_pop_back(&connection->thread_data.finish_encoding_streams_list);
+        (void)error;
         AWS_ASSERT(!error);
     }
 
