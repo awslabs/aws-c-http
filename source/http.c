@@ -537,7 +537,7 @@ void aws_http_library_clean_up(void) {
     aws_io_library_clean_up();
 }
 
-void aws_http_fatal_assert_library_initialized() {
+void aws_http_fatal_assert_library_initialized(void) {
     if (!s_library_initialized) {
         AWS_LOGF_FATAL(
             AWS_LS_HTTP_GENERAL,
