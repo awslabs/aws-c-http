@@ -628,6 +628,7 @@ static void s_on_channel_write_complete(
     while (aws_array_list_length(&connection->thread_data.finish_encoding_streams_list) > 0) {
         struct aws_http_stream *stream_base = NULL;
         int error = aws_array_list_back(&connection->thread_data.finish_encoding_streams_list, &stream_base);
+        AWS_ASSERT(!error);
         if (stream_base->on_metrics) {
             AWS_ASSERT(stream_base->metrics.send_start_timestamp_ns != 0);
             AWS_ASSERT(stream_base->metrics.send_end_timestamp_ns == 0);
