@@ -1295,7 +1295,7 @@ static int s_decoder_on_done(void *user_data) {
     /* Otherwise the incoming stream is finished decoding and we will update it if needed */
     incoming_stream->is_incoming_message_done = true;
     aws_high_res_clock_get_ticks((uint64_t *)&incoming_stream->base.metrics.receive_end_timestamp_ns);
-    AWS_ASSERT(incoming_stream->base.metrics.receive_start_timestamp_ns != 0);
+    AWS_ASSERT(incoming_stream->base.metrics.receive_start_timestamp_ns != -1);
     AWS_ASSERT(
         incoming_stream->base.metrics.receive_end_timestamp_ns >=
         incoming_stream->base.metrics.receive_start_timestamp_ns);
