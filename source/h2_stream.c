@@ -1172,8 +1172,8 @@ struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *strea
      * an actual frame type. It's a flag on DATA or HEADERS frames, and we
      * already checked the legality of those frames in their respective callbacks. */
 
-    AWS_ASSERT(stream->base.metrics.receive_start_timestamp_ns != 0);
-    AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns == 0);
+    AWS_ASSERT(stream->base.metrics.receive_start_timestamp_ns != -1);
+    AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns == -1);
     aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.receive_end_timestamp_ns);
     AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns >= stream->base.metrics.receive_start_timestamp_ns);
     stream->base.metrics.receiving_duration_ns =
