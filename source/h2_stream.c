@@ -808,12 +808,18 @@ int aws_h2_stream_encode_data_frame(
     if (input_stream_complete) {
         s_h2_stream_write_data_complete(stream, &waiting_writes);
     }
+
     /*
      * input_stream_complete for manual writes just means the current outgoing_write is complete. The body is not
      * complete for real until the stream is told to close
      */
     if (input_stream_complete && ends_stream) {
         /* Done sending data. No more data will be sent. */
+        AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == -1);
+        aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_end_timestamp_ns);
+        stream->base.metrics.sending_duration_ns =
+            stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
+
         if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE) {
             /* Both sides have sent END_STREAM */
             stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
@@ -828,11 +834,6 @@ int aws_h2_stream_encode_data_frame(
             stream->thread_data.state = AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL;
             AWS_H2_STREAM_LOG(TRACE, stream, "Sent END_STREAM. State -> HALF_CLOSED_LOCAL");
         }
-
-        AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == -1);
-        aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_end_timestamp_ns);
-        stream->base.metrics.sending_duration_ns =
-            stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
     } else {
         *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING;
         if (input_stream_stalled) {

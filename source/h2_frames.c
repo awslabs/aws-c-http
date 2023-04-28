@@ -4,7 +4,6 @@
  */
 
 #include <aws/http/private/h2_frames.h>
-#include <aws/http/private/h2_stream.h>
 
 #include <aws/compression/huffman.h>
 

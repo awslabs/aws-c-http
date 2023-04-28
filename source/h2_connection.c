@@ -865,6 +865,7 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
                 aws_error_name(aws_error_code));
             goto done;
         }
+
         /* If stream has more data, push it into the appropriate list. */
         switch (data_encode_status) {
             case AWS_H2_DATA_ENCODE_COMPLETE:
