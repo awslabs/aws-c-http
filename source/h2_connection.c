@@ -2056,6 +2056,7 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
 
     /* connection keeps activated stream alive until stream completes */
     aws_atomic_fetch_add(&stream->refcount, 1);
+    stream->metrics.stream_id = stream->id;
 
     if (!was_cross_thread_work_scheduled) {
         CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
