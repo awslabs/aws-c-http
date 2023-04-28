@@ -1931,6 +1931,20 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_body) {
     ASSERT_SUCCESS(s_check_header(stream_tester.response_headers, 0, "Content-Length", "9"));
     ASSERT_TRUE(aws_byte_buf_eq_c_str(&stream_tester.response_body, "Call Momo"));
 
+    ASSERT_TRUE(stream_tester.metrics.receive_end_timestamp_ns > 0);
+    ASSERT_TRUE(stream_tester.metrics.receive_start_timestamp_ns > 0);
+    ASSERT_TRUE(stream_tester.metrics.receive_end_timestamp_ns > stream_tester.metrics.receive_start_timestamp_ns);
+    ASSERT_TRUE(
+        stream_tester.metrics.receiving_duration_ns ==
+        stream_tester.metrics.receive_end_timestamp_ns - stream_tester.metrics.receive_start_timestamp_ns);
+    ASSERT_TRUE(stream_tester.metrics.send_start_timestamp_ns > 0);
+    ASSERT_TRUE(stream_tester.metrics.send_end_timestamp_ns > 0);
+    ASSERT_TRUE(stream_tester.metrics.send_end_timestamp_ns > stream_tester.metrics.send_start_timestamp_ns);
+    ASSERT_TRUE(
+        stream_tester.metrics.sending_duration_ns ==
+        stream_tester.metrics.send_end_timestamp_ns - stream_tester.metrics.send_start_timestamp_ns);
+    ASSERT_TRUE(stream_tester.metrics.stream_id == stream_tester.stream->id);
+
     /* clean up */
     client_stream_tester_clean_up(&stream_tester);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
