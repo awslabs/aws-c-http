@@ -205,8 +205,8 @@ struct aws_http_stream_metrics {
     /* The time stamp when the request finished to be encoded. -1 means data not available.
      * Timestamp are from `aws_high_res_clock_get_ticks` */
     int64_t send_end_timestamp_ns;
-    /* The time duration for the request from start sending to finish sending. send_end_timestamp_ns -
-     * send_start_timestamp_ns. -1 means data not available. */
+    /* The time duration for the request from start encoding to finish encoding (send_end_timestamp_ns -
+     * send_start_timestamp_ns). -1 means data not available. */
     int64_t sending_duration_ns;
 
     /* The time stamp when the response started to be received from the network channel. -1 means data not available.
@@ -215,11 +215,11 @@ struct aws_http_stream_metrics {
     /* The time stamp when the response finished to be received from the network channel. -1 means data not available.
      * Timestamp are from `aws_high_res_clock_get_ticks` */
     int64_t receive_end_timestamp_ns;
-    /* The time duration for the request from start sending to finish sending. receive_end_timestamp_ns -
+    /* The time duration for the request from start receiving to finish receiving. receive_end_timestamp_ns -
      * receive_start_timestamp_ns. -1 means data not available. */
     int64_t receiving_duration_ns;
 
-    /* The stream-id on the connection when this stream was activated, 0 means data not available */
+    /* The stream-id on the connection when this stream was activated. */
     uint32_t stream_id;
 };
 
