@@ -1108,9 +1108,7 @@ int aws_http_stream_send_response(struct aws_http_stream *stream, struct aws_htt
 }
 
 struct aws_http_stream *aws_http_stream_acquire(struct aws_http_stream *stream) {
-    if (!stream) {
-        return stream;
-    }
+    AWS_PRECONDITION(stream);
 
     size_t prev_refcount = aws_atomic_fetch_add(&stream->refcount, 1);
     AWS_LOGF_TRACE(
