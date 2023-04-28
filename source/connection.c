@@ -18,6 +18,7 @@
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
+#include <aws/io/socket_channel_handler.h>
 #include <aws/io/tls_channel_handler.h>
 
 #ifdef _MSC_VER
@@ -364,6 +365,16 @@ void aws_http2_connection_update_window(struct aws_http_connection *http2_connec
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     return connection->channel_slot->channel;
+}
+
+const struct aws_socket_endpoint *aws_http_connection_get_remote_endpoint(
+    const struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    struct aws_channel *channel = connection->channel_slot->channel;
+    /* The first slot for an HTTP connection is always socket */
+    struct aws_channel_slot *socket_slot = aws_channel_get_first_slot(channel);
+    const struct aws_socket *socket = aws_socket_handler_get_socket(socket_slot->handler);
+    return &socket->remote_endpoint;
 }
 
 int aws_http_alpn_map_init(struct aws_allocator *allocator, struct aws_hash_table *map) {

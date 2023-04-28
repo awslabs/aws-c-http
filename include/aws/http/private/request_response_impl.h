@@ -43,11 +43,13 @@ struct aws_http_stream {
     aws_http_on_incoming_headers_fn *on_incoming_headers;
     aws_http_on_incoming_header_block_done_fn *on_incoming_header_block_done;
     aws_http_on_incoming_body_fn *on_incoming_body;
+    aws_http_on_stream_metrics_fn *on_metrics;
     aws_http_on_stream_complete_fn *on_complete;
     aws_http_on_stream_destroy_fn *on_destroy;
 
     struct aws_atomic_var refcount;
     enum aws_http_method request_method;
+    struct aws_http_stream_metrics metrics;
 
     union {
         struct aws_http_stream_client_data {

@@ -6,6 +6,7 @@
 #include "h2_test_helper.h"
 #include "stream_test_helper.h"
 #include <aws/http/private/h2_connection.h>
+#include <aws/http/private/request_response_impl.h>
 #include <aws/http/request_response.h>
 #include <aws/io/stream.h>
 #include <aws/testing/io_testing_channel.h>
@@ -456,6 +457,20 @@ TEST_CASE(h2_client_stream_complete) {
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
     ASSERT_INT_EQUALS(404, stream_tester.response_status);
     ASSERT_SUCCESS(s_compare_headers(response_headers, stream_tester.response_headers));
+
+    ASSERT_TRUE(stream_tester.metrics.receive_end_timestamp_ns > 0);
+    ASSERT_TRUE(stream_tester.metrics.receive_start_timestamp_ns > 0);
+    ASSERT_TRUE(stream_tester.metrics.receive_end_timestamp_ns > stream_tester.metrics.receive_start_timestamp_ns);
+    ASSERT_TRUE(
+        stream_tester.metrics.receiving_duration_ns ==
+        stream_tester.metrics.receive_end_timestamp_ns - stream_tester.metrics.receive_start_timestamp_ns);
+    ASSERT_TRUE(stream_tester.metrics.send_start_timestamp_ns > 0);
+    ASSERT_TRUE(stream_tester.metrics.send_end_timestamp_ns > 0);
+    ASSERT_TRUE(stream_tester.metrics.send_end_timestamp_ns > stream_tester.metrics.send_start_timestamp_ns);
+    ASSERT_TRUE(
+        stream_tester.metrics.sending_duration_ns ==
+        stream_tester.metrics.send_end_timestamp_ns - stream_tester.metrics.send_start_timestamp_ns);
+    ASSERT_TRUE(stream_tester.metrics.stream_id == stream_tester.stream->id);
 
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
 

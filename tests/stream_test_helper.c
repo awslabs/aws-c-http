@@ -5,6 +5,7 @@
 #include "stream_test_helper.h"
 
 #include <aws/http/connection.h>
+#include <aws/http/private/request_response_impl.h>
 #include <aws/http/request_response.h>
 #include <aws/http/status_code.h>
 #include <aws/testing/aws_test_harness.h>
@@ -116,6 +117,30 @@ static int s_on_body(struct aws_http_stream *stream, const struct aws_byte_curso
     ASSERT_SUCCESS(aws_byte_buf_append_dynamic(&tester->response_body, data));
     return AWS_OP_SUCCESS;
 }
+static void s_on_metrics(
+    struct aws_http_stream *stream,
+    const struct aws_http_stream_metrics *metrics,
+    void *user_data) {
+    (void)stream;
+    struct client_stream_tester *tester = user_data;
+    tester->metrics = *metrics;
+
+    AWS_FATAL_ASSERT(metrics->stream_id == stream->id);
+    if (metrics->receive_end_timestamp_ns > 0) {
+        AWS_FATAL_ASSERT(
+            metrics->receiving_duration_ns == metrics->receive_end_timestamp_ns - metrics->receive_start_timestamp_ns);
+    }
+    if (metrics->send_end_timestamp_ns > 0) {
+        AWS_FATAL_ASSERT(
+            metrics->sending_duration_ns == metrics->send_end_timestamp_ns - metrics->send_start_timestamp_ns);
+    }
+    if (metrics->receiving_duration_ns != -1) {
+        AWS_FATAL_ASSERT(metrics->receive_end_timestamp_ns > 0);
+    }
+    if (metrics->sending_duration_ns != -1) {
+        AWS_FATAL_ASSERT(metrics->send_end_timestamp_ns > 0);
+    }
+}
 
 static void s_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     struct client_stream_tester *tester = user_data;
@@ -173,6 +198,7 @@ int client_stream_tester_init(
         .on_response_headers = s_on_headers,
         .on_response_header_block_done = s_on_header_block_done,
         .on_response_body = s_on_body,
+        .on_metrics = s_on_metrics,
         .on_complete = s_on_complete,
         .on_destroy = s_on_destroy,
     };
