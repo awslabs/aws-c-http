@@ -451,18 +451,7 @@ void aws_h2_stream_complete(struct aws_h2_stream *stream, int error_code) {
 
     /* Invoke callback */
     if (stream->base.on_metrics) {
-        if (stream->base.metrics.send_end_timestamp_ns == 0 && stream->base.metrics.send_start_timestamp_ns != 0) {
-            /* The stream completes before the message finish sending. Set the end time now. This is inaccurate, but we
-             * decided to do this over using end time not available because that would be inconsistent behavior for end
-             * user to have succeed request with unavailable metrics.
-             */
-            aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_end_timestamp_ns);
-            AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns >= stream->base.metrics.send_start_timestamp_ns);
-            stream->base.metrics.sending_duration_ns =
-                stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
-        }
         stream->base.on_metrics(&stream->base, &stream->base.metrics, stream->base.user_data);
-        stream->base.on_metrics = NULL;
     }
     if (stream->base.on_complete) {
         stream->base.on_complete(&stream->base, error_code, stream->base.user_data);
@@ -712,8 +701,9 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
 
     struct aws_http_headers *h2_headers = aws_http_message_get_headers(msg);
 
-    struct aws_h2_frame *headers_frame = aws_h2_frame_new_headers_with_stream(
-        stream,
+    struct aws_h2_frame *headers_frame = aws_h2_frame_new_headers(
+        stream->base.alloc,
+        stream->base.id,
         h2_headers,
         !with_data /* end_stream */,
         0 /* padding - not currently configurable via public API */,
@@ -723,6 +713,8 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
         AWS_H2_STREAM_LOGF(ERROR, stream, "Failed to create HEADERS frame: %s", aws_error_name(aws_last_error()));
         goto error;
     }
+    AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns == -1);
+    aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_start_timestamp_ns);
     /* Initialize the flow-control window size */
     stream->thread_data.window_size_peer =
         connection->thread_data.settings_peer[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
@@ -737,6 +729,11 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
         /* If stream has no body, then HEADERS frame marks the end of outgoing data */
         stream->thread_data.state = AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL;
         AWS_H2_STREAM_LOG(TRACE, stream, "Sending HEADERS with END_STREAM. State -> HALF_CLOSED_LOCAL");
+        /* There is no further frames to be sent, now is the end timestamp of sending. */
+        AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == -1);
+        aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_end_timestamp_ns);
+        stream->base.metrics.sending_duration_ns =
+            stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
     }
 
     if (s_h2_stream_has_outgoing_writes(stream)) {
@@ -813,9 +810,6 @@ int aws_h2_stream_encode_data_frame(
      */
     if (input_stream_complete && ends_stream) {
         /* Done sending data. No more data will be sent. */
-        if (stream->base.on_metrics) {
-            encoder->finish_encoding_stream = &stream->base;
-        }
         if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE) {
             /* Both sides have sent END_STREAM */
             stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
@@ -830,6 +824,11 @@ int aws_h2_stream_encode_data_frame(
             stream->thread_data.state = AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL;
             AWS_H2_STREAM_LOG(TRACE, stream, "Sent END_STREAM. State -> HALF_CLOSED_LOCAL");
         }
+
+        AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == -1);
+        aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_end_timestamp_ns);
+        stream->base.metrics.sending_duration_ns =
+            stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
     } else {
         *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING;
         if (input_stream_stalled) {
@@ -859,9 +858,7 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *st
     if (aws_h2err_failed(stream_err)) {
         return s_send_rst_and_close_stream(stream, stream_err);
     }
-    if (stream->base.on_metrics) {
-        aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.receive_start_timestamp_ns);
-    }
+    aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.receive_start_timestamp_ns);
 
     return AWS_H2ERR_SUCCESS;
 }
@@ -1171,14 +1168,13 @@ struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *strea
      * an actual frame type. It's a flag on DATA or HEADERS frames, and we
      * already checked the legality of those frames in their respective callbacks. */
 
-    if (stream->base.on_metrics) {
-        AWS_ASSERT(stream->base.metrics.receive_start_timestamp_ns != 0);
-        AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns == 0);
-        aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.receive_end_timestamp_ns);
-        AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns >= stream->base.metrics.receive_start_timestamp_ns);
-        stream->base.metrics.receiving_duration_ns =
-            stream->base.metrics.receive_end_timestamp_ns - stream->base.metrics.receive_start_timestamp_ns;
-    }
+    AWS_ASSERT(stream->base.metrics.receive_start_timestamp_ns != 0);
+    AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns == 0);
+    aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.receive_end_timestamp_ns);
+    AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns >= stream->base.metrics.receive_start_timestamp_ns);
+    stream->base.metrics.receiving_duration_ns =
+        stream->base.metrics.receive_end_timestamp_ns - stream->base.metrics.receive_start_timestamp_ns;
+
     if (stream->thread_data.content_length_received) {
         if (stream->base.request_method != AWS_HTTP_METHOD_HEAD &&
             stream->base.client_data->response_status != AWS_HTTP_STATUS_CODE_304_NOT_MODIFIED) {

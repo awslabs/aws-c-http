@@ -126,12 +126,6 @@ struct aws_h2_connection {
         /* Timestamp when connection has data to receive, which is when there is an active stream */
         uint64_t incoming_timestamp_ns;
 
-        /**
-         * Contains struct aws_http_stream *
-         * The streams that encoded the last frame between it's encoded to the `aws_io_message` to the
-         *`aws_io_message.on_completion` invoked.
-         **/
-        struct aws_array_list finish_encoding_streams_list;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */

@@ -12,8 +12,6 @@
 
 #include <aws/common/byte_buf.h>
 
-struct aws_h2_stream;
-
 /* Ids for each frame type (RFC-7540 6) */
 enum aws_h2_frame_type {
     AWS_H2_FRAME_T_DATA = 0x00,
@@ -111,15 +109,6 @@ struct aws_h2_frame_encoder {
     const void *logging_id;
     struct aws_hpack_encoder hpack;
     struct aws_h2_frame *current_frame;
-
-    /**
-     * The stream that encoded the first frame from `aws_h2_encode_frame` call.
-     **/
-    struct aws_http_stream *start_encoding_stream;
-    /**
-     * The stream that encoded the last frame from `aws_h2_encode_frame` or `aws_h2_stream_encode_data_frame` call.
-     **/
-    struct aws_http_stream *finish_encoding_stream;
 
     /* Settings for frame encoder, which is based on the settings received from peer */
     struct {
@@ -245,18 +234,6 @@ AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_headers(
     struct aws_allocator *allocator,
     uint32_t stream_id,
-    const struct aws_http_headers *headers,
-    bool end_stream,
-    uint8_t pad_length,
-    const struct aws_h2_frame_priority_settings *optional_priority);
-
-/**
- * Same as `aws_h2_frame_new_headers`, but the frame will be associated with a stream and update the stream's metric
- * when the frame is sent, if the stream has on_metrics callback set.
- */
-AWS_HTTP_API
-struct aws_h2_frame *aws_h2_frame_new_headers_with_stream(
-    struct aws_h2_stream *h2_stream,
     const struct aws_http_headers *headers,
     bool end_stream,
     uint8_t pad_length,

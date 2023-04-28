@@ -371,9 +371,7 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
 
     /* connection keeps activated stream alive until stream completes */
     aws_atomic_fetch_add(&stream->refcount, 1);
-    if (stream->on_metrics) {
-        stream->metrics.stream_id = stream->id;
-    }
+    stream->metrics.stream_id = stream->id;
 
     if (should_schedule_task) {
         AWS_LOGF_TRACE(
@@ -738,14 +736,12 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
     /* If current stream is done sending data... */
     if (current && !aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
         current->is_outgoing_message_done = true;
-        if (current->base.on_metrics) {
-            AWS_ASSERT(current->base.metrics.send_end_timestamp_ns == 0);
-            aws_high_res_clock_get_ticks((uint64_t *)&current->base.metrics.send_end_timestamp_ns);
-            AWS_ASSERT(current->base.metrics.send_start_timestamp_ns != 0);
-            AWS_ASSERT(current->base.metrics.send_end_timestamp_ns >= current->base.metrics.send_start_timestamp_ns);
-            current->base.metrics.sending_duration_ns =
-                current->base.metrics.send_end_timestamp_ns - current->base.metrics.send_start_timestamp_ns;
-        }
+        AWS_ASSERT(current->base.metrics.send_end_timestamp_ns == -1);
+        aws_high_res_clock_get_ticks((uint64_t *)&current->base.metrics.send_end_timestamp_ns);
+        AWS_ASSERT(current->base.metrics.send_start_timestamp_ns != -1);
+        AWS_ASSERT(current->base.metrics.send_end_timestamp_ns >= current->base.metrics.send_start_timestamp_ns);
+        current->base.metrics.sending_duration_ns =
+            current->base.metrics.send_end_timestamp_ns - current->base.metrics.send_start_timestamp_ns;
 
         /* RFC-7230 section 6.6: Tear-down.
          * If this was the final stream, don't allows any further streams to be sent */
@@ -816,10 +812,9 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
         s_set_outgoing_stream_ptr(connection, current);
 
         if (current) {
-            if (current->base.on_metrics) {
-                AWS_ASSERT(current->base.metrics.send_start_timestamp_ns == 0);
-                aws_high_res_clock_get_ticks((uint64_t *)&current->base.metrics.send_start_timestamp_ns);
-            }
+            AWS_ASSERT(current->base.metrics.send_start_timestamp_ns == -1);
+            aws_high_res_clock_get_ticks((uint64_t *)&current->base.metrics.send_start_timestamp_ns);
+
             err = aws_h1_encoder_start_message(
                 &connection->thread_data.encoder, &current->encoder_message, &current->base);
             (void)err;
@@ -1130,6 +1125,15 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
                         "id=%p: Received 'Connection: close' header, no more request data will be sent.",
                         (void *)&incoming_stream->base);
                     incoming_stream->is_outgoing_message_done = true;
+                    AWS_ASSERT(incoming_stream->base.metrics.send_end_timestamp_ns == -1);
+                    aws_high_res_clock_get_ticks((uint64_t *)&incoming_stream->base.metrics.send_end_timestamp_ns);
+                    AWS_ASSERT(incoming_stream->base.metrics.send_start_timestamp_ns != -1);
+                    AWS_ASSERT(
+                        incoming_stream->base.metrics.send_end_timestamp_ns >=
+                        incoming_stream->base.metrics.send_start_timestamp_ns);
+                    incoming_stream->base.metrics.sending_duration_ns =
+                        incoming_stream->base.metrics.send_end_timestamp_ns -
+                        incoming_stream->base.metrics.send_start_timestamp_ns;
                 }
                 /* Stop writing right now.
                  * Shutdown will be scheduled after we finishing parsing the response */
@@ -1290,15 +1294,13 @@ static int s_decoder_on_done(void *user_data) {
 
     /* Otherwise the incoming stream is finished decoding and we will update it if needed */
     incoming_stream->is_incoming_message_done = true;
-    if (incoming_stream->base.on_metrics) {
-        aws_high_res_clock_get_ticks((uint64_t *)&incoming_stream->base.metrics.receive_end_timestamp_ns);
-        AWS_ASSERT(incoming_stream->base.metrics.receive_start_timestamp_ns != 0);
-        AWS_ASSERT(
-            incoming_stream->base.metrics.receive_end_timestamp_ns >=
-            incoming_stream->base.metrics.receive_start_timestamp_ns);
-        incoming_stream->base.metrics.receiving_duration_ns = incoming_stream->base.metrics.receive_end_timestamp_ns -
-                                                              incoming_stream->base.metrics.receive_start_timestamp_ns;
-    }
+    aws_high_res_clock_get_ticks((uint64_t *)&incoming_stream->base.metrics.receive_end_timestamp_ns);
+    AWS_ASSERT(incoming_stream->base.metrics.receive_start_timestamp_ns != 0);
+    AWS_ASSERT(
+        incoming_stream->base.metrics.receive_end_timestamp_ns >=
+        incoming_stream->base.metrics.receive_start_timestamp_ns);
+    incoming_stream->base.metrics.receiving_duration_ns = incoming_stream->base.metrics.receive_end_timestamp_ns -
+                                                          incoming_stream->base.metrics.receive_start_timestamp_ns;
 
     /* RFC-7230 section 6.6
      * After reading the final message, the connection must not read any more */
@@ -1851,11 +1853,9 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
     bool body_headers_ignored = incoming_stream->base.request_method == AWS_HTTP_METHOD_HEAD;
     aws_h1_decoder_set_body_headers_ignored(connection->thread_data.incoming_stream_decoder, body_headers_ignored);
 
-    if (incoming_stream->base.on_metrics) {
-        if (incoming_stream->base.metrics.receive_start_timestamp_ns == 0) {
-            /* That's the first time for the stream receives any message */
-            aws_high_res_clock_get_ticks((uint64_t *)&incoming_stream->base.metrics.receive_start_timestamp_ns);
-        }
+    if (incoming_stream->base.metrics.receive_start_timestamp_ns == 0) {
+        /* That's the first time for the stream receives any message */
+        aws_high_res_clock_get_ticks((uint64_t *)&incoming_stream->base.metrics.receive_start_timestamp_ns);
     }
 
     /* As decoder runs, it invokes the internal s_decoder_X callbacks, which in turn invoke user callbacks.

@@ -347,7 +347,6 @@ static struct aws_h2_connection *s_connection_new(
     aws_linked_list_init(&connection->thread_data.stalled_window_streams_list);
     aws_linked_list_init(&connection->thread_data.waiting_streams_list);
     aws_linked_list_init(&connection->thread_data.outgoing_frames_queue);
-    aws_array_list_init_dynamic(&connection->thread_data.finish_encoding_streams_list, alloc, 8, sizeof(void *));
 
     if (aws_mutex_init(&connection->synced_data.lock)) {
         CONNECTION_LOGF(
@@ -482,7 +481,6 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_goaway_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.pending_ping_queue));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.pending_settings_queue));
-    aws_array_list_clean_up(&connection->thread_data.finish_encoding_streams_list);
 
     /* Clean up any unsent frames and structures */
     struct aws_linked_list *outgoing_frames_queue = &connection->thread_data.outgoing_frames_queue;
@@ -624,24 +622,6 @@ static void s_on_channel_write_complete(
     }
 
     CONNECTION_LOG(TRACE, connection, "Message finished writing to network. Rescheduling outgoing frame task");
-
-    while (aws_array_list_length(&connection->thread_data.finish_encoding_streams_list) > 0) {
-        struct aws_http_stream *stream_base = NULL;
-        int error = aws_array_list_back(&connection->thread_data.finish_encoding_streams_list, &stream_base);
-        AWS_ASSERT(!error);
-        if (stream_base->on_metrics) {
-            AWS_ASSERT(stream_base->metrics.send_start_timestamp_ns != 0);
-            AWS_ASSERT(stream_base->metrics.send_end_timestamp_ns == 0);
-            aws_high_res_clock_get_ticks((uint64_t *)&stream_base->metrics.send_end_timestamp_ns);
-            AWS_ASSERT(stream_base->metrics.send_end_timestamp_ns >= stream_base->metrics.send_start_timestamp_ns);
-            stream_base->metrics.sending_duration_ns =
-                stream_base->metrics.send_end_timestamp_ns - stream_base->metrics.send_start_timestamp_ns;
-        }
-        aws_http_stream_release(stream_base);
-        error |= aws_array_list_pop_back(&connection->thread_data.finish_encoding_streams_list);
-        (void)error;
-        AWS_ASSERT(!error);
-    }
 
     /* To avoid wasting memory, we only want ONE of our written aws_io_messages in the channel at a time.
      * Therefore, we wait until it's written to the network before trying to send another
@@ -817,21 +797,6 @@ static int s_encode_outgoing_frames_queue(struct aws_h2_connection *connection, 
             break;
         }
 
-        /* Record the streams that start and finish encoding. */
-        if (connection->thread_data.encoder.start_encoding_stream) {
-            struct aws_http_stream *stream_base = connection->thread_data.encoder.start_encoding_stream;
-            AWS_ASSERT(stream_base->on_metrics);
-            AWS_ASSERT(stream_base->metrics.send_start_timestamp_ns == 0);
-            /* Get the start time for the stream */
-            aws_high_res_clock_get_ticks((uint64_t *)&stream_base->metrics.send_start_timestamp_ns);
-            connection->thread_data.encoder.start_encoding_stream = NULL;
-        }
-        if (connection->thread_data.encoder.finish_encoding_stream) {
-            struct aws_http_stream *stream_base = connection->thread_data.encoder.finish_encoding_stream;
-            aws_http_stream_acquire(stream_base);
-            aws_array_list_push_back(&connection->thread_data.finish_encoding_streams_list, &stream_base);
-            connection->thread_data.encoder.finish_encoding_stream = NULL;
-        }
         /* Done encoding frame, pop from queue and cleanup*/
         aws_linked_list_remove(frame_node);
         aws_h2_frame_destroy(frame);
@@ -899,13 +864,6 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
                 stream->base.id,
                 aws_error_name(aws_error_code));
             goto done;
-        }
-
-        if (connection->thread_data.encoder.finish_encoding_stream) {
-            struct aws_http_stream *stream_base = connection->thread_data.encoder.finish_encoding_stream;
-            aws_http_stream_acquire(stream_base);
-            aws_array_list_push_back(&connection->thread_data.finish_encoding_streams_list, &stream_base);
-            connection->thread_data.encoder.finish_encoding_stream = NULL;
         }
         /* If stream has more data, push it into the appropriate list. */
         switch (data_encode_status) {
