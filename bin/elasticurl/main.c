@@ -6,12 +6,11 @@
 #include <aws/http/request_response.h>
 
 #include <aws/common/command_line_parser.h>
-#include <aws/common/condition_variable.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/log_channel.h>
 #include <aws/common/log_formatter.h>
 #include <aws/common/log_writer.h>
-#include <aws/common/mutex.h>
+#include <aws/common/promise.h>
 #include <aws/common/string.h>
 
 #include <aws/io/channel_bootstrap.h>
@@ -37,8 +36,7 @@ struct elasticurl_ctx {
     struct aws_allocator *allocator;
     const char *verb;
     struct aws_uri uri;
-    struct aws_mutex mutex;
-    struct aws_condition_variable c_var;
+    struct aws_promise *promise;
     bool response_code_written;
     const char *cacert;
     const char *capath;
@@ -63,7 +61,6 @@ struct elasticurl_ctx {
     const char *trace_file;
     enum aws_log_level log_level;
     enum aws_http_version required_http_version;
-    bool exchange_completed;
 };
 
 static void s_usage(int exit_code) {
@@ -478,10 +475,7 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
 
     if (error_code) {
         fprintf(stderr, "Connection failed with error %s\n", aws_error_debug_str(error_code));
-        aws_mutex_lock(&app_ctx->mutex);
-        app_ctx->exchange_completed = true;
-        aws_mutex_unlock(&app_ctx->mutex);
-        aws_condition_variable_notify_all(&app_ctx->c_var);
+        aws_promise_fail(app_ctx->promise, error_code);
         return;
     }
 
@@ -552,15 +546,7 @@ static void s_on_client_connection_shutdown(struct aws_http_connection *connecti
     (void)connection;
     struct elasticurl_ctx *app_ctx = user_data;
 
-    aws_mutex_lock(&app_ctx->mutex);
-    app_ctx->exchange_completed = true;
-    aws_mutex_unlock(&app_ctx->mutex);
-    aws_condition_variable_notify_all(&app_ctx->c_var);
-}
-
-static bool s_completion_predicate(void *arg) {
-    struct elasticurl_ctx *app_ctx = arg;
-    return app_ctx->exchange_completed;
+    aws_promise_complete(app_ctx->promise, NULL, NULL);
 }
 
 int main(int argc, char **argv) {
@@ -571,12 +557,11 @@ int main(int argc, char **argv) {
     struct elasticurl_ctx app_ctx;
     AWS_ZERO_STRUCT(app_ctx);
     app_ctx.allocator = allocator;
-    app_ctx.c_var = (struct aws_condition_variable)AWS_CONDITION_VARIABLE_INIT;
     app_ctx.connect_timeout = 3000;
     app_ctx.output = stdout;
     app_ctx.verb = "GET";
     app_ctx.alpn = "h2;http/1.1";
-    aws_mutex_init(&app_ctx.mutex);
+    app_ctx.promise = aws_promise_new(allocator);
     aws_hash_table_init(
         &app_ctx.signing_context,
         allocator,
@@ -737,9 +722,8 @@ int main(int argc, char **argv) {
         http_client_options.prior_knowledge_http2 = true;
     }
     aws_http_client_connect(&http_client_options);
-    aws_mutex_lock(&app_ctx.mutex);
-    aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_completion_predicate, &app_ctx);
-    aws_mutex_unlock(&app_ctx.mutex);
+    aws_promise_wait(app_ctx.promise);
+    aws_promise_release(app_ctx.promise);
 
     aws_client_bootstrap_release(bootstrap);
     aws_host_resolver_release(resolver);
