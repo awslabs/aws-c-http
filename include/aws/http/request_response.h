@@ -8,6 +8,8 @@
 
 #include <aws/http/http.h>
 
+AWS_PUSH_SANE_WARNING_LEVEL
+
 struct aws_http_connection;
 struct aws_input_stream;
 
@@ -1121,5 +1123,6 @@ AWS_HTTP_API
 int aws_http2_stream_get_sent_reset_error_code(struct aws_http_stream *http2_stream, uint32_t *out_http2_error);
 
 AWS_EXTERN_C_END
+AWS_POP_SANE_WARNING_LEVEL
 
 #endif /* AWS_HTTP_REQUEST_RESPONSE_H */

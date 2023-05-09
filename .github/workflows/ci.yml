@@ -6,8 +6,8 @@ on:
       - 'main'
 
 env:
-  BUILDER_VERSION: v0.9.40
-  BUILDER_SOURCE: releases
+  BUILDER_VERSION: header-warnings
+  BUILDER_SOURCE: channels
   BUILDER_HOST: https://d19elf31gohf1l.cloudfront.net
   PACKAGE_NAME: aws-c-http
   LINUX_BASE_IMAGE: ubuntu-18-x64
