@@ -8,6 +8,8 @@
 
 #include <aws/http/http.h>
 
+AWS_PUSH_SANE_WARNING_LEVEL
+
 struct aws_http_connection;
 struct aws_server_bootstrap;
 struct aws_socket_options;
@@ -194,5 +196,6 @@ AWS_HTTP_API
 bool aws_http_connection_is_server(const struct aws_http_connection *connection);
 
 AWS_EXTERN_C_END
+AWS_POP_SANE_WARNING_LEVEL
 
 #endif /* AWS_HTTP_SERVER_H */

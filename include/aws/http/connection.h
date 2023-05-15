@@ -8,6 +8,8 @@
 
 #include <aws/http/http.h>
 
+AWS_PUSH_SANE_WARNING_LEVEL
+
 struct aws_client_bootstrap;
 struct aws_socket_options;
 struct aws_socket_endpoint;
@@ -688,5 +690,6 @@ AWS_HTTP_API
 void aws_http2_connection_update_window(struct aws_http_connection *http2_connection, uint32_t increment_size);
 
 AWS_EXTERN_C_END
+AWS_POP_SANE_WARNING_LEVEL
 
 #endif /* AWS_HTTP_CONNECTION_H */
