@@ -1578,7 +1578,6 @@ static int s_proxy_integration_test_helper(
     enum aws_http_proxy_authentication_type auth_type,
     bool use_env,
     bool configured_tls) {
-
     return s_proxy_integration_test_helper_general(
         allocator, proxy_test_type, auth_type, use_env, configured_tls, false);
 }
