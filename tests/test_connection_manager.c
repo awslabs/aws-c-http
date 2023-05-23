@@ -1534,7 +1534,7 @@ static int s_proxy_integration_test_helper_general(
 
     struct aws_http_header host_header = {
         .name = aws_byte_cursor_from_c_str("Host"),
-        .value = aws_byte_cursor_from_c_str("www.postman-echo.com"),
+        .value = aws_byte_cursor_from_c_str("www.google.com"),
     };
     aws_http_message_add_header(request, host_header);
 
