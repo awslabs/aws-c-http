@@ -186,7 +186,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     tester->tls_ctx = aws_tls_client_ctx_new(options->allocator, &tester->tls_ctx_options);
     ASSERT_NOT_NULL(tester->tls_ctx);
 
-    struct aws_byte_cursor server_name = aws_byte_cursor_from_c_str("www.google.com");
+    struct aws_byte_cursor server_name = aws_byte_cursor_from_c_str("www.bing.com");
 
     aws_tls_connection_options_init_from_ctx(&tester->tls_connection_options, tester->tls_ctx);
 
