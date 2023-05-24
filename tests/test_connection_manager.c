@@ -1378,7 +1378,7 @@ static struct aws_byte_cursor s_get_proxy_host_for_test(
     bool h2) {
     struct aws_string *host_string;
     if (h2) {
-        host_string = configs->https_proxy_host_h2;
+        host_string = configs->https_proxy_host;
     } else if (auth_type == AWS_HPAT_BASIC) {
         host_string = configs->http_proxy_basic_host;
     } else if (proxy_test_type == TUNNELING_DOUBLE_TLS) {
