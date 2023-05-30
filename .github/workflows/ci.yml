@@ -6,8 +6,8 @@ on:
       - 'main'
 
 env:
-  BUILDER_VERSION: head-detached-bug
-  BUILDER_SOURCE: channels
+  BUILDER_VERSION: v0.9.46
+  BUILDER_SOURCE: releases
   BUILDER_HOST: https://d19elf31gohf1l.cloudfront.net
   PACKAGE_NAME: aws-c-http
   LINUX_BASE_IMAGE: ubuntu-18-x64
