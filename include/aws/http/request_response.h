@@ -8,6 +8,8 @@
 
 #include <aws/http/http.h>
 
+#include <aws/io/future.h>
+
 AWS_PUSH_SANE_WARNING_LEVEL
 
 struct aws_http_connection;
@@ -854,6 +856,11 @@ struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_
  */
 AWS_HTTP_API
 void aws_http_message_set_body_stream(struct aws_http_message *message, struct aws_input_stream *body_stream);
+
+/**
+ * aws_future<aws_http_message*>
+ */
+AWS_DECLARE_FUTURE_T_POINTER_WITH_RELEASE(aws_future_http_message, struct aws_http_message, aws_http_message_release)
 
 /**
  * Submit a chunk of data to be sent on an HTTP/1.1 stream.
