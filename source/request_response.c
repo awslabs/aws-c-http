@@ -867,7 +867,10 @@ int aws_http_message_get_header(
     return aws_http_headers_get_index(message->headers, index, out_header);
 }
 
-AWS_FUTURE_T_POINTER_WITH_RELEASE_IMPLEMENTATION(aws_future_http_message, struct aws_http_message, aws_http_message_release)
+AWS_FUTURE_T_POINTER_WITH_RELEASE_IMPLEMENTATION(
+    aws_future_http_message,
+    struct aws_http_message,
+    aws_http_message_release)
 
 struct aws_http_stream *aws_http_connection_make_request(
     struct aws_http_connection *client_connection,
