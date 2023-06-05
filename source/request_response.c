@@ -867,6 +867,11 @@ int aws_http_message_get_header(
     return aws_http_headers_get_index(message->headers, index, out_header);
 }
 
+AWS_FUTURE_T_POINTER_WITH_RELEASE_IMPLEMENTATION(
+    aws_future_http_message,
+    struct aws_http_message,
+    aws_http_message_release)
+
 struct aws_http_stream *aws_http_connection_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options) {
@@ -952,8 +957,8 @@ struct aws_http_message *aws_http2_message_new_from_http1(
             scheme_cursor.ptr);
 
         /**
-         * An intermediary that forwards a request over HTTP/2 MUST construct an ":authority" pseudo-header field using
-         * the authority information from the control data of the original request. (RFC=9113 8.3.1)
+         * An intermediary that forwards a request over HTTP/2 MUST construct an ":authority" pseudo-header field
+         * using the authority information from the control data of the original request. (RFC=9113 8.3.1)
          */
         struct aws_byte_cursor host_value;
         AWS_ZERO_STRUCT(host_value);
@@ -970,7 +975,8 @@ struct aws_http_message *aws_http2_message_new_from_http1(
                 (int)host_value.len,
                 host_value.ptr);
         }
-        /* TODO: If the host headers is missing, the target URI could be the other source of the authority information
+        /* TODO: If the host headers is missing, the target URI could be the other source of the authority
+         * information
          */
 
         struct aws_byte_cursor path_cursor;

@@ -860,7 +860,7 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
 /**
  * aws_future<aws_http_message*>
  */
-AWS_DECLARE_FUTURE_T_POINTER_WITH_RELEASE(aws_future_http_message, struct aws_http_message, aws_http_message_release)
+AWS_FUTURE_T_POINTER_WITH_RELEASE_DECLARATION(aws_future_http_message, struct aws_http_message, AWS_HTTP_API)
 
 /**
  * Submit a chunk of data to be sent on an HTTP/1.1 stream.
