@@ -549,7 +549,7 @@ static int s_test_connection_manager_single_http2_connection_failed(struct aws_a
     ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
 
     ASSERT_SUCCESS(s_release_connections(1, false));
-    ASSERT_UINT_EQUALS(0, s_tester.connection_errors);
+    ASSERT_UINT_EQUALS(1, s_tester.connection_errors);
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
 
