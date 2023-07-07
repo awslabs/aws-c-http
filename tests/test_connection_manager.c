@@ -29,7 +29,9 @@
 #endif
 
 AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var, "HTTP_PROXY");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var_low, "http_proxy");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var, "HTTPS_PROXY");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var_low, "https_proxy");
 
 enum new_connection_result_type {
     AWS_NCRT_SUCCESS,
@@ -465,12 +467,46 @@ static int s_test_connection_manager_single_connection(struct aws_allocator *all
     ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
 
     ASSERT_SUCCESS(s_release_connections(1, false));
+    ASSERT_UINT_EQUALS(0, s_tester.connection_errors);
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
 
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_single_connection, s_test_connection_manager_single_connection);
+
+static int s_test_connection_manager_proxy_envrionment_empty_string(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    /* Set proxy related envrionment variables to empty string and make sure we just skip proxy */
+    struct aws_string *empty = aws_string_new_from_c_str(allocator, "");
+    ASSERT_SUCCESS(aws_set_environment_value(s_http_proxy_env_var, empty));
+    ASSERT_SUCCESS(aws_set_environment_value(s_http_proxy_env_var_low, empty));
+    ASSERT_SUCCESS(aws_set_environment_value(s_https_proxy_env_var, empty));
+    ASSERT_SUCCESS(aws_set_environment_value(s_https_proxy_env_var_low, empty));
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+        .use_proxy_env = true,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_acquire_connections(1);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
+
+    ASSERT_SUCCESS(s_release_connections(1, false));
+    ASSERT_UINT_EQUALS(0, s_tester.connection_errors);
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+    aws_string_destroy(empty);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_connection_manager_proxy_envrionment_empty_string,
+    s_test_connection_manager_proxy_envrionment_empty_string);
 
 static int s_test_connection_manager_single_http2_connection(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -513,6 +549,7 @@ static int s_test_connection_manager_single_http2_connection_failed(struct aws_a
     ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
 
     ASSERT_SUCCESS(s_release_connections(1, false));
+    ASSERT_UINT_EQUALS(1, s_tester.connection_errors);
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
 
@@ -543,6 +580,7 @@ static int s_test_connection_manager_single_http2_connection_with_settings(struc
     ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
 
     ASSERT_SUCCESS(s_release_connections(1, false));
+    ASSERT_UINT_EQUALS(0, s_tester.connection_errors);
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
 
@@ -567,6 +605,7 @@ static int s_test_connection_manager_many_connections(struct aws_allocator *allo
     ASSERT_SUCCESS(s_wait_on_connection_reply_count(20));
 
     ASSERT_SUCCESS(s_release_connections(20, false));
+    ASSERT_UINT_EQUALS(0, s_tester.connection_errors);
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
 
@@ -591,6 +630,7 @@ static int s_test_connection_manager_many_http2_connections(struct aws_allocator
     ASSERT_SUCCESS(s_wait_on_connection_reply_count(20));
 
     ASSERT_SUCCESS(s_release_connections(20, false));
+    ASSERT_UINT_EQUALS(0, s_tester.connection_errors);
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
 
@@ -617,6 +657,7 @@ static int s_test_connection_manager_acquire_release(struct aws_allocator *alloc
 
         ASSERT_SUCCESS(s_wait_on_connection_reply_count(i + 1));
     }
+    ASSERT_UINT_EQUALS(0, s_tester.connection_errors);
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
 
@@ -643,6 +684,7 @@ static int s_test_connection_manager_close_and_release(struct aws_allocator *all
 
         ASSERT_SUCCESS(s_wait_on_connection_reply_count(i + 1));
     }
+    ASSERT_UINT_EQUALS(0, s_tester.connection_errors);
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
 
@@ -675,6 +717,7 @@ static int s_test_connection_manager_acquire_release_mix(struct aws_allocator *a
 
         ASSERT_SUCCESS(s_wait_on_connection_reply_count(i + 1));
     }
+    ASSERT_UINT_EQUALS(0, s_tester.connection_errors);
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
 

@@ -1140,6 +1140,23 @@ static enum aws_http_proxy_connection_type s_determine_proxy_connection_type(
     }
 }
 
+static struct aws_string *s_get_proxy_environment_value(
+    struct aws_allocator *allocator,
+    const struct aws_string *env_name) {
+    struct aws_string *out_string = NULL;
+    if (aws_get_environment_value(allocator, env_name, &out_string) == AWS_OP_SUCCESS && out_string != NULL &&
+        out_string->len > 0) {
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_CONNECTION,
+            "%s environment found, %s",
+            aws_string_c_str(env_name),
+            aws_string_c_str(out_string));
+        return out_string;
+    }
+    aws_string_destroy(out_string);
+    return NULL;
+}
+
 static int s_proxy_uri_init_from_env_variable(
     struct aws_allocator *allocator,
     const struct aws_http_client_connection_options *options,
@@ -1148,25 +1165,19 @@ static int s_proxy_uri_init_from_env_variable(
     struct aws_string *proxy_uri_string = NULL;
     *found = false;
     if (options->tls_options) {
-        if (aws_get_environment_value(allocator, s_https_proxy_env_var_low, &proxy_uri_string) == AWS_OP_SUCCESS &&
-            proxy_uri_string != NULL) {
-            AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION, "https_proxy environment found");
-        } else if (
-            aws_get_environment_value(allocator, s_https_proxy_env_var, &proxy_uri_string) == AWS_OP_SUCCESS &&
-            proxy_uri_string != NULL) {
-            AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION, "HTTPS_PROXY environment found");
-        } else {
+        proxy_uri_string = s_get_proxy_environment_value(allocator, s_https_proxy_env_var_low);
+        if (proxy_uri_string == NULL) {
+            proxy_uri_string = s_get_proxy_environment_value(allocator, s_https_proxy_env_var);
+        }
+        if (proxy_uri_string == NULL) {
             return AWS_OP_SUCCESS;
         }
     } else {
-        if (aws_get_environment_value(allocator, s_http_proxy_env_var_low, &proxy_uri_string) == AWS_OP_SUCCESS &&
-            proxy_uri_string != NULL) {
-            AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION, "http_proxy environment found");
-        } else if (
-            aws_get_environment_value(allocator, s_http_proxy_env_var, &proxy_uri_string) == AWS_OP_SUCCESS &&
-            proxy_uri_string != NULL) {
-            AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION, "HTTP_PROXY environment found");
-        } else {
+        proxy_uri_string = s_get_proxy_environment_value(allocator, s_http_proxy_env_var_low);
+        if (proxy_uri_string == NULL) {
+            proxy_uri_string = s_get_proxy_environment_value(allocator, s_http_proxy_env_var);
+        }
+        if (proxy_uri_string == NULL) {
             return AWS_OP_SUCCESS;
         }
     }
