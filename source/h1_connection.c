@@ -10,6 +10,7 @@
 #include <aws/http/private/h1_decoder.h>
 #include <aws/http/private/h1_stream.h>
 #include <aws/http/private/request_response_impl.h>
+#include <aws/http/private/tracing.h>
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 
@@ -908,6 +909,7 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
     if (connection->thread_data.is_writing_stopped || connection->thread_data.has_switched_protocols) {
         return;
     }
+    __itt_task_begin(http_tracing_domain, __itt_null, __itt_null, tracing_http_write);
 
     /* Determine whether we have data available to send, and end task immediately if there's not.
      * The outgoing stream task will be kicked off again when user adds more data (new stream, new chunk, etc) */
@@ -923,6 +925,7 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
                 waiting_for_chunks);
         }
         connection->thread_data.is_outgoing_stream_task_active = false;
+        __itt_task_end(http_tracing_domain);
         return;
     }
 
@@ -987,13 +990,14 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
 
         aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
     }
-
+    __itt_task_end(http_tracing_domain);
     return;
 error:
     if (msg) {
         aws_mem_release(msg->allocator, msg);
     }
     s_shutdown_due_to_error(connection, aws_last_error());
+    __itt_task_end(http_tracing_domain);
 }
 
 static int s_decoder_on_request(
@@ -1717,8 +1721,11 @@ static int s_handler_process_read_message(
     aws_linked_list_push_back(&connection->thread_data.read_buffer.messages, &message->queueing_handle);
     connection->thread_data.read_buffer.pending_bytes += message_size;
 
+    __itt_task_begin(http_tracing_domain, __itt_null, __itt_null, tracing_http_read);
     /* Try to process messages in queue */
     aws_h1_connection_try_process_read_messages(connection);
+    __itt_task_end(http_tracing_domain);
+
     return AWS_OP_SUCCESS;
 }
 

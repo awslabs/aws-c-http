@@ -7,6 +7,7 @@
 #include <aws/compression/compression.h>
 #include <aws/http/private/hpack.h>
 #include <aws/http/private/http_impl.h>
+#include <aws/http/private/tracing.h>
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 
@@ -518,6 +519,7 @@ void aws_http_library_init(struct aws_allocator *alloc) {
     s_headers_init(alloc);
     s_versions_init(alloc);
     aws_hpack_static_table_init(alloc);
+    aws_http_tracing_init();
 }
 
 void aws_http_library_clean_up(void) {
