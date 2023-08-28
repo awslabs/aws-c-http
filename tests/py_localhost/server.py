@@ -268,7 +268,7 @@ class H2Protocol(asyncio.Protocol):
 
             try:
                 # Sleep for a sec to make the out bytes per second slower than the expected
-                time.sleep(1)
+                time.sleep(2)
                 self.conn.send_data(
                     stream_id,
                     data,
