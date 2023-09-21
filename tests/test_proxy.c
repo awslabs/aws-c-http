@@ -141,7 +141,7 @@ static int s_test_proxy_setup_client_tls(
 }
 
 struct aws_http_proxy_system_vtable s_proxy_table_for_tls = {
-    .setup_client_tls = s_test_proxy_setup_client_tls,
+    .aws_channel_setup_client_tls = s_test_proxy_setup_client_tls,
 };
 
 /*
@@ -208,7 +208,7 @@ static int s_test_aws_proxy_new_socket_channel(struct aws_socket_channel_bootstr
 }
 
 struct aws_http_connection_system_vtable s_proxy_connection_system_vtable = {
-    .new_socket_channel = s_test_aws_proxy_new_socket_channel,
+    .aws_client_bootstrap_new_socket_channel = s_test_aws_proxy_new_socket_channel,
 };
 
 struct mocked_proxy_test_options {

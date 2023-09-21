@@ -692,9 +692,9 @@ static int s_sm_tester_offer_waiting_connections(void) {
 
 static struct aws_http_connection_manager_system_vtable s_mocks;
 
-static void s_override_cm_connect_function(aws_http_connection_manager_create_connection_fn *fn) {
+static void s_override_cm_connect_function(int (*fn)(const struct aws_http_client_connection_options *options)) {
     s_mocks = *g_aws_http_connection_manager_default_system_vtable_ptr;
-    s_mocks.create_connection = fn;
+    s_mocks.aws_http_client_connect = fn;
     s_tester.connection_manager = s_tester.stream_manager->connection_manager;
     aws_http_connection_manager_set_system_vtable(s_tester.connection_manager, &s_mocks);
 }

@@ -155,7 +155,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
 
     aws_io_clock_fn *clock_fn = &aws_high_res_clock_get_ticks;
     if (options->mock_table) {
-        clock_fn = options->mock_table->get_monotonic_time;
+        clock_fn = options->mock_table->aws_high_res_clock_get_ticks;
     }
 
     tester->event_loop_group = aws_event_loop_group_new(tester->allocator, clock_fn, 1, s_new_event_loop, NULL, NULL);
@@ -304,7 +304,7 @@ release:
 
             if (close_first) {
                 if (tester->mock_table) {
-                    tester->mock_table->close_connection(connection);
+                    tester->mock_table->aws_http_connection_close(connection);
                 } else {
                     aws_http_connection_close(connection);
                 }
@@ -809,14 +809,14 @@ static enum aws_http_version s_aws_http_connection_manager_connection_get_versio
 }
 
 static struct aws_http_connection_manager_system_vtable s_synchronous_mocks = {
-    .create_connection = s_aws_http_connection_manager_create_connection_sync_mock,
-    .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
-    .close_connection = s_aws_http_connection_manager_close_connection_sync_mock,
-    .is_connection_available = s_aws_http_connection_manager_is_connection_available_sync_mock,
-    .get_monotonic_time = aws_high_res_clock_get_ticks,
-    .connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
-    .is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
-    .connection_get_version = s_aws_http_connection_manager_connection_get_version_sync_mock,
+    .aws_http_client_connect = s_aws_http_connection_manager_create_connection_sync_mock,
+    .aws_http_connection_release = s_aws_http_connection_manager_release_connection_sync_mock,
+    .aws_http_connection_close = s_aws_http_connection_manager_close_connection_sync_mock,
+    .aws_http_connection_new_requests_allowed = s_aws_http_connection_manager_is_connection_available_sync_mock,
+    .aws_high_res_clock_get_ticks = aws_high_res_clock_get_ticks,
+    .aws_http_connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
+    .aws_channel_thread_is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
+    .aws_http_connection_get_version = s_aws_http_connection_manager_connection_get_version_sync_mock,
 };
 
 static int s_test_connection_manager_acquire_release_mix_synchronous(struct aws_allocator *allocator, void *ctx) {
@@ -934,14 +934,14 @@ static int s_test_connection_manager_proxy_setup_shutdown(struct aws_allocator *
 AWS_TEST_CASE(test_connection_manager_proxy_setup_shutdown, s_test_connection_manager_proxy_setup_shutdown);
 
 static struct aws_http_connection_manager_system_vtable s_idle_mocks = {
-    .create_connection = s_aws_http_connection_manager_create_connection_sync_mock,
-    .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
-    .close_connection = s_aws_http_connection_manager_close_connection_sync_mock,
-    .is_connection_available = s_aws_http_connection_manager_is_connection_available_sync_mock,
-    .get_monotonic_time = s_tester_get_mock_time,
-    .connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
-    .is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
-    .connection_get_version = s_aws_http_connection_manager_connection_get_version_sync_mock,
+    .aws_http_client_connect = s_aws_http_connection_manager_create_connection_sync_mock,
+    .aws_http_connection_release = s_aws_http_connection_manager_release_connection_sync_mock,
+    .aws_http_connection_close = s_aws_http_connection_manager_close_connection_sync_mock,
+    .aws_http_connection_new_requests_allowed = s_aws_http_connection_manager_is_connection_available_sync_mock,
+    .aws_high_res_clock_get_ticks = s_tester_get_mock_time,
+    .aws_http_connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
+    .aws_channel_thread_is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
+    .aws_http_connection_get_version = s_aws_http_connection_manager_connection_get_version_sync_mock,
 };
 
 static int s_register_acquired_connections(struct aws_array_list *seen_connections) {

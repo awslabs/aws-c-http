@@ -20,10 +20,8 @@ struct aws_http_make_request_options;
 struct aws_http_request_handler_options;
 struct aws_http_stream;
 
-typedef int aws_client_bootstrap_new_socket_channel_fn(struct aws_socket_channel_bootstrap_options *options);
-
 struct aws_http_connection_system_vtable {
-    aws_client_bootstrap_new_socket_channel_fn *new_socket_channel;
+    int (*aws_client_bootstrap_new_socket_channel)(struct aws_socket_channel_bootstrap_options *options);
 };
 
 struct aws_http_connection_vtable {
