@@ -1223,7 +1223,7 @@ int aws_http_connection_manager_release_connection(
     s_aws_connection_management_transaction_init(&work, manager);
 
     int result = AWS_OP_ERR;
-    bool should_release_connection = !manager->system_vtable - aws_http_connection_new_requests_allowed(connection);
+    bool should_release_connection = !manager->system_vtable->aws_http_connection_new_requests_allowed(connection);
 
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_CONNECTION_MANAGER,
