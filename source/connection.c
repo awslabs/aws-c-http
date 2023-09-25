@@ -27,7 +27,7 @@
 #endif
 
 static struct aws_http_connection_system_vtable s_default_system_vtable = {
-    .new_socket_channel = aws_client_bootstrap_new_socket_channel,
+    .aws_client_bootstrap_new_socket_channel = aws_client_bootstrap_new_socket_channel,
 };
 
 static const struct aws_http_connection_system_vtable *s_system_vtable_ptr = &s_default_system_vtable;
@@ -1114,7 +1114,7 @@ int aws_http_client_connect_internal(
         .host_resolution_override_config = options.host_resolution_config,
     };
 
-    err = s_system_vtable_ptr->new_socket_channel(&channel_options);
+    err = s_system_vtable_ptr->aws_client_bootstrap_new_socket_channel(&channel_options);
 
     if (err) {
         AWS_LOGF_ERROR(

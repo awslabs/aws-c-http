@@ -130,8 +130,12 @@ struct aws_http_proxy_user_data {
     const struct aws_host_resolution_config *host_resolution_config;
 };
 
+/* vtable of functions that proxy uses to interact with external systems.
+ * tests override the vtable to mock those systems */
 struct aws_http_proxy_system_vtable {
-    int (*setup_client_tls)(struct aws_channel_slot *right_of_slot, struct aws_tls_connection_options *tls_options);
+    int (*aws_channel_setup_client_tls)(
+        struct aws_channel_slot *right_of_slot,
+        struct aws_tls_connection_options *tls_options);
 };
 
 AWS_EXTERN_C_BEGIN
