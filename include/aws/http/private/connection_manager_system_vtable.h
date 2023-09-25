@@ -12,6 +12,8 @@
 
 struct aws_http_connection_manager;
 
+/* vtable of functions that aws_http_connection_manager uses to interact with external systems.
+ * tests override the vtable to mock those systems */
 struct aws_http_connection_manager_system_vtable {
     /*
      * Downstream http functions
