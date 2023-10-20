@@ -166,7 +166,7 @@ static void s_process_statistics(
         if (impl->idle_time_ms > impl->options.allowable_idle_interval_milliseconds) {
             AWS_LOGF_INFO(
                 AWS_LS_IO_CHANNEL,
-                "id=%p: Channel idle time last more than %llu milliseconds.  Shutting down.",
+                "id=%p: Channel idle time last more than %" PRIu64 " milliseconds.  Shutting down.",
                 (void *)channel,
                 impl->options.allowable_idle_interval_milliseconds);
             goto shutdown;

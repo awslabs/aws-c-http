@@ -308,9 +308,7 @@ struct aws_http_make_request_options {
      * It override the aws_http_connection_monitoring_options on connection when the request starts to be executed by
      * the connection to
      * {
-     *    .minimum_throughput_bytes_per_second = 1,
-     *    .allowable_throughput_failure_interval_seconds = idle_timeout_ms / 1000 (We also make it available to be less
-     * then 1 secs),
+     *    .allowable_idle_interval_milliseconds = idle_timeout_ms,
      * }
      * When the request completes, the original monitoring options will be applied back to the connection.
      */
