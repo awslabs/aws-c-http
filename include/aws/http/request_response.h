@@ -300,6 +300,21 @@ struct aws_http_make_request_options {
      * when data has been supplied via `aws_http2_stream_write_data`
      */
     bool http2_use_manual_data_writes;
+
+    /**
+     * Optional.
+     * MUST be larger than 0.
+     * Experimental: Only works on HTTP/1 connection for now.
+     * It override the aws_http_connection_monitoring_options on connection when the request starts to be executed by
+     * the connection to
+     * {
+     *    .minimum_throughput_bytes_per_second = 1,
+     *    .allowable_throughput_failure_interval_seconds = idle_timeout_ms / 1000 (We also make it available to be less
+     * then 1 secs),
+     * }
+     * When the request completes, the original monitoring options will be applied back to the connection.
+     */
+    uint32_t idle_timeout_ms;
 };
 
 struct aws_http_request_handler_options {

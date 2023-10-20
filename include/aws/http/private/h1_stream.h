@@ -55,6 +55,11 @@ struct aws_h1_stream {
     /* Buffer for incoming data that needs to stick around. */
     struct aws_byte_buf incoming_storage_buf;
 
+    /**
+     * To override the monitoring options when the request started to be executed by the connection.
+     */
+    size_t idle_timeout_ms;
+
     struct {
         /* TODO: move most other members in here */
 

@@ -128,11 +128,18 @@ struct aws_http_connection_monitoring_options {
      */
     uint64_t minimum_throughput_bytes_per_second;
 
-    /*
+    /**
      * amount of time, in seconds, throughput is allowed to drop below the minimum before the connection is shut down
      * as unhealthy.
      */
     uint32_t allowable_throughput_failure_interval_seconds;
+
+    /**
+     * amount of time, in milliseconds, throughput is allowed to be 0 on both direction. You can set either of the
+     * `allowable_throughput_failure_interval_seconds` or `allowable_idle_interval_milliseconds`. They are working
+     * independently.
+     */
+    uint64_t allowable_idle_interval_milliseconds;
 
     /**
      * invoked on each statistics publish by the underlying IO channel. Install this callback to receive the statistics

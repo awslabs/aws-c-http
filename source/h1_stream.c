@@ -423,7 +423,7 @@ struct aws_h1_stream *aws_h1_stream_new_request(
     if (stream->encoder_message.has_connection_close_header) {
         stream->is_final_stream = true;
     }
-
+    stream->idle_timeout_ms = options->idle_timeout_ms;
     stream->synced_data.using_chunked_encoding = stream->encoder_message.has_chunked_encoding_header;
 
     return stream;

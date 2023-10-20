@@ -118,6 +118,11 @@ struct aws_http_connection {
     struct aws_http_connection_server_data *server_data;
 
     bool stream_manual_window_management;
+
+    /**
+     * Keep the record of monitoring options connection uses.
+     */
+    struct aws_http_connection_monitoring_options monitoring_options;
 };
 
 /* Gets a client connection up and running.
