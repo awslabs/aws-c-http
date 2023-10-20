@@ -16,7 +16,11 @@ struct aws_crt_statistics_handler;
  * Needed by tests
  */
 struct aws_statistics_handler_http_connection_monitor_impl {
-    struct aws_http_connection_monitoring_options options;
+
+    uint64_t minimum_throughput_bytes_per_second;
+    uint64_t allowable_throughput_failure_interval_ms;
+    aws_http_statistics_observer_fn *statistics_observer_fn;
+    void *statistics_observer_user_data;
 
     uint64_t throughput_failure_time_ms;
     uint64_t idle_time_ms;

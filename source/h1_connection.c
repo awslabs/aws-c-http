@@ -834,10 +834,16 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
             if (current->idle_timeout_ms) {
                 /* Override the connection statics handler */
                 struct aws_http_connection_monitoring_options options = {
-                    .allowable_idle_interval_milliseconds = current->idle_timeout_ms,
+                    .minimum_throughput_bytes_per_second = 1,
+                    .allowable_throughput_failure_interval_seconds = 1,
                 };
+
+                /* workaround to set a milliseconds timeout */
                 struct aws_crt_statistics_handler *http_connection_monitor =
                     aws_crt_statistics_handler_new_http_connection_monitor(connection->base.alloc, &options);
+                struct aws_statistics_handler_http_connection_monitor_impl *impl = http_connection_monitor->impl;
+                impl->allowable_throughput_failure_interval_ms = current->idle_timeout_ms;
+
                 struct aws_channel *channel = aws_http_connection_get_channel(&connection->base);
                 aws_channel_set_statistics_handler(channel, http_connection_monitor);
             }

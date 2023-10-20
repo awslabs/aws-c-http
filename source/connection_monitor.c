@@ -24,7 +24,8 @@ static void s_process_statistics(
     (void)interval;
 
     struct aws_statistics_handler_http_connection_monitor_impl *impl = handler->impl;
-    if (!aws_http_connection_monitoring_options_is_valid(&impl->options)) {
+    if (!impl || impl->allowable_throughput_failure_interval_ms == 0 ||
+        impl->minimum_throughput_bytes_per_second == 0) {
         return;
     }
 
@@ -83,9 +84,8 @@ static void s_process_statistics(
         }
     }
 
-    if (impl->options.statistics_observer_fn) {
-        impl->options.statistics_observer_fn(
-            (size_t)(uintptr_t)(context), stats_list, impl->options.statistics_observer_user_data);
+    if (impl->statistics_observer_fn) {
+        impl->statistics_observer_fn((size_t)(uintptr_t)(context), stats_list, impl->statistics_observer_user_data);
     }
 
     struct aws_channel *channel = context;
@@ -144,33 +144,12 @@ static void s_process_statistics(
     if (!check_throughput) {
         AWS_LOGF_TRACE(AWS_LS_IO_CHANNEL, "id=%p: channel throughput does not need to be checked", (void *)channel);
         impl->throughput_failure_time_ms = 0;
-        impl->idle_time_ms = 0;
         return;
     }
 
-    if (bytes_per_second >= impl->options.minimum_throughput_bytes_per_second) {
+    if (bytes_per_second >= impl->minimum_throughput_bytes_per_second) {
         impl->throughput_failure_time_ms = 0;
-        impl->idle_time_ms = 0;
         return;
-    }
-
-    if (bytes_per_second > 0) {
-        impl->idle_time_ms = 0;
-    } else {
-        impl->idle_time_ms = aws_add_u64_saturating(impl->idle_time_ms, max_pending_io_interval_ms);
-        AWS_LOGF_INFO(
-            AWS_LS_IO_CHANNEL,
-            "id=%p: Channel being idle warning.  Currently %" PRIu64 " milliseconds of consecutive idle time",
-            (void *)channel,
-            impl->idle_time_ms);
-        if (impl->idle_time_ms > impl->options.allowable_idle_interval_milliseconds) {
-            AWS_LOGF_INFO(
-                AWS_LS_IO_CHANNEL,
-                "id=%p: Channel idle time last more than %" PRIu64 " milliseconds.  Shutting down.",
-                (void *)channel,
-                impl->options.allowable_idle_interval_milliseconds);
-            goto shutdown;
-        }
     }
 
     impl->throughput_failure_time_ms =
@@ -182,20 +161,17 @@ static void s_process_statistics(
         (void *)channel,
         impl->throughput_failure_time_ms);
 
-    uint64_t maximum_failure_time_ms = aws_timestamp_convert(
-        impl->options.allowable_throughput_failure_interval_seconds, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL);
-    if (impl->throughput_failure_time_ms <= maximum_failure_time_ms) {
+    if (impl->throughput_failure_time_ms <= impl->allowable_throughput_failure_interval_ms) {
         return;
     }
+
     AWS_LOGF_INFO(
         AWS_LS_IO_CHANNEL,
-        "id=%p: Channel low throughput threshold exceeded (< %" PRIu64
-        " bytes per second for more than %u seconds).  Shutting down.",
+        "id=%p: Channel low throughput threshold exceeded (< %" PRIu64 " bytes per second for more than %" PRIu64
+        " milliseconds).  Shutting down.",
         (void *)channel,
-        impl->options.minimum_throughput_bytes_per_second,
-        impl->options.allowable_throughput_failure_interval_seconds);
-
-shutdown:
+        impl->minimum_throughput_bytes_per_second,
+        impl->allowable_throughput_failure_interval_ms);
 
     aws_channel_shutdown(channel, AWS_ERROR_HTTP_CHANNEL_THROUGHPUT_FAILURE);
 }
@@ -209,12 +185,9 @@ static void s_destroy(struct aws_crt_statistics_handler *handler) {
 }
 
 static uint64_t s_get_report_interval_ms(struct aws_crt_statistics_handler *handler) {
-    struct aws_statistics_handler_http_connection_monitor_impl *impl = handler->impl;
-    uint64_t allowable_throughput_failure_interval_ms = aws_timestamp_convert(
-        impl->options.allowable_throughput_failure_interval_seconds, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL);
-    uint64_t check_interval_ms =
-        aws_min_u64(allowable_throughput_failure_interval_ms, impl->options.allowable_idle_interval_milliseconds) / 10;
-    return aws_min_u64(1000, check_interval_ms);
+    (void)handler;
+
+    return 1000;
 }
 
 static struct aws_crt_statistics_handler_vtable s_http_connection_monitor_vtable = {
@@ -226,9 +199,9 @@ static struct aws_crt_statistics_handler_vtable s_http_connection_monitor_vtable
 struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connection_monitor(
     struct aws_allocator *allocator,
     struct aws_http_connection_monitoring_options *options) {
-
     AWS_PRECONDITION(options);
     AWS_PRECONDITION(aws_http_connection_monitoring_options_is_valid(options));
+
     struct aws_crt_statistics_handler *handler = NULL;
     struct aws_statistics_handler_http_connection_monitor_impl *impl = NULL;
 
@@ -242,20 +215,11 @@ struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connectio
 
     AWS_ZERO_STRUCT(*handler);
     AWS_ZERO_STRUCT(*impl);
-    impl->options = *options;
-
-    if (impl->options.allowable_throughput_failure_interval_seconds == 0 ||
-        impl->options.minimum_throughput_bytes_per_second == 0) {
-        impl->options.minimum_throughput_bytes_per_second = 1;
-        impl->options.allowable_throughput_failure_interval_seconds =
-            impl->options.allowable_idle_interval_milliseconds / 1000;
-        if (impl->options.allowable_idle_interval_milliseconds % 1000 != 0) {
-            impl->options.allowable_throughput_failure_interval_seconds++;
-        }
-    } else if (impl->options.allowable_idle_interval_milliseconds == 0) {
-        impl->options.allowable_idle_interval_milliseconds =
-            impl->options.allowable_throughput_failure_interval_seconds * 1000;
-    }
+    impl->minimum_throughput_bytes_per_second = options->minimum_throughput_bytes_per_second;
+    impl->allowable_throughput_failure_interval_ms =
+        (uint64_t)options->allowable_throughput_failure_interval_seconds * 1000;
+    impl->statistics_observer_fn = options->statistics_observer_fn;
+    impl->statistics_observer_user_data = options->statistics_observer_user_data;
 
     handler->vtable = &s_http_connection_monitor_vtable;
     handler->allocator = allocator;
@@ -269,7 +233,6 @@ bool aws_http_connection_monitoring_options_is_valid(const struct aws_http_conne
         return false;
     }
 
-    return (options->allowable_throughput_failure_interval_seconds > 0 &&
-            options->minimum_throughput_bytes_per_second > 0) ||
-           options->allowable_idle_interval_milliseconds > 0;
+    return options->allowable_throughput_failure_interval_seconds > 0 &&
+           options->minimum_throughput_bytes_per_second > 0;
 }
