@@ -574,13 +574,12 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
             error_code = AWS_ERROR_SUCCESS;
         }
     }
-    if (stream->idle_timeout_ms) {
-        /* Override the connection statics handler */
-        struct aws_http_connection_monitoring_options options = {
-            .allowable_idle_interval_milliseconds = stream->idle_timeout_ms,
-        };
+    if (stream->idle_timeout_ms &&
+        aws_http_connection_monitoring_options_is_valid(&connection->base.monitoring_options)) {
+        /* Restore the connection monitoring as the stream completed */
         struct aws_crt_statistics_handler *http_connection_monitor =
-            aws_crt_statistics_handler_new_http_connection_monitor(connection->base.alloc, &options);
+            aws_crt_statistics_handler_new_http_connection_monitor(
+                connection->base.alloc, &connection->base.monitoring_options);
         struct aws_channel *channel = aws_http_connection_get_channel(&connection->base);
         aws_channel_set_statistics_handler(channel, http_connection_monitor);
     }
@@ -832,11 +831,16 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
             AWS_ASSERT(connection->thread_data.encoder.state == AWS_H1_ENCODER_STATE_INIT);
             AWS_ASSERT(!err);
 
-            struct aws_crt_statistics_handler *http_connection_monitor =
-                aws_crt_statistics_handler_new_http_connection_monitor(
-                    connection->base.alloc, &connection->base.monitoring_options);
-            struct aws_channel *channel = aws_http_connection_get_channel(&connection->base);
-            aws_channel_set_statistics_handler(channel, http_connection_monitor);
+            if (current->idle_timeout_ms) {
+                /* Override the connection statics handler */
+                struct aws_http_connection_monitoring_options options = {
+                    .allowable_idle_interval_milliseconds = current->idle_timeout_ms,
+                };
+                struct aws_crt_statistics_handler *http_connection_monitor =
+                    aws_crt_statistics_handler_new_http_connection_monitor(connection->base.alloc, &options);
+                struct aws_channel *channel = aws_http_connection_get_channel(&connection->base);
+                aws_channel_set_statistics_handler(channel, http_connection_monitor);
+            }
         }
 
         /* incoming_stream update is only for client */
