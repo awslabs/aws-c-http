@@ -843,6 +843,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
                     aws_crt_statistics_handler_new_http_connection_monitor(connection->base.alloc, &options);
                 struct aws_statistics_handler_http_connection_monitor_impl *impl = http_connection_monitor->impl;
                 impl->allowable_throughput_failure_interval_ms = current->idle_timeout_ms;
+                impl->sampling_interval_ms = current->idle_timeout_ms / 3;
 
                 struct aws_channel *channel = aws_http_connection_get_channel(&connection->base);
                 aws_channel_set_statistics_handler(channel, http_connection_monitor);

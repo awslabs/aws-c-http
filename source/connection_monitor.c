@@ -186,7 +186,10 @@ static void s_destroy(struct aws_crt_statistics_handler *handler) {
 
 static uint64_t s_get_report_interval_ms(struct aws_crt_statistics_handler *handler) {
     struct aws_statistics_handler_http_connection_monitor_impl *impl = handler->impl;
-    return aws_min_u64(1000, impl->allowable_throughput_failure_interval_ms / 10);
+    if (impl->sampling_interval_ms) {
+        return impl->sampling_interval_ms;
+    }
+    return 1000;
 }
 
 static struct aws_crt_statistics_handler_vtable s_http_connection_monitor_vtable = {
