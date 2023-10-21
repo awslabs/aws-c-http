@@ -314,7 +314,7 @@ struct aws_http_make_request_options {
      * }
      * When the request completes, the original monitoring options will be applied back to the connection.
      */
-    uint32_t idle_timeout_ms;
+    uint64_t idle_timeout_ms;
 };
 
 struct aws_http_request_handler_options {

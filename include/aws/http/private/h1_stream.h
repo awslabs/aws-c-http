@@ -58,7 +58,7 @@ struct aws_h1_stream {
     /**
      * To override the monitoring options when the request started to be executed by the connection.
      */
-    size_t idle_timeout_ms;
+    uint64_t idle_timeout_ms;
 
     struct {
         /* TODO: move most other members in here */
