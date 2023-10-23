@@ -4297,3 +4297,57 @@ H1_CLIENT_TEST_CASE(h1_client_response_close_connection_before_request_finishes)
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
+
+H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("example.com"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Accept"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("*/*"),
+        },
+    };
+
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
+
+    size_t idle_timeout_ms = 100;
+
+    int completion_error_code = 0;
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+        .idle_timeout_ms = idle_timeout_ms,
+        .on_complete = s_on_complete,
+        .user_data = &completion_error_code,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    aws_thread_current_sleep(
+        aws_timestamp_convert(idle_timeout_ms + 1, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    /* Check if the testing channel has shut down. */
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
+
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_REQUEST_IDLE_TIMEOUT, completion_error_code);
+
+    /* clean up */
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}

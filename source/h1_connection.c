@@ -11,6 +11,7 @@
 #include <aws/http/private/h1_stream.h>
 #include <aws/http/private/request_response_impl.h>
 #include <aws/http/status_code.h>
+#include <aws/io/event_loop.h>
 #include <aws/io/logging.h>
 
 #include <inttypes.h>
@@ -721,6 +722,74 @@ static void s_client_update_incoming_stream_ptr(struct aws_h1_connection *connec
     s_set_incoming_stream_ptr(connection, desired);
 }
 
+static void s_http_request_idle_timeout_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+    struct aws_h1_stream *stream = arg;
+    if (status == AWS_TASK_STATUS_CANCELED) {
+        goto cleanup;
+    }
+    struct aws_http_connection *connection_base = stream->base.owning_connection;
+    struct aws_h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h1_connection, base);
+    /* Time out happened, close the connection manually */
+    uint64_t idle_timeout_ms = stream->base.client_data->idle_timeout_ms == 0
+                                   ? connection_base->client_data->idle_timeout_ms
+                                   : stream->base.client_data->idle_timeout_ms;
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Closing connection as timeout after request sent to the first byte received happened. Idle time "
+        "is %" PRIu64 " ms",
+        (void *)connection_base,
+        idle_timeout_ms);
+
+    /* Don't stop reading/writing immediately, let that happen naturally during the channel shutdown process. */
+    s_stop(
+        connection,
+        false /*stop_reading*/,
+        false /*stop_writing*/,
+        true /*schedule_shutdown*/,
+        AWS_ERROR_HTTP_REQUEST_IDLE_TIMEOUT);
+    connection_base->client_data->request_idle_timeout_task = NULL;
+
+cleanup:
+    aws_mem_release(stream->base.alloc, task);
+}
+
+static void s_request_finished_sending(struct aws_h1_stream *stream) {
+    struct aws_http_connection *connection = stream->base.owning_connection;
+    struct aws_channel *channel = aws_http_connection_get_channel(connection);
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(channel));
+
+    stream->is_outgoing_message_done = true;
+    AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == -1);
+    aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_end_timestamp_ns);
+    AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns != -1);
+    AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns >= stream->base.metrics.send_start_timestamp_ns);
+    stream->base.metrics.sending_duration_ns =
+        stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
+    if (stream->base.metrics.receive_start_timestamp_ns == -1) {
+        /* We haven't receive any message, schedule the request idle timeout task */
+        uint64_t idle_timeout_ms = stream->base.client_data->idle_timeout_ms == 0
+                                       ? connection->client_data->idle_timeout_ms
+                                       : stream->base.client_data->idle_timeout_ms;
+        if (idle_timeout_ms != 0) {
+            connection->client_data->request_idle_timeout_task =
+                aws_mem_calloc(stream->base.alloc, 1, sizeof(struct aws_task));
+            aws_task_init(
+                connection->client_data->request_idle_timeout_task,
+                s_http_request_idle_timeout_task,
+                stream,
+                "http_request_idle_timeout_task");
+            uint64_t now_ns = 0;
+            int error = aws_channel_current_clock_time(channel, &now_ns);
+            AWS_FATAL_ASSERT(!error);
+            struct aws_event_loop *connection_loop = aws_channel_get_event_loop(channel);
+            aws_event_loop_schedule_task_future(
+                connection_loop,
+                connection->client_data->request_idle_timeout_task,
+                now_ns + aws_timestamp_convert(idle_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
+        }
+    }
+}
+
 /**
  * If necessary, update `outgoing_stream` so it is pointing at a stream
  * with data to send, or NULL if all streams are done sending data.
@@ -735,13 +804,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
 
     /* If current stream is done sending data... */
     if (current && !aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
-        current->is_outgoing_message_done = true;
-        AWS_ASSERT(current->base.metrics.send_end_timestamp_ns == -1);
-        aws_high_res_clock_get_ticks((uint64_t *)&current->base.metrics.send_end_timestamp_ns);
-        AWS_ASSERT(current->base.metrics.send_start_timestamp_ns != -1);
-        AWS_ASSERT(current->base.metrics.send_end_timestamp_ns >= current->base.metrics.send_start_timestamp_ns);
-        current->base.metrics.sending_duration_ns =
-            current->base.metrics.send_end_timestamp_ns - current->base.metrics.send_start_timestamp_ns;
+        s_request_finished_sending(current);
 
         /* RFC-7230 section 6.6: Tear-down.
          * If this was the final stream, don't allows any further streams to be sent */
@@ -1124,16 +1187,7 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
                         AWS_LS_HTTP_STREAM,
                         "id=%p: Received 'Connection: close' header, no more request data will be sent.",
                         (void *)&incoming_stream->base);
-                    incoming_stream->is_outgoing_message_done = true;
-                    AWS_ASSERT(incoming_stream->base.metrics.send_end_timestamp_ns == -1);
-                    aws_high_res_clock_get_ticks((uint64_t *)&incoming_stream->base.metrics.send_end_timestamp_ns);
-                    AWS_ASSERT(incoming_stream->base.metrics.send_start_timestamp_ns != -1);
-                    AWS_ASSERT(
-                        incoming_stream->base.metrics.send_end_timestamp_ns >=
-                        incoming_stream->base.metrics.send_start_timestamp_ns);
-                    incoming_stream->base.metrics.sending_duration_ns =
-                        incoming_stream->base.metrics.send_end_timestamp_ns -
-                        incoming_stream->base.metrics.send_start_timestamp_ns;
+                    s_request_finished_sending(incoming_stream);
                 }
                 /* Stop writing right now.
                  * Shutdown will be scheduled after we finishing parsing the response */
@@ -1856,6 +1910,13 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
     if (incoming_stream->base.metrics.receive_start_timestamp_ns == -1) {
         /* That's the first time for the stream receives any message */
         aws_high_res_clock_get_ticks((uint64_t *)&incoming_stream->base.metrics.receive_start_timestamp_ns);
+        if (connection->base.client_data->request_idle_timeout_task) {
+            /* There is an outstanding idle timeout task, as we already received the data, we can cancel it now. We are
+             * safe to do it as we always on connection thread to schedule the task or cancel it */
+            struct aws_event_loop *connection_loop = aws_channel_get_event_loop(connection->base.channel_slot->channel);
+            aws_event_loop_cancel_task(connection_loop, connection->base.client_data->request_idle_timeout_task);
+            connection->base.client_data->request_idle_timeout_task = NULL;
+        }
     }
 
     /* As decoder runs, it invokes the internal s_decoder_X callbacks, which in turn invoke user callbacks.

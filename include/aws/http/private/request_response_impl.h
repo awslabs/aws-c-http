@@ -54,6 +54,7 @@ struct aws_http_stream {
     union {
         struct aws_http_stream_client_data {
             int response_status;
+            uint64_t idle_timeout_ms;
         } client;
         struct aws_http_stream_server_data {
             struct aws_byte_cursor request_method_str;

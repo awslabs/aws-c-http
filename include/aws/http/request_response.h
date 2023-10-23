@@ -300,6 +300,16 @@ struct aws_http_make_request_options {
      * when data has been supplied via `aws_http2_stream_write_data`
      */
     bool http2_use_manual_data_writes;
+
+    /**
+     * Optional.
+     * The time between when the request finishes to be sent and when the first byte of the response received.
+     * MUST be larger than 0.
+     * It override the connection level settings, when the request completes, the original monitoring options will be
+     * applied back to the connection.
+     * TODO: Only supported in HTTP/1.1 now, support it in HTTP/2
+     */
+    uint64_t idle_timeout_ms;
 };
 
 struct aws_http_request_handler_options {

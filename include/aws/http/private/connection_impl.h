@@ -103,7 +103,8 @@ struct aws_http_connection {
 
     union {
         struct aws_http_connection_client_data {
-            uint8_t delete_me; /* exists to prevent "empty struct" errors */
+            struct aws_task *request_idle_timeout_task; /* Only touched by the connection thread */
+            uint64_t idle_timeout_ms;
         } client;
 
         struct aws_http_connection_server_data {
