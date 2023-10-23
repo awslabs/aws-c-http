@@ -1910,7 +1910,7 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
     if (incoming_stream->base.metrics.receive_start_timestamp_ns == -1) {
         /* That's the first time for the stream receives any message */
         aws_high_res_clock_get_ticks((uint64_t *)&incoming_stream->base.metrics.receive_start_timestamp_ns);
-        if (connection->base.client_data->request_idle_timeout_task) {
+        if (connection->base.client_data && connection->base.client_data->request_idle_timeout_task) {
             /* There is an outstanding idle timeout task, as we already received the data, we can cancel it now. We are
              * safe to do it as we always on connection thread to schedule the task or cancel it */
             struct aws_event_loop *connection_loop = aws_channel_get_event_loop(connection->base.channel_slot->channel);
