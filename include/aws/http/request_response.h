@@ -303,8 +303,9 @@ struct aws_http_make_request_options {
 
     /**
      * Optional.
-     * The time between when the request finishes to be sent and when the first byte of the response received.
      * MUST be larger than 0.
+     * If the time between the request finishes to be sent and the first byte of the response received larger than the
+     * set timeout, connection will be closed.
      * It override the connection level settings, when the request completes, the original monitoring options will be
      * applied back to the connection.
      * TODO: Only supported in HTTP/1.1 now, support it in HTTP/2

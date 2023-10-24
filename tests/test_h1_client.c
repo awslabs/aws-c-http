@@ -4241,6 +4241,9 @@ H1_CLIENT_TEST_CASE(h1_client_response_close_connection_before_request_finishes)
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+    /* Okay to set a timeout */
+    size_t connection_idle_timeout_ms = 200;
+    tester.connection->client_data->idle_timeout_ms = connection_idle_timeout_ms;
 
     /* set up request whose body won't send immediately */
     struct slow_body_sender body_sender;
@@ -4269,7 +4272,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_close_connection_before_request_finishes)
     testing_channel_run_currently_queued_tasks(&tester.testing_channel);
 
     /* Ensure the request can be destroyed after request is sent */
-    aws_http_message_destroy(request);
+    aws_http_message_release(request);
     aws_input_stream_release(body_stream);
 
     /* send close connection response */
@@ -4298,10 +4301,63 @@ H1_CLIENT_TEST_CASE(h1_client_response_close_connection_before_request_finishes)
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout) {
+H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout_connection) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+    /* with test channel, we don't use bootstrap to propagate the settings. Hack around it by set the setting directly
+     */
+    size_t connection_idle_timeout_ms = 200;
+    tester.connection->client_data->idle_timeout_ms = connection_idle_timeout_ms;
+
+    /* send request */
+    struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("example.com"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Accept"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("*/*"),
+        },
+    };
+
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Sleep to trigger the timeout */
+    aws_thread_current_sleep(
+        aws_timestamp_convert(connection_idle_timeout_ms + 1, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    /* Check if the testing channel has shut down. */
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
+
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_REQUEST_IDLE_TIMEOUT, stream_tester.on_complete_error_code);
+
+    /* clean up */
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout_request_override) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+    /* with test channel, we don't use bootstrap to propagate the settings. Hack around it by set the setting directly
+     */
+    size_t connection_idle_timeout_ms = 1000;
+    tester.connection->client_data->idle_timeout_ms = connection_idle_timeout_ms;
 
     /* send request */
     struct aws_http_header headers[] = {
@@ -4345,7 +4401,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout) {
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_REQUEST_IDLE_TIMEOUT, completion_error_code);
 
     /* clean up */
-    aws_http_message_destroy(request);
+    aws_http_message_release(request);
     aws_http_stream_release(stream);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));

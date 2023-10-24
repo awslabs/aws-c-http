@@ -407,6 +407,16 @@ struct aws_http_client_connection_options {
      * Host resolution override that allows the user to override DNS behavior for this particular connection.
      */
     const struct aws_host_resolution_config *host_resolution_config;
+
+    /**
+     * Optional.
+     * MUST be larger than 0.
+     * If the time between the request finishes to be sent and the first byte of the response received larger than the
+     * set timeout, connection will be closed.
+     * Applies to all the request made from the connection.
+     * TODO: Only supported in HTTP/1.1 now, support it in HTTP/2
+     */
+    uint64_t idle_timeout_ms;
 };
 
 /* Predefined settings identifiers (RFC-7540 6.5.2) */

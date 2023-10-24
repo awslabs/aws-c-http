@@ -834,6 +834,7 @@ static void s_client_bootstrap_on_channel_setup(
     }
 
     http_bootstrap->connection->proxy_request_transform = http_bootstrap->proxy_request_transform;
+    http_bootstrap->connection->client_data->idle_timeout_ms = http_bootstrap->idle_timeout_ms;
 
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
@@ -1073,6 +1074,7 @@ int aws_http_client_connect_internal(
     http_bootstrap->proxy_request_transform = proxy_request_transform;
     http_bootstrap->http1_options = *options.http1_options;
     http_bootstrap->http2_options = *options.http2_options;
+    http_bootstrap->idle_timeout_ms = options.idle_timeout_ms;
 
     /* keep a copy of the settings array if it's not NULL */
     if (options.http2_options->num_initial_settings > 0) {
