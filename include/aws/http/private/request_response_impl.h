@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+#include <aws/common/task_scheduler.h>
 #include <aws/http/request_response.h>
 
 #include <aws/http/private/http_impl.h>
@@ -55,6 +56,7 @@ struct aws_http_stream {
         struct aws_http_stream_client_data {
             int response_status;
             uint64_t idle_timeout_ms;
+            struct aws_task idle_timeout_task; /* Only touched by the connection thread */
         } client;
         struct aws_http_stream_server_data {
             struct aws_byte_cursor request_method_str;

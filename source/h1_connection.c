@@ -548,6 +548,14 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
         }
     }
 
+    if (stream->base.client_data && stream->base.client_data->idle_timeout_task.fn != NULL) {
+        /* There is an outstanding idle timeout task, but stream completed, we can cancel it now. We are
+         * safe to do it as we always on connection thread to schedule the task or cancel it */
+        struct aws_event_loop *connection_loop = aws_channel_get_event_loop(connection->base.channel_slot->channel);
+        /* The task will be zeroed out within the call */
+        aws_event_loop_cancel_task(connection_loop, &stream->base.client_data->idle_timeout_task);
+    }
+
     if (error_code != AWS_ERROR_SUCCESS) {
         if (stream->base.client_data && stream->is_incoming_message_done) {
             /* As a request that finished receiving the response, we ignore error and
@@ -722,15 +730,13 @@ static void s_client_update_incoming_stream_ptr(struct aws_h1_connection *connec
     s_set_incoming_stream_ptr(connection, desired);
 }
 
-static void s_http_stream_idle_timeout_task(
-    struct aws_channel_task *channel_task,
-    void *arg,
-    enum aws_task_status status) {
-    (void)channel_task;
+static void s_http_stream_idle_timeout_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
     struct aws_h1_stream *stream = arg;
     struct aws_http_connection *connection_base = stream->base.owning_connection;
     if (status == AWS_TASK_STATUS_CANCELED) {
-        goto done;
+        AWS_ZERO_STRUCT(stream->base.client_data->idle_timeout_task);
+        return;
     }
 
     struct aws_h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h1_connection, base);
@@ -745,6 +751,7 @@ static void s_http_stream_idle_timeout_task(
         (void *)connection_base,
         idle_timeout_ms);
 
+    AWS_ZERO_STRUCT(stream->base.client_data->idle_timeout_task);
     /* Don't stop reading/writing immediately, let that happen naturally during the channel shutdown process. */
     s_stop(
         connection,
@@ -752,9 +759,6 @@ static void s_http_stream_idle_timeout_task(
         false /*stop_writing*/,
         true /*schedule_shutdown*/,
         AWS_ERROR_HTTP_RESPONSE_TIMEOUT);
-
-done:
-    connection_base->client_data->stream_idle_timeout_task_scheduled = false;
 }
 
 static void s_set_outgoing_message_done(struct aws_h1_stream *stream) {
@@ -784,17 +788,19 @@ static void s_set_outgoing_message_done(struct aws_h1_stream *stream) {
                                   : stream->base.client_data->idle_timeout_ms;
         }
         if (idle_timeout_ms != 0) {
-            aws_channel_task_init(
-                &connection->client_data->http_stream_idle_timeout_task,
+            /* The task should not be initialized before. */
+            AWS_ASSERT(stream->base.client_data->idle_timeout_task.fn == NULL);
+            aws_task_init(
+                &stream->base.client_data->idle_timeout_task,
                 s_http_stream_idle_timeout_task,
                 stream,
                 "http_stream_idle_timeout_task");
             uint64_t now_ns = 0;
             aws_channel_current_clock_time(channel, &now_ns);
-            connection->client_data->stream_idle_timeout_task_scheduled = true;
-            aws_channel_schedule_task_future(
-                channel,
-                &connection->client_data->http_stream_idle_timeout_task,
+            struct aws_event_loop *connection_loop = aws_channel_get_event_loop(channel);
+            aws_event_loop_schedule_task_future(
+                connection_loop,
+                &stream->base.client_data->idle_timeout_task,
                 now_ns + aws_timestamp_convert(idle_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
         }
     }
@@ -1920,13 +1926,12 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
     if (incoming_stream->base.metrics.receive_start_timestamp_ns == -1) {
         /* That's the first time for the stream receives any message */
         aws_high_res_clock_get_ticks((uint64_t *)&incoming_stream->base.metrics.receive_start_timestamp_ns);
-        if (connection->base.client_data && connection->base.client_data->stream_idle_timeout_task_scheduled) {
+        if (incoming_stream->base.client_data && incoming_stream->base.client_data->idle_timeout_task.fn != NULL) {
             /* There is an outstanding idle timeout task, as we already received the data, we can cancel it now. We are
              * safe to do it as we always on connection thread to schedule the task or cancel it */
             struct aws_event_loop *connection_loop = aws_channel_get_event_loop(connection->base.channel_slot->channel);
-            aws_event_loop_cancel_task(
-                connection_loop, &connection->base.client_data->http_stream_idle_timeout_task.wrapper_task);
-            connection->base.client_data->stream_idle_timeout_task_scheduled = false;
+            /* The task will be zeroed out within the call */
+            aws_event_loop_cancel_task(connection_loop, &incoming_stream->base.client_data->idle_timeout_task);
         }
     }
 
