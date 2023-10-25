@@ -103,7 +103,8 @@ struct aws_http_connection {
 
     union {
         struct aws_http_connection_client_data {
-            struct aws_task *request_idle_timeout_task; /* Only touched by the connection thread */
+            struct aws_channel_task http_stream_idle_timeout_task; /* Only touched by the connection thread */
+            bool stream_idle_timeout_task_scheduled;               /* Only touched by the connection thread */
             uint64_t idle_timeout_ms;
         } client;
 

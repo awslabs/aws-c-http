@@ -4340,7 +4340,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout_connection) {
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
 
     ASSERT_TRUE(stream_tester.complete);
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_REQUEST_IDLE_TIMEOUT, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_RESPONSE_TIMEOUT, stream_tester.on_complete_error_code);
 
     /* clean up */
     aws_http_message_release(request);
@@ -4398,7 +4398,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout_request_override) {
     /* Check if the testing channel has shut down. */
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
 
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_REQUEST_IDLE_TIMEOUT, completion_error_code);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_RESPONSE_TIMEOUT, completion_error_code);
 
     /* clean up */
     aws_http_message_release(request);
