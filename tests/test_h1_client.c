@@ -4242,8 +4242,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_close_connection_before_request_finishes)
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
     /* Okay to set a timeout */
-    size_t connection_idle_timeout_ms = 200;
-    tester.connection->client_data->idle_timeout_ms = connection_idle_timeout_ms;
+    size_t connection_response_first_byte_timeout_ms = 200;
+    tester.connection->client_data->response_first_byte_timeout_ms = connection_response_first_byte_timeout_ms;
 
     /* set up request whose body won't send immediately */
     struct slow_body_sender body_sender;
@@ -4301,14 +4301,14 @@ H1_CLIENT_TEST_CASE(h1_client_response_close_connection_before_request_finishes)
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout_connection) {
+H1_CLIENT_TEST_CASE(h1_client_response_first_byte_timeout_connection) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
     /* with test channel, we don't use bootstrap to propagate the settings. Hack around it by set the setting directly
      */
-    size_t connection_idle_timeout_ms = 200;
-    tester.connection->client_data->idle_timeout_ms = connection_idle_timeout_ms;
+    size_t connection_response_first_byte_timeout_ms = 200;
+    tester.connection->client_data->response_first_byte_timeout_ms = connection_response_first_byte_timeout_ms;
 
     /* send request */
     struct aws_http_header headers[] = {
@@ -4331,8 +4331,8 @@ H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout_connection) {
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     /* Sleep to trigger the timeout */
-    aws_thread_current_sleep(
-        aws_timestamp_convert(connection_idle_timeout_ms + 1, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
+    aws_thread_current_sleep(aws_timestamp_convert(
+        connection_response_first_byte_timeout_ms + 1, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     /* Check if the testing channel has shut down. */
@@ -4340,7 +4340,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout_connection) {
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
 
     ASSERT_TRUE(stream_tester.complete);
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_RESPONSE_TIMEOUT, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT, stream_tester.on_complete_error_code);
 
     /* clean up */
     aws_http_message_release(request);
@@ -4350,14 +4350,14 @@ H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout_connection) {
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout_request_override) {
+H1_CLIENT_TEST_CASE(h1_client_response_first_byte_timeout_request_override) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
     /* with test channel, we don't use bootstrap to propagate the settings. Hack around it by set the setting directly
      */
-    size_t connection_idle_timeout_ms = 1000;
-    tester.connection->client_data->idle_timeout_ms = connection_idle_timeout_ms;
+    size_t connection_response_first_byte_timeout_ms = 1000;
+    tester.connection->client_data->response_first_byte_timeout_ms = connection_response_first_byte_timeout_ms;
 
     /* send request */
     struct aws_http_header headers[] = {
@@ -4375,13 +4375,13 @@ H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout_request_override) {
     ASSERT_NOT_NULL(request);
     ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
 
-    size_t idle_timeout_ms = 100;
+    size_t response_first_byte_timeout_ms = 100;
 
     int completion_error_code = 0;
     struct aws_http_make_request_options opt = {
         .self_size = sizeof(opt),
         .request = request,
-        .idle_timeout_ms = idle_timeout_ms,
+        .response_first_byte_timeout_ms = response_first_byte_timeout_ms,
         .on_complete = s_on_complete,
         .user_data = &completion_error_code,
     };
@@ -4392,13 +4392,13 @@ H1_CLIENT_TEST_CASE(h1_client_request_idle_timeout_request_override) {
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     aws_thread_current_sleep(
-        aws_timestamp_convert(idle_timeout_ms + 1, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
+        aws_timestamp_convert(response_first_byte_timeout_ms + 1, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     /* Check if the testing channel has shut down. */
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
 
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_RESPONSE_TIMEOUT, completion_error_code);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT, completion_error_code);
 
     /* clean up */
     aws_http_message_release(request);

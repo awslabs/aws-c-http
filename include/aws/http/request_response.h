@@ -304,12 +304,12 @@ struct aws_http_make_request_options {
     /**
      * Optional (ignored if 0).
      * After a request is fully sent, if the server does not begin responding within N milliseconds, then fail with
-     * AWS_ERROR_HTTP_REQUEST_IDLE_TIMEOUT.
+     * AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT.
      * It override the connection level settings, when the request completes, the
      * original monitoring options will be applied back to the connection.
      * TODO: Only supported in HTTP/1.1 now, support it in HTTP/2
      */
-    uint64_t idle_timeout_ms;
+    uint64_t response_first_byte_timeout_ms;
 };
 
 struct aws_http_request_handler_options {

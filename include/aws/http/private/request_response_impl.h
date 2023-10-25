@@ -55,8 +55,8 @@ struct aws_http_stream {
     union {
         struct aws_http_stream_client_data {
             int response_status;
-            uint64_t idle_timeout_ms;
-            struct aws_task idle_timeout_task; /* Only touched by the connection thread */
+            uint64_t response_first_byte_timeout_ms;
+            struct aws_task response_first_byte_timeout_task; /* Only touched by the connection thread */
         } client;
         struct aws_http_stream_server_data {
             struct aws_byte_cursor request_method_str;

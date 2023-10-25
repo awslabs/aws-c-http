@@ -407,7 +407,7 @@ struct aws_h1_stream *aws_h1_stream_new_request(
 
     stream->base.client_data = &stream->base.client_or_server_data.client;
     stream->base.client_data->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
-    stream->base.client_data->idle_timeout_ms = options->idle_timeout_ms;
+    stream->base.client_data->response_first_byte_timeout_ms = options->response_first_byte_timeout_ms;
     stream->base.on_metrics = options->on_metrics;
 
     /* Validate request and cache info that the encoder will eventually need */

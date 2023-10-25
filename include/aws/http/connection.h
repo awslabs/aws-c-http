@@ -310,11 +310,11 @@ struct aws_http_client_connection_options {
     /**
      * Optional (ignored if 0).
      * After a request is fully sent, if the server does not begin responding within N milliseconds,
-     * then fail with AWS_ERROR_HTTP_RESPONSE_TIMEOUT.
-     * This can be overridden per-request by aws_http_make_request_options.idle_request_timeout.
+     * then fail with AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT.
+     * This can be overridden per-request by aws_http_make_request_options.response_first_byte_timeout_ms.
      * TODO: Only supported in HTTP/1.1 now, support it in HTTP/2
      */
-    uint64_t idle_timeout_ms;
+    uint64_t response_first_byte_timeout_ms;
 
     /**
      * Set to true to manually manage the flow-control window of each stream.
