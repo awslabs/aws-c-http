@@ -56,7 +56,9 @@ struct aws_http_stream {
         struct aws_http_stream_client_data {
             int response_status;
             uint64_t response_first_byte_timeout_ms;
-            struct aws_task response_first_byte_timeout_task; /* Only touched by the connection thread */
+            /* Using aws_task instead of aws_channel_task because, currently, channel-tasks can't be canceled.
+             * We only touch this from the connection's thread */
+            struct aws_task response_first_byte_timeout_task;
         } client;
         struct aws_http_stream_server_data {
             struct aws_byte_cursor request_method_str;

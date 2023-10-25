@@ -738,8 +738,10 @@ static void s_http_stream_response_first_byte_timeout_task(
     (void)task;
     struct aws_h1_stream *stream = arg;
     struct aws_http_connection *connection_base = stream->base.owning_connection;
+    /* zero-out task to indicate that it's no longer scheduled */
+    AWS_ZERO_STRUCT(stream->base.client_data->response_first_byte_timeout_task);
+
     if (status == AWS_TASK_STATUS_CANCELED) {
-        AWS_ZERO_STRUCT(stream->base.client_data->response_first_byte_timeout_task);
         return;
     }
 
@@ -755,7 +757,6 @@ static void s_http_stream_response_first_byte_timeout_task(
         (void *)connection_base,
         response_first_byte_timeout_ms);
 
-    AWS_ZERO_STRUCT(stream->base.client_data->response_first_byte_timeout_task);
     /* Don't stop reading/writing immediately, let that happen naturally during the channel shutdown process. */
     s_stop(
         connection,
