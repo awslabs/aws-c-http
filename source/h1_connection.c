@@ -536,6 +536,7 @@ static int s_aws_http1_switch_protocols(struct aws_h1_connection *connection) {
 static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     struct aws_h1_connection *connection =
         AWS_CONTAINER_OF(stream->base.owning_connection, struct aws_h1_connection, base);
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
     /*
      * If this is the end of a successful CONNECT request, mark ourselves as pass-through since the proxy layer
