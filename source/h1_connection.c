@@ -734,7 +734,7 @@ static void s_http_stream_idle_timeout_task(
     }
 
     struct aws_h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h1_connection, base);
-    /* Time out happened, close the connection manually */
+    /* Timeout happened, close the connection */
     uint64_t idle_timeout_ms = stream->base.client_data->idle_timeout_ms == 0
                                    ? connection_base->client_data->idle_timeout_ms
                                    : stream->base.client_data->idle_timeout_ms;
