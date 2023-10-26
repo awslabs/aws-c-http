@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+#include <aws/common/task_scheduler.h>
 #include <aws/http/request_response.h>
 
 #include <aws/http/private/http_impl.h>
@@ -54,6 +55,10 @@ struct aws_http_stream {
     union {
         struct aws_http_stream_client_data {
             int response_status;
+            uint64_t response_first_byte_timeout_ms;
+            /* Using aws_task instead of aws_channel_task because, currently, channel-tasks can't be canceled.
+             * We only touch this from the connection's thread */
+            struct aws_task response_first_byte_timeout_task;
         } client;
         struct aws_http_stream_server_data {
             struct aws_byte_cursor request_method_str;
