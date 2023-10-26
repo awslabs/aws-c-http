@@ -1934,8 +1934,8 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
         aws_high_res_clock_get_ticks((uint64_t *)&incoming_stream->base.metrics.receive_start_timestamp_ns);
         if (incoming_stream->base.client_data &&
             incoming_stream->base.client_data->response_first_byte_timeout_task.fn != NULL) {
-            /* There is an outstanding response timeout task, as we already received the data, we can cancel it now. We are
-             * safe to do it as we always on connection thread to schedule the task or cancel it */
+            /* There is an outstanding response timeout task, as we already received the data, we can cancel it now. We
+             * are safe to do it as we always on connection thread to schedule the task or cancel it */
             struct aws_event_loop *connection_loop = aws_channel_get_event_loop(connection->base.channel_slot->channel);
             /* The task will be zeroed out within the call */
             aws_event_loop_cancel_task(
