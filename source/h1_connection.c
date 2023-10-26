@@ -550,7 +550,7 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     }
 
     if (stream->base.client_data && stream->base.client_data->response_first_byte_timeout_task.fn != NULL) {
-        /* There is an outstanding idle timeout task, but stream completed, we can cancel it now. We are
+        /* There is an outstanding response timeout task, but stream completed, we can cancel it now. We are
          * safe to do it as we always on connection thread to schedule the task or cancel it */
         struct aws_event_loop *connection_loop = aws_channel_get_event_loop(connection->base.channel_slot->channel);
         /* The task will be zeroed out within the call */
@@ -784,7 +784,7 @@ static void s_set_outgoing_message_done(struct aws_h1_stream *stream) {
     stream->base.metrics.sending_duration_ns =
         stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
     if (stream->base.metrics.receive_start_timestamp_ns == -1) {
-        /* We haven't receive any message, schedule the request idle timeout task */
+        /* We haven't receive any message, schedule the response timeout task */
 
         uint64_t response_first_byte_timeout_ms = 0;
         if (stream->base.client_data != NULL && connection->client_data != NULL) {
@@ -1934,7 +1934,7 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
         aws_high_res_clock_get_ticks((uint64_t *)&incoming_stream->base.metrics.receive_start_timestamp_ns);
         if (incoming_stream->base.client_data &&
             incoming_stream->base.client_data->response_first_byte_timeout_task.fn != NULL) {
-            /* There is an outstanding idle timeout task, as we already received the data, we can cancel it now. We are
+            /* There is an outstanding response timeout task, as we already received the data, we can cancel it now. We are
              * safe to do it as we always on connection thread to schedule the task or cancel it */
             struct aws_event_loop *connection_loop = aws_channel_get_event_loop(connection->base.channel_slot->channel);
             /* The task will be zeroed out within the call */
