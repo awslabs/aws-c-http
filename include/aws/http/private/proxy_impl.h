@@ -52,7 +52,7 @@ struct aws_http_proxy_config {
 
     struct aws_byte_buf host;
 
-    uint16_t port;
+    uint32_t port;
 
     struct aws_tls_connection_options *tls_options;
 
@@ -97,7 +97,7 @@ struct aws_http_proxy_user_data {
      * Cached original connect options
      */
     struct aws_string *original_host;
-    uint16_t original_port;
+    uint32_t original_port;
     void *original_user_data;
     struct aws_tls_connection_options *original_tls_options;
     struct aws_client_bootstrap *original_bootstrap;

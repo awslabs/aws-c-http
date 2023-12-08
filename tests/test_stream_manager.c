@@ -241,7 +241,7 @@ static int s_tester_init(struct sm_tester_options *options) {
     }
 
     bool use_tls = true;
-    uint16_t port = 443;
+    uint32_t port = 443;
     if (!s_tester.endpoint.scheme.len && (s_tester.endpoint.port == 80 || s_tester.endpoint.port == 3280)) {
         use_tls = false;
     } else {

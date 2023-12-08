@@ -114,7 +114,7 @@ struct aws_http_proxy_options {
     /**
      * Port to make the proxy connection to
      */
-    uint16_t port;
+    uint32_t port;
 
     /**
      * Optional.

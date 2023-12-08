@@ -38,7 +38,7 @@ struct proxy_tester_options {
     struct aws_allocator *alloc;
     struct aws_http_proxy_options *proxy_options;
     struct aws_byte_cursor host;
-    uint16_t port;
+    uint32_t port;
     enum proxy_tester_test_mode test_mode;
     enum proxy_tester_failure_type failure_type;
 
@@ -59,7 +59,7 @@ struct proxy_tester {
 
     struct aws_http_proxy_options proxy_options;
     struct aws_byte_cursor host;
-    uint16_t port;
+    uint32_t port;
 
     enum proxy_tester_test_mode test_mode;
     enum proxy_tester_failure_type failure_type;
@@ -81,7 +81,7 @@ struct proxy_tester {
     bool tls_successful;
 
     struct aws_byte_buf connection_host_name;
-    uint16_t connection_port;
+    uint32_t connection_port;
 
     struct aws_array_list connect_requests;
 
@@ -120,7 +120,7 @@ int proxy_tester_send_connect_response(struct proxy_tester *tester);
 int proxy_tester_verify_connection_attempt_was_to_proxy(
     struct proxy_tester *tester,
     struct aws_byte_cursor expected_host,
-    uint16_t expected_port);
+    uint32_t expected_port);
 
 struct testing_channel *proxy_tester_get_current_channel(struct proxy_tester *tester);
 

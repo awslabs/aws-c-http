@@ -22,9 +22,9 @@
 static struct proxy_tester tester;
 
 static char *s_host_name = "aws.amazon.com";
-static uint16_t s_port = 80;
+static uint32_t s_port = 80;
 static char *s_proxy_host_name = "www.myproxy.hmm";
-static uint16_t s_proxy_port = 777;
+static uint32_t s_proxy_port = 777;
 
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_method, "GET");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_path, "/");
