@@ -1201,6 +1201,10 @@ uint32_t aws_http_stream_get_id(const struct aws_http_stream *stream) {
     return stream->id;
 }
 
+void aws_http_stream_cancel(const struct aws_http_stream *stream, int error_code) {
+    stream->vtable->cancel(stream, error_code);
+}
+
 int aws_http2_stream_reset(struct aws_http_stream *http2_stream, uint32_t http2_error) {
     AWS_PRECONDITION(http2_stream);
     AWS_PRECONDITION(http2_stream->vtable);

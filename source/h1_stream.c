@@ -329,6 +329,7 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
     .destroy = s_stream_destroy,
     .update_window = s_stream_update_window,
     .activate = aws_h1_stream_activate,
+    .cancel = aws_h1_stream_cancel,
     .http1_write_chunk = s_stream_write_chunk,
     .http1_add_trailer = s_stream_add_trailer,
     .http2_reset_stream = NULL,

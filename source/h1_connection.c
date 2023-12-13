@@ -388,6 +388,16 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
     return AWS_OP_SUCCESS;
 }
 
+void aws_h1_stream_cancel(struct aws_http_stream *stream, int error_code) {
+    /* TODO: if the stream was activated, just log and do nothing (you don't need to cancel when it's not activated) */
+    struct aws_h1_stream *h1_stream = AWS_CONTAINER_OF(stream, struct aws_h1_stream, base);
+
+    struct aws_http_connection *base_connection = stream->owning_connection;
+    struct aws_h1_connection *connection = AWS_CONTAINER_OF(base_connection, struct aws_h1_connection, base);
+    /* Don't stop reading/writing immediately, let that happen naturally during the channel shutdown process. */
+    s_stop(connection, false /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, error_code);
+}
+
 struct aws_http_stream *s_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options) {

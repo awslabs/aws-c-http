@@ -28,11 +28,13 @@ static int s_stream_write_data(
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error);
 static int s_stream_reset_stream_internal(struct aws_http_stream *stream_base, struct aws_h2err stream_error);
+static void s_stream_cancel(struct aws_http_stream *stream, int error_code);
 
 struct aws_http_stream_vtable s_h2_stream_vtable = {
     .destroy = s_stream_destroy,
     .update_window = s_stream_update_window,
     .activate = aws_h2_stream_activate,
+    .cancel = s_stream_cancel,
     .http1_write_chunk = NULL,
     .http2_reset_stream = s_stream_reset_stream,
     .http2_get_received_error_code = s_stream_get_received_error_code,
@@ -584,6 +586,15 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t h
         aws_http2_error_code_to_str(http2_error),
         http2_error);
     return s_stream_reset_stream_internal(stream_base, stream_error);
+}
+
+void s_stream_cancel(struct aws_http_stream *stream, int error_code) {
+    /* TODO: if the stream was activated, just log and do nothing (you don't need to cancel when it's not activated) */
+    struct aws_h2err stream_error = {
+        .aws_code = error_code,
+        .h2_code = AWS_HTTP2_ERR_CANCEL,
+    };
+    s_stream_reset_stream_internal(stream, stream_error);
 }
 
 static int s_stream_get_received_error_code(struct aws_http_stream *stream_base, uint32_t *out_http2_error) {
