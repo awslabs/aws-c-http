@@ -402,8 +402,6 @@ void aws_h1_stream_cancel(struct aws_http_stream *stream, int error_code) {
             AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "id=%p: Stream not active, nothing to cancel.", (void *)stream);
             return;
         }
-        connection->synced_data.is_open = false;
-        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
 
         aws_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -415,7 +413,7 @@ void aws_h1_stream_cancel(struct aws_http_stream *stream, int error_code) {
         error_code,
         aws_error_name(error_code));
 
-    aws_channel_shutdown(connection->base.channel_slot->channel, error_code);
+    s_stop(connection, false /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, error_code);
 }
 
 struct aws_http_stream *s_make_request(

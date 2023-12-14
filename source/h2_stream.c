@@ -27,7 +27,10 @@ static int s_stream_write_data(
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error);
-static int s_stream_reset_stream_internal(struct aws_http_stream *stream_base, struct aws_h2err stream_error);
+static int s_stream_reset_stream_internal(
+    struct aws_http_stream *stream_base,
+    struct aws_h2err stream_error,
+    bool cancelling);
 static void s_stream_cancel(struct aws_http_stream *stream, int error_code);
 
 struct aws_http_stream_vtable s_h2_stream_vtable = {
@@ -528,12 +531,16 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
             .h2_code = AWS_HTTP2_ERR_INTERNAL_ERROR,
         };
         /* Only when stream is not initialized reset will fail. So, we can assert it to be succeed. */
-        AWS_FATAL_ASSERT(s_stream_reset_stream_internal(stream_base, stream_error) == AWS_OP_SUCCESS);
+        AWS_FATAL_ASSERT(
+            s_stream_reset_stream_internal(stream_base, stream_error, false /*cancelling*/) == AWS_OP_SUCCESS);
     }
     return;
 }
 
-static int s_stream_reset_stream_internal(struct aws_http_stream *stream_base, struct aws_h2err stream_error) {
+static int s_stream_reset_stream_internal(
+    struct aws_http_stream *stream_base,
+    struct aws_h2err stream_error,
+    bool cancelling) {
 
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
@@ -555,21 +562,25 @@ static int s_stream_reset_stream_internal(struct aws_http_stream *stream_base, s
     } /* END CRITICAL SECTION */
 
     if (stream_is_init) {
+        if (cancelling) {
+            /* Not an error if we are just cancelling. */
+            AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "id=%p: Stream not in process, nothing to cancel.", (void *)stream);
+            return AWS_OP_SUCCESS;
+        }
         AWS_H2_STREAM_LOG(
             ERROR, stream, "Reset stream failed. Stream is in initialized state, please activate the stream first.");
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
-    }
-    if (cross_thread_work_should_schedule) {
-        AWS_H2_STREAM_LOG(TRACE, stream, "Scheduling stream cross-thread work task");
-        /* increment the refcount of stream to keep it alive until the task runs */
-        aws_atomic_fetch_add(&stream->base.refcount, 1);
-        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &stream->cross_thread_work_task);
-        return AWS_OP_SUCCESS;
     }
     if (reset_called) {
         AWS_H2_STREAM_LOG(DEBUG, stream, "Reset stream ignored. Reset stream has been called already.");
     }
 
+    if (cross_thread_work_should_schedule) {
+        AWS_H2_STREAM_LOG(TRACE, stream, "Scheduling stream cross-thread work task");
+        /* increment the refcount of stream to keep it alive until the task runs */
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &stream->cross_thread_work_task);
+    }
     return AWS_OP_SUCCESS;
 }
 
@@ -585,7 +596,7 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t h
         (void *)stream_base,
         aws_http2_error_code_to_str(http2_error),
         http2_error);
-    return s_stream_reset_stream_internal(stream_base, stream_error);
+    return s_stream_reset_stream_internal(stream_base, stream_error, false /*cancelling*/);
 }
 
 void s_stream_cancel(struct aws_http_stream *stream_base, int error_code) {
@@ -593,38 +604,7 @@ void s_stream_cancel(struct aws_http_stream *stream_base, int error_code) {
         .aws_code = error_code,
         .h2_code = AWS_HTTP2_ERR_CANCEL,
     };
-
-    struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
-    struct aws_h2_connection *connection = s_get_h2_connection(stream);
-    bool reset_called;
-    bool stream_is_active;
-    bool cross_thread_work_should_schedule = false;
-
-    { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(stream);
-
-        reset_called = stream->synced_data.reset_called;
-        stream_is_active = stream->synced_data.api_state == AWS_H2_STREAM_API_STATE_ACTIVE;
-        if (!reset_called && stream_is_active) {
-            cross_thread_work_should_schedule = !stream->synced_data.is_cross_thread_work_task_scheduled;
-            stream->synced_data.reset_called = true;
-            stream->synced_data.reset_error = stream_error;
-        }
-        s_unlock_synced_data(stream);
-    } /* END CRITICAL SECTION */
-    if (reset_called || !stream_is_active) {
-        AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "id=%p: Stream not in process, nothing to cancel.", (void *)stream);
-        return;
-    }
-
-    if (cross_thread_work_should_schedule) {
-        AWS_H2_STREAM_LOG(TRACE, stream, "Scheduling stream cross-thread work task");
-        /* increment the refcount of stream to keep it alive until the task runs */
-        aws_atomic_fetch_add(&stream->base.refcount, 1);
-        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &stream->cross_thread_work_task);
-        return;
-    }
-
+    s_stream_reset_stream_internal(stream_base, stream_error, true /*cancelling*/);
     return;
 }
 
