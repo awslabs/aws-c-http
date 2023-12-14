@@ -1114,11 +1114,12 @@ uint32_t aws_http_stream_get_id(const struct aws_http_stream *stream);
  * For HTTP/1.1 stream, it's equivelent to close the connection.
  * For HTTP/2 stream, it's equivelent to reset the stream with `AWS_HTTP2_ERR_CANCEL`.
  *
- * It will complete with the error code provided, unless, the stream
- * already in completing process because of other reasons.
+ * It will complete with the error code provided, unless the stream already
+ * in completing process because of other reasons or not activated,
+ * in which case this call will have no impact.
  */
 AWS_HTTP_API
-void aws_http_stream_cancel(const struct aws_http_stream *stream, int error_code);
+void aws_http_stream_cancel(struct aws_http_stream *stream, int error_code);
 
 /**
  * Reset the HTTP/2 stream (HTTP/2 only).

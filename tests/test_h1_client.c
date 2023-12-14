@@ -4236,6 +4236,62 @@ H1_CLIENT_TEST_CASE(h1_client_connection_close_before_request_finishes) {
     return AWS_OP_SUCCESS;
 }
 
+H1_CLIENT_TEST_CASE(h1_client_stream_cancel) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* set up request whose body won't send immediately */
+    struct slow_body_sender body_sender;
+    AWS_ZERO_STRUCT(body_sender);
+    s_slow_body_sender_init(&body_sender);
+    struct aws_input_stream *body_stream = &body_sender.base;
+
+    struct aws_http_header headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Content-Length"),
+            .value = aws_byte_cursor_from_c_str("16"),
+        },
+    };
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
+    aws_http_message_set_body_stream(request, body_stream);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+    /* send head of request */
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+    aws_input_stream_release(body_stream);
+
+    /* Something absurd */
+    aws_http_stream_cancel(stream_tester.stream, AWS_ERROR_COND_VARIABLE_ERROR_UNKNOWN);
+    /* The second call will take not action */
+    aws_http_stream_cancel(stream_tester.stream, AWS_ERROR_SUCCESS);
+    /* Wait for channel to finish shutdown */
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    /* check result, should not receive any body */
+    const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
+                           "Content-Length: 16\r\n"
+                           "\r\n";
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
+
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_COND_VARIABLE_ERROR_UNKNOWN, stream_tester.on_complete_error_code);
+
+    /* clean up */
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 /* When response has `connection: close` any further request body should not be sent. */
 H1_CLIENT_TEST_CASE(h1_client_response_close_connection_before_request_finishes) {
     (void)ctx;
