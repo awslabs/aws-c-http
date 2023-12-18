@@ -489,9 +489,9 @@ static size_t s_calculate_chunk_line_size(const struct aws_http1_chunk_options *
     size_t chunk_line_size = MAX_ASCII_HEX_CHUNK_STR_SIZE + CRLF_SIZE;
     for (size_t i = 0; i < options->num_extensions; ++i) {
         struct aws_http1_chunk_extension *chunk_extension = options->extensions + i;
-        chunk_line_size += sizeof(';');
+        chunk_line_size += 1 /* ; */;
         chunk_line_size += chunk_extension->key.len;
-        chunk_line_size += sizeof('=');
+        chunk_line_size += 1 /* = */;
         chunk_line_size += chunk_extension->value.len;
     }
     return chunk_line_size;
