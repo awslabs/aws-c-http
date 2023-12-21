@@ -3647,9 +3647,21 @@ H1_CLIENT_TEST_CASE(h1_client_close_from_on_thread_makes_not_open) {
     return AWS_OP_SUCCESS;
 }
 
+struct s_callback_invoked {
+    bool destroy_invoked;
+    bool complete_invoked;
+};
+
 static void s_unactivated_stream_cleans_up_on_destroy(void *data) {
-    bool *destroyed = data;
-    *destroyed = true;
+    struct s_callback_invoked *callback_data = data;
+    callback_data->destroy_invoked = true;
+}
+
+static void s_unactivated_stream_complete(struct aws_http_stream *stream, int error_code, void *data) {
+    (void)stream;
+    (void)error_code;
+    struct s_callback_invoked *callback_data = data;
+    callback_data->complete_invoked = true;
 }
 
 H1_CLIENT_TEST_CASE(h1_client_unactivated_stream_cleans_up) {
@@ -3657,26 +3669,30 @@ H1_CLIENT_TEST_CASE(h1_client_unactivated_stream_cleans_up) {
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
     ASSERT_TRUE(aws_http_connection_is_open(tester.connection));
-    bool destroyed = false;
 
     struct aws_http_message *request = aws_http_message_new_request(allocator);
     ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET")));
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
+    struct s_callback_invoked callback_data = {0};
 
     struct aws_http_make_request_options options = {
         .self_size = sizeof(struct aws_http_make_request_options),
         .request = request,
         .on_destroy = s_unactivated_stream_cleans_up_on_destroy,
-        .user_data = &destroyed,
+        .on_complete = s_unactivated_stream_complete,
+        .user_data = &callback_data,
     };
 
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &options);
     aws_http_message_release(request);
     ASSERT_NOT_NULL(stream);
     /* we do not activate, that is the test. */
-    ASSERT_FALSE(destroyed);
+    ASSERT_FALSE(callback_data.destroy_invoked);
+    ASSERT_FALSE(callback_data.complete_invoked);
     aws_http_stream_release(stream);
-    ASSERT_TRUE(destroyed);
+    /* Only destroy invoked, the complete was not invoked */
+    ASSERT_TRUE(callback_data.destroy_invoked);
+    ASSERT_FALSE(callback_data.complete_invoked);
     aws_http_connection_close(tester.connection);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;

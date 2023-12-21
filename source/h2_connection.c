@@ -1531,7 +1531,7 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
         }
         connection->thread_data.settings_self[settings_array[i].id] = settings_array[i].value;
     }
-    /* invoke the change settings compeleted user callback */
+    /* invoke the change settings completed user callback */
     if (pending_settings->on_completed) {
         pending_settings->on_completed(&connection->base, AWS_ERROR_SUCCESS, pending_settings->user_data);
     }
