@@ -186,15 +186,16 @@ typedef int(
 typedef int(aws_http_on_incoming_request_done_fn)(struct aws_http_stream *stream, void *user_data);
 
 /**
- * Invoked when request/response stream is completely destroyed.
- * This may be invoked synchronously when aws_http_stream_release() is called.
- * This is invoked even if the stream is never activated.
+ * Invoked when a request/response stream is complete, whether successful or unsuccessful
+ * This is always invoked on the HTTP connection's event-loop thread.
+ * This will not be invoked if the stream is never activated.
  */
 typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
 
 /**
  * Invoked when request/response stream destroy completely.
  * This can be invoked within the same thead who release the refcount on http stream.
+ * This is invoked even if the stream is never activated.
  */
 typedef void(aws_http_on_stream_destroy_fn)(void *user_data);
 
@@ -1108,6 +1109,18 @@ void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increm
  */
 AWS_HTTP_API
 uint32_t aws_http_stream_get_id(const struct aws_http_stream *stream);
+
+/**
+ * Cancel the stream in flight.
+ * For HTTP/1.1 streams, it's equivalent to closing the connection.
+ * For HTTP/2 streams, it's equivalent to calling reset on the stream with `AWS_HTTP2_ERR_CANCEL`.
+ *
+ * the stream will complete with the error code provided, unless the stream is
+ * already completing for other reasons, or the stream is not activated,
+ * in which case this call will have no impact.
+ */
+AWS_HTTP_API
+void aws_http_stream_cancel(struct aws_http_stream *stream, int error_code);
 
 /**
  * Reset the HTTP/2 stream (HTTP/2 only).

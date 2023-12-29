@@ -388,6 +388,34 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
     return AWS_OP_SUCCESS;
 }
 
+void aws_h1_stream_cancel(struct aws_http_stream *stream, int error_code) {
+    struct aws_h1_stream *h1_stream = AWS_CONTAINER_OF(stream, struct aws_h1_stream, base);
+    struct aws_http_connection *base_connection = stream->owning_connection;
+    struct aws_h1_connection *connection = AWS_CONTAINER_OF(base_connection, struct aws_h1_connection, base);
+
+    { /* BEGIN CRITICAL SECTION */
+        aws_h1_connection_lock_synced_data(connection);
+        if (h1_stream->synced_data.api_state != AWS_H1_STREAM_API_STATE_ACTIVE ||
+            connection->synced_data.is_open == false) {
+            /* Not active, nothing to cancel. */
+            aws_h1_connection_unlock_synced_data(connection);
+            AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "id=%p: Stream not active, nothing to cancel.", (void *)stream);
+            return;
+        }
+
+        aws_h1_connection_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Connection shutting down due to stream=%p cancelled with error code %d (%s).",
+        (void *)&connection->base,
+        (void *)stream,
+        error_code,
+        aws_error_name(error_code));
+
+    s_stop(connection, false /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, error_code);
+}
+
 struct aws_http_stream *s_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options) {
