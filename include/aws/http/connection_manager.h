@@ -80,7 +80,7 @@ struct aws_http_connection_manager_options {
 
     const struct aws_http_connection_monitoring_options *monitoring_options;
     struct aws_byte_cursor host;
-    uint16_t port;
+    uint32_t port;
 
     /**
      * Optional.

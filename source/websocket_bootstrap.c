@@ -235,7 +235,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     /* Success! (so far) */
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_WEBSOCKET_SETUP,
-        "id=%p: Websocket setup begun, connecting to " PRInSTR ":%" PRIu16 PRInSTR,
+        "id=%p: Websocket setup begun, connecting to " PRInSTR ":%" PRIu32 PRInSTR,
         (void *)ws_bootstrap,
         AWS_BYTE_CURSOR_PRI(options->host),
         options->port,

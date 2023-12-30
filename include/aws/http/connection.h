@@ -272,7 +272,7 @@ struct aws_http_client_connection_options {
     /**
      * Required.
      */
-    uint16_t port;
+    uint32_t port;
 
     /**
      * Required.

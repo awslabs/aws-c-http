@@ -506,7 +506,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
     if (put_err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
-            "%p: %s:%d: Failed to store connection object, error %d (%s).",
+            "%p: %s:%u: Failed to store connection object, error %d (%s).",
             (void *)server,
             server->socket->local_endpoint.address,
             server->socket->local_endpoint.port,
@@ -519,7 +519,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
     /* Tell user of successful connection. */
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
-        "id=%p: " PRInSTR " server connection established at %p %s:%d.",
+        "id=%p: " PRInSTR " server connection established at %p %s:%u.",
         (void *)connection,
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->http_version)),
         (void *)server,
@@ -701,7 +701,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
 
     AWS_LOGF_INFO(
         AWS_LS_HTTP_SERVER,
-        "%p %s:%d: Server setup complete, listening for incoming connections.",
+        "%p %s:%u: Server setup complete, listening for incoming connections.",
         (void *)server,
         server->socket->local_endpoint.address,
         server->socket->local_endpoint.port);
@@ -751,7 +751,7 @@ void aws_http_server_release(struct aws_http_server *server) {
      * s_server_bootstrap_on_server_listener_destroy will be invoked, clean up of the server will be there */
     AWS_LOGF_INFO(
         AWS_LS_HTTP_SERVER,
-        "%p %s:%d: Shutting down the server.",
+        "%p %s:%u: Shutting down the server.",
         (void *)server,
         server->socket->local_endpoint.address,
         server->socket->local_endpoint.port);
@@ -1099,9 +1099,9 @@ int aws_http_client_connect_internal(
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,
-        "static: attempting to initialize a new client channel to %s:%d",
+        "static: attempting to initialize a new client channel to %s:%u",
         aws_string_c_str(host_name),
-        (int)options.port);
+        options.port);
 
     struct aws_socket_channel_bootstrap_options channel_options = {
         .bootstrap = options.bootstrap,

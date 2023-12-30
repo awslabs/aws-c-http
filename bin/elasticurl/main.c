@@ -602,7 +602,7 @@ int main(int argc, char **argv) {
     }
 
     bool use_tls = true;
-    uint16_t port = 443;
+    uint32_t port = 443;
 
     if (!app_ctx.uri.scheme.len && (app_ctx.uri.port == 80 || app_ctx.uri.port == 8080)) {
         use_tls = false;

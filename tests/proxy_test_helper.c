@@ -420,9 +420,9 @@ int proxy_tester_verify_connect_request(struct proxy_tester *tester) {
     snprintf(
         connect_request_buffer,
         AWS_ARRAY_SIZE(connect_request_buffer),
-        "CONNECT " PRInSTR ":%d HTTP/1.1",
+        "CONNECT " PRInSTR ":%u HTTP/1.1",
         AWS_BYTE_CURSOR_PRI(tester->host),
-        (int)tester->port);
+        tester->port);
 
     struct aws_byte_cursor expected_connect_message_first_line_cursor =
         aws_byte_cursor_from_c_str(connect_request_buffer);
@@ -474,7 +474,7 @@ int proxy_tester_send_connect_response(struct proxy_tester *tester) {
 int proxy_tester_verify_connection_attempt_was_to_proxy(
     struct proxy_tester *tester,
     struct aws_byte_cursor expected_host,
-    uint16_t expected_port) {
+    uint32_t expected_port) {
     ASSERT_BIN_ARRAYS_EQUALS(
         tester->connection_host_name.buffer,
         tester->connection_host_name.len,

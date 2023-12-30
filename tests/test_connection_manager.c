@@ -1432,7 +1432,7 @@ static struct aws_byte_cursor s_get_proxy_host_for_test(
     return aws_byte_cursor_from_string(host_string);
 }
 
-static uint16_t s_get_proxy_port_for_test(
+static uint32_t s_get_proxy_port_for_test(
     struct proxy_integration_configurations *configs,
     enum proxy_test_type proxy_test_type,
     enum aws_http_proxy_authentication_type auth_type,
@@ -1447,7 +1447,7 @@ static uint16_t s_get_proxy_port_for_test(
     } else {
         port_string = configs->http_proxy_port;
     }
-    return (uint16_t)atoi(aws_string_c_str(port_string));
+    return (uint32_t)atoi(aws_string_c_str(port_string));
 }
 static struct aws_string *s_get_proxy_url_for_test(
     struct proxy_integration_configurations *configs,

@@ -236,7 +236,7 @@ struct aws_http_connection_manager {
     struct aws_string *host;
     struct proxy_env_var_settings proxy_ev_settings;
     struct aws_tls_connection_options *proxy_ev_tls_options;
-    uint16_t port;
+    uint32_t port;
     /*
      * HTTP/2 specific.
      */
