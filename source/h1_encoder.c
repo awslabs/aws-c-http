@@ -403,10 +403,7 @@ int aws_h1_encoder_message_init_from_response(
         goto error;
     }
 
-    err = aws_byte_buf_init(&message->outgoing_head_buf, allocator, head_total_len);
-    if (err) {
-        return AWS_OP_ERR;
-    }
+    aws_byte_buf_init(&message->outgoing_head_buf, allocator, head_total_len);
 
     bool wrote_all = true;
 
