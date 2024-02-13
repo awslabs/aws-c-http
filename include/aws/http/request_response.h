@@ -139,7 +139,8 @@ typedef void(aws_http_message_transform_fn)(
  * This is always invoked on the HTTP connection's event-loop thread.
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.
- * Return AWS_OP_ERR to indicate failure and cancel the stream.
+ * Return aws_raise_error(E) to indicate failure and cancel the stream.
+ * The error you raise will be reflected in the error_code passed to the on_complete callback.
  */
 typedef int(aws_http_on_incoming_headers_fn)(
     struct aws_http_stream *stream,
@@ -153,7 +154,8 @@ typedef int(aws_http_on_incoming_headers_fn)(
  * This is always invoked on the HTTP connection's event-loop thread.
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.
- * Return AWS_OP_ERR to indicate failure and cancel the stream.
+ * Return aws_raise_error(E) to indicate failure and cancel the stream.
+ * The error you raise will be reflected in the error_code passed to the on_complete callback.
  */
 typedef int(aws_http_on_incoming_header_block_done_fn)(
     struct aws_http_stream *stream,
@@ -171,7 +173,8 @@ typedef int(aws_http_on_incoming_header_block_done_fn)(
  * aws_http_stream_update_window().
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.
- * Return AWS_OP_ERR to indicate failure and cancel the stream.
+ * Return aws_raise_error(E) to indicate failure and cancel the stream.
+ * The error you raise will be reflected in the error_code passed to the on_complete callback.
  */
 typedef int(
     aws_http_on_incoming_body_fn)(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data);
@@ -181,7 +184,8 @@ typedef int(
  * This is always invoked on the HTTP connection's event-loop thread.
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.
- * Return AWS_OP_ERR to indicate failure and cancel the stream.
+ * Return aws_raise_error(E) to indicate failure and cancel the stream.
+ * The error you raise will be reflected in the error_code passed to the on_complete callback.
  */
 typedef int(aws_http_on_incoming_request_done_fn)(struct aws_http_stream *stream, void *user_data);
 
