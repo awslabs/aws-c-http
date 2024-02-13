@@ -349,14 +349,7 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     if (options->use_tcp) {
         snprintf(endpoint.address, sizeof(endpoint.address), "127.0.0.1");
     } else {
-        /* Generate random address for endpoint */
-        struct aws_uuid uuid;
-        ASSERT_SUCCESS(aws_uuid_init(&uuid));
-        char uuid_str[AWS_UUID_STR_LEN];
-        struct aws_byte_buf uuid_buf = aws_byte_buf_from_empty_array(uuid_str, sizeof(uuid_str));
-        ASSERT_SUCCESS(aws_uuid_to_str(&uuid, &uuid_buf));
-
-        snprintf(endpoint.address, sizeof(endpoint.address), LOCAL_SOCK_TEST_FORMAT, uuid_str);
+        aws_socket_endpoint_init_local_address_for_test(&endpoint);
     }
 
     tester->endpoint = endpoint;
@@ -380,8 +373,8 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     ASSERT_NOT_NULL(tester->server);
 
     /*
-     * localhost server binds to any port, so let's get the final listener endpoint which includes the port
-     * that was used.
+     * localhost server binds to any port, so let's get the final listener endpoint whether or not we're making
+     * connections to it.
      */
     if (options->use_tcp) {
         tester->endpoint = *aws_http_server_get_listener_endpoint(tester->server);
