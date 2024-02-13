@@ -762,6 +762,12 @@ void aws_http_server_release(struct aws_http_server *server) {
      * clean up will be called from eventloop */
 }
 
+const struct aws_socket_endpoint *aws_http_server_get_listener_endpoint(const struct aws_http_server *server) {
+    AWS_FATAL_ASSERT(server);
+
+    return &server->socket->local_endpoint;
+}
+
 /* At this point, the channel bootstrapper has established a connection to the server and set up a channel.
  * Now we need to create the aws_http_connection and insert it into the channel as a channel-handler. */
 static void s_client_bootstrap_on_channel_setup(
