@@ -195,6 +195,12 @@ int aws_http_connection_configure_server(
 AWS_HTTP_API
 bool aws_http_connection_is_server(const struct aws_http_connection *connection);
 
+/**
+ * Returns the local listener endpoint of the HTTP server.  Only valid as long as the server remains valid.
+ */
+AWS_HTTP_API
+const struct aws_socket_endpoint *aws_http_server_get_listener_endpoint(const struct aws_http_server *server);
+
 AWS_EXTERN_C_END
 AWS_POP_SANE_WARNING_LEVEL
 

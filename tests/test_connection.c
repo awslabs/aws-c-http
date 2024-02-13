@@ -44,6 +44,7 @@ struct tester_options {
     char *client_alpn_list;
     bool no_connection; /* don't connect server to client */
     bool pin_event_loop;
+    bool use_tcp; /* otherwise uses domain sockets */
 };
 
 /* Singleton used by tests in this file */
@@ -336,22 +337,30 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 
     struct aws_socket_options socket_options = {
         .type = AWS_SOCKET_STREAM,
-        .domain = AWS_SOCKET_LOCAL,
+        .domain = options->use_tcp ? AWS_SOCKET_IPV4 : AWS_SOCKET_LOCAL,
         .connect_timeout_ms =
             (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
     };
     tester->socket_options = socket_options;
-    /* Generate random address for endpoint */
-    struct aws_uuid uuid;
-    ASSERT_SUCCESS(aws_uuid_init(&uuid));
-    char uuid_str[AWS_UUID_STR_LEN];
-    struct aws_byte_buf uuid_buf = aws_byte_buf_from_empty_array(uuid_str, sizeof(uuid_str));
-    ASSERT_SUCCESS(aws_uuid_to_str(&uuid, &uuid_buf));
+
     struct aws_socket_endpoint endpoint;
     AWS_ZERO_STRUCT(endpoint);
 
-    snprintf(endpoint.address, sizeof(endpoint.address), LOCAL_SOCK_TEST_FORMAT, uuid_str);
+    if (options->use_tcp) {
+        snprintf(endpoint.address, sizeof(endpoint.address), "127.0.0.1");
+    } else {
+        /* Generate random address for endpoint */
+        struct aws_uuid uuid;
+        ASSERT_SUCCESS(aws_uuid_init(&uuid));
+        char uuid_str[AWS_UUID_STR_LEN];
+        struct aws_byte_buf uuid_buf = aws_byte_buf_from_empty_array(uuid_str, sizeof(uuid_str));
+        ASSERT_SUCCESS(aws_uuid_to_str(&uuid, &uuid_buf));
+
+        snprintf(endpoint.address, sizeof(endpoint.address), LOCAL_SOCK_TEST_FORMAT, uuid_str);
+    }
+
     tester->endpoint = endpoint;
+
     /* Create server (listening socket) */
     struct aws_http_server_options server_options = AWS_HTTP_SERVER_OPTIONS_INIT;
     server_options.allocator = tester->alloc;
@@ -369,6 +378,14 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 
     tester->server = aws_http_server_new(&server_options);
     ASSERT_NOT_NULL(tester->server);
+
+    /*
+     * localhost server binds to any port, so let's get the final listener endpoint which includes the port
+     * that was used.
+     */
+    if (options->use_tcp) {
+        tester->endpoint = *aws_http_server_get_listener_endpoint(tester->server);
+    }
 
     /* If test doesn't need a connection, we're done setting up. */
     if (options->no_connection) {
@@ -447,6 +464,20 @@ static int s_test_server_new_destroy(struct aws_allocator *allocator, void *ctx)
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(server_new_destroy, s_test_server_new_destroy);
+
+static int s_test_server_new_destroy_tcp(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    struct tester_options options = {.alloc = allocator, .no_connection = true, .use_tcp = true};
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, &options));
+
+    const struct aws_socket_endpoint *listener_endpoint = aws_http_server_get_listener_endpoint(tester.server);
+    ASSERT_TRUE(listener_endpoint->port > 0);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(server_new_destroy_tcp, s_test_server_new_destroy_tcp);
 
 void release_all_client_connections(struct tester *tester) {
     for (int i = 0; i < tester->client_connection_num; i++) {

@@ -498,6 +498,7 @@ add_test_case(h2_client_manual_data_write_no_data)
 add_test_case(h2_client_manual_data_write_connection_close)
 
 add_test_case(server_new_destroy)
+add_test_case(server_new_destroy_tcp)
 add_test_case(connection_setup_shutdown)
 add_test_case(connection_setup_shutdown_tls)
 add_test_case(connection_setup_shutdown_proxy_setting_on_ev_not_found)
