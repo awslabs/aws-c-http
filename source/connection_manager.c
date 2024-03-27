@@ -183,8 +183,8 @@ struct aws_http_connection_manager {
     /*
      * The set of all available, ready-to-be-used connections, as aws_idle_connection structs.
      *
-     * This must be a LIFO stack.  When connections are released by the user, they must be added on to the back.
-     * When we vend connections to the user, they must be removed from the back first.
+     * This must be a double-ended queue.  When connections are released by the user, they must be added on to the back.
+     * When we vend connections to the user, they must be removed from the back first (FIFO).
      * In this way, the list will always be sorted from oldest (in terms of time spent idle) to newest.  This means
      * we can always use the cull timestamp of the front connection as the next scheduled time for culling.
      * It also means that when we cull connections, we can quit the loop as soon as we find a connection
@@ -921,9 +921,10 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
     struct aws_connection_management_transaction work;
     s_aws_connection_management_transaction_init(&work, manager);
 
-    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: release", (void *)manager);
+    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: release", (void *)manager);
 
     aws_mutex_lock(&manager->lock);
+    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: lock acquired", (void *)manager);
 
     if (manager->external_ref_count > 0) {
         manager->external_ref_count -= 1;
@@ -953,7 +954,7 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
     }
 
     aws_mutex_unlock(&manager->lock);
-
+    // TODO: waahm7 why execute a transaction that we never built? What happens?
     s_aws_http_connection_manager_execute_transaction(&work);
 }
 
