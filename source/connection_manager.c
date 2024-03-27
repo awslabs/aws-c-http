@@ -184,7 +184,7 @@ struct aws_http_connection_manager {
      * The set of all available, ready-to-be-used connections, as aws_idle_connection structs.
      *
      * This must be a double-ended queue.  When connections are released by the user, they must be added on to the back.
-     * When we vend connections to the user, they must be removed from the back first (FIFO).
+     * When we vend connections to the user, they must be removed from the back first (LIFO).
      * In this way, the list will always be sorted from oldest (in terms of time spent idle) to newest.  This means
      * we can always use the cull timestamp of the front connection as the next scheduled time for culling.
      * It also means that when we cull connections, we can quit the loop as soon as we find a connection
