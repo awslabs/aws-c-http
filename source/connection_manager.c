@@ -921,10 +921,9 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
     struct aws_connection_management_transaction work;
     s_aws_connection_management_transaction_init(&work, manager);
 
-    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: release", (void *)manager);
+    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: release", (void *)manager);
 
     aws_mutex_lock(&manager->lock);
-    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: lock acquired", (void *)manager);
 
     if (manager->external_ref_count > 0) {
         manager->external_ref_count -= 1;
@@ -954,7 +953,7 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
     }
 
     aws_mutex_unlock(&manager->lock);
-    // TODO: waahm7 why execute a transaction that we never built? What happens?
+
     s_aws_http_connection_manager_execute_transaction(&work);
 }
 
