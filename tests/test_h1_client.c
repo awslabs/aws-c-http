@@ -3273,7 +3273,8 @@ H1_CLIENT_TEST_CASE(h1_client_request_chunks_cancelled_by_channel_shutdown) {
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_request_cancelled_by_channel_shutdown) {
+/* If channel shuts down before any response is received, the request should complete with an error */
+H1_CLIENT_TEST_CASE(h1_client_request_cancelled_by_channel_shutdown_before_response) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
@@ -3307,6 +3308,45 @@ H1_CLIENT_TEST_CASE(h1_client_request_cancelled_by_channel_shutdown) {
     /* clean up */
     aws_http_stream_release(stream);
 
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* If channel shuts down in the middle of a response, the request should complete with an error */
+H1_CLIENT_TEST_CASE(h1_client_request_cancelled_by_channel_shutdown_mid_response) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
+    /* send response that is 1 byte short of being complete */
+    const char *response_str = "HTTP/1.1 200 OK\r\n"
+                               "Content-Length: 4\r\n"
+                               "\r\n"
+                               "123";
+    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, response_str));
+
+    /* shutdown channel while response is 1 byte short of being complete */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* the request should complete with error, having only received a partial response */
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, stream_tester.on_complete_error_code);
+    ASSERT_UINT_EQUALS(3, stream_tester.response_body.len);
+
+    /* clean up */
+    client_stream_tester_clean_up(&stream_tester);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
