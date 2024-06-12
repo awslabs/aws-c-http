@@ -94,7 +94,10 @@ struct tester {
 static struct tester s_tester;
 
 #define DEFINE_HEADER(NAME, VALUE)                                                                                     \
-    { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
+    {                                                                                                                  \
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME),                                                           \
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE),                                                         \
+    }
 
 enum {
     TESTER_TIMEOUT_SEC = 60, /* Give enough time for non-sudo users to enter password */

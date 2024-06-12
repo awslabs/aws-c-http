@@ -1318,11 +1318,11 @@ static int s_can_parse_as_chunked_encoding(
             }
         }
         long chunk_size = strtol((char *)chunk_ascii_hex, 0, 16);
-        long total_chunk_size_with_overhead = (long)
-            (match_cursor.ptr -  request_cursor.ptr /* size of the chunk in ascii hex */
-                + crlf_cursor.len                       /* size of the crlf */
-                + chunk_size                            /* size of the payload */
-                + crlf_cursor.len);                     /* size of the chunk terminating crlf */
+        long total_chunk_size_with_overhead =
+            (long)(match_cursor.ptr - request_cursor.ptr /* size of the chunk in ascii hex */
+                   + crlf_cursor.len                     /* size of the crlf */
+                   + chunk_size                          /* size of the payload */
+                   + crlf_cursor.len);                   /* size of the chunk terminating crlf */
 
         /* 0 length chunk signals end of stream. Check for the terminatino string and exit with success */
         if (0 == chunk_size) {

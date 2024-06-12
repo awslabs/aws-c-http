@@ -455,7 +455,10 @@ struct aws_http2_setting {
  * Initializes aws_http_client_connection_options with default values.
  */
 #define AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT                                                                        \
-    { .self_size = sizeof(struct aws_http_client_connection_options), .initial_window_size = SIZE_MAX, }
+    {                                                                                                                  \
+        .self_size = sizeof(struct aws_http_client_connection_options),                                                \
+        .initial_window_size = SIZE_MAX,                                                                               \
+    }
 
 AWS_EXTERN_C_BEGIN
 

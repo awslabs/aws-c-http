@@ -501,7 +501,9 @@ struct aws_http2_stream_write_data_options {
 };
 
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
-    { .self_size = sizeof(struct aws_http_request_handler_options), }
+    {                                                                                                                  \
+        .self_size = sizeof(struct aws_http_request_handler_options),                                                  \
+    }
 
 AWS_EXTERN_C_BEGIN
 

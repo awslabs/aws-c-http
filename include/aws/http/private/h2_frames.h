@@ -50,7 +50,9 @@ struct aws_h2err {
 };
 
 #define AWS_H2ERR_SUCCESS                                                                                              \
-    (struct aws_h2err) { .h2_code = 0, .aws_code = 0 }
+    (struct aws_h2err) {                                                                                               \
+        .h2_code = 0, .aws_code = 0                                                                                    \
+    }
 
 #define AWS_H2_PAYLOAD_MAX (0x00FFFFFF)       /* must fit in 3 bytes */
 #define AWS_H2_WINDOW_UPDATE_MAX (0x7FFFFFFF) /* cannot use high bit */

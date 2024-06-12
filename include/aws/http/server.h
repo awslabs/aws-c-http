@@ -112,15 +112,18 @@ struct aws_http_server_options {
  * Initializes aws_http_server_options with default values.
  */
 #define AWS_HTTP_SERVER_OPTIONS_INIT                                                                                   \
-    { .self_size = sizeof(struct aws_http_server_options), .initial_window_size = SIZE_MAX, }
+    {                                                                                                                  \
+        .self_size = sizeof(struct aws_http_server_options),                                                           \
+        .initial_window_size = SIZE_MAX,                                                                               \
+    }
 
 /**
  * Invoked at the start of an incoming request.
  * To process the request, the user must create a request handler stream and return it to the connection.
  * If NULL is returned, the request will not be processed and the last error will be reported as the reason for failure.
  */
-typedef struct aws_http_stream *(
-    aws_http_on_incoming_request_fn)(struct aws_http_connection *connection, void *user_data);
+typedef struct aws_http_stream *(aws_http_on_incoming_request_fn)(struct aws_http_connection *connection,
+                                                                  void *user_data);
 
 typedef void(aws_http_on_server_connection_shutdown_fn)(
     struct aws_http_connection *connection,
@@ -163,7 +166,9 @@ struct aws_http_server_connection_options {
  * Initializes aws_http_server_connection_options with default values.
  */
 #define AWS_HTTP_SERVER_CONNECTION_OPTIONS_INIT                                                                        \
-    { .self_size = sizeof(struct aws_http_server_connection_options), }
+    {                                                                                                                  \
+        .self_size = sizeof(struct aws_http_server_connection_options),                                                \
+    }
 
 AWS_EXTERN_C_BEGIN
 

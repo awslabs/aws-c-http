@@ -12,7 +12,7 @@
 
 #include <ctype.h>
 
-#define AWS_DEFINE_ERROR_INFO_HTTP(CODE, STR) [(CODE)-0x0800] = AWS_DEFINE_ERROR_INFO(CODE, STR, "aws-c-http")
+#define AWS_DEFINE_ERROR_INFO_HTTP(CODE, STR) [(CODE) - 0x0800] = AWS_DEFINE_ERROR_INFO(CODE, STR, "aws-c-http")
 
 /* clang-format off */
 static struct aws_error_info s_errors[] = {
