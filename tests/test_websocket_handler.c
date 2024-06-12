@@ -37,7 +37,9 @@ struct incoming_frame {
     bool is_complete;
 };
 
-static struct tester_options { bool manual_window_update; } s_tester_options;
+static struct tester_options {
+    bool manual_window_update;
+} s_tester_options;
 
 struct tester {
     struct aws_allocator *alloc;
