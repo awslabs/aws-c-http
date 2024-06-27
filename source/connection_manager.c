@@ -909,7 +909,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->http2_conn_manual_window_management = options->http2_conn_manual_window_management;
 
     manager->network_interface_names_list_index = 0;
-    size_t network_interface_names_list_length = aws_array_list_length(options->network_interface_names_list);
+    size_t network_interface_names_list_length = options->network_interface_names_list != NULL ? aws_array_list_length(options->network_interface_names_list) : 0;
     if (manager->socket_options.network_interface_name[0] == '\0' && network_interface_names_list_length > 0) {
         aws_array_list_init_dynamic(
             manager->network_interface_names_list,
