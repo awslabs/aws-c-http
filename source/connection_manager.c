@@ -1024,7 +1024,11 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
         aws_array_list_get_at(
             manager->network_interface_names_list, &interface_name, manager->network_interface_names_list_index);
         manager->network_interface_names_list_index = (manager->network_interface_names_list_index+1) %
-                                                      aws_array_list_length(manager->network_interface_names_list);
+                                              aws_array_list_length(manager->network_interface_names_list);
+#ifdef AWS_OS_WINDOWS
+        /* suppress deprecation warning for strncpy */
+        #pragma warning(suppress : 4996)
+#endif
         strncpy(
             socket_options.network_interface_name,
             aws_string_c_str(interface_name),
