@@ -294,7 +294,7 @@ struct aws_http_connection_manager {
     struct aws_event_loop *cull_event_loop;
 
     struct aws_array_list *network_interface_names_list;
-    uint32_t network_interface_names_list_index;
+    size_t network_interface_names_list_index;
 };
 
 struct aws_http_connection_manager_snapshot {
@@ -1023,7 +1023,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
         struct aws_string *interface_name = NULL;
         aws_array_list_get_at(
             manager->network_interface_names_list, &interface_name, manager->network_interface_names_list_index);
-        manager->network_interface_names_list_index = manager->network_interface_names_list_index++ %
+        manager->network_interface_names_list_index = (manager->network_interface_names_list_index+1) %
                                                       aws_array_list_length(manager->network_interface_names_list);
         strncpy(
             socket_options.network_interface_name,
