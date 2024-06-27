@@ -124,6 +124,8 @@ struct aws_http_connection_manager_options {
      * timeout will be closed automatically.
      */
     uint64_t max_connection_idle_in_milliseconds;
+
+    struct aws_array_list *network_interface_names_list; 
 };
 
 AWS_EXTERN_C_BEGIN

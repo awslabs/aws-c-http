@@ -292,6 +292,9 @@ struct aws_http_connection_manager {
      */
     struct aws_task *cull_task;
     struct aws_event_loop *cull_event_loop;
+
+    struct aws_array_list *network_interface_names_list;
+    uint32_t network_interface_names_list_index;
 };
 
 struct aws_http_connection_manager_snapshot {
@@ -703,6 +706,15 @@ static void s_aws_http_connection_manager_finish_destroy(struct aws_http_connect
         aws_http_proxy_config_destroy(manager->proxy_config);
     }
 
+    if (manager->network_interface_names_list) {
+        for (size_t i = 0; i < aws_array_list_length(manager->network_interface_names_list); i++) {
+            struct aws_string *interface_name = NULL;
+            aws_array_list_get_at(manager->network_interface_names_list, &interface_name, i);
+            aws_string_destroy(interface_name);
+        }
+        aws_array_list_clean_up(manager->network_interface_names_list);
+    }
+
     /*
      * If this task exists then we are actually in the corresponding event loop running the final destruction task.
      * In that case, we've already cancelled this task and when you cancel, it runs synchronously.  So in that
@@ -896,6 +908,21 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->max_closed_streams = options->max_closed_streams;
     manager->http2_conn_manual_window_management = options->http2_conn_manual_window_management;
 
+    size_t network_interface_names_list_length = aws_array_list_length(options->network_interface_names_list);
+    if (manager->socket_options.network_interface_name[0] == '\0' && network_interface_names_list_length > 0) {
+        aws_array_list_init_dynamic(
+            manager->network_interface_names_list,
+            allocator,
+            network_interface_names_list_length,
+            sizeof(struct aws_string *));
+        for (size_t i = 0; i < network_interface_names_list_length; i++) {
+            struct aws_byte_cursor interface_name;
+            aws_array_list_get_at(options->network_interface_names_list, &interface_name, i);
+            aws_array_list_push_back(
+                manager->network_interface_names_list, aws_string_new_from_cursor(allocator, &interface_name));
+        }
+    }
+
     /* NOTHING can fail after here */
     s_schedule_connection_culling(manager);
 
@@ -990,7 +1017,19 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.host_name = aws_byte_cursor_from_string(manager->host);
     options.port = manager->port;
     options.initial_window_size = manager->initial_window_size;
-    options.socket_options = &manager->socket_options;
+    struct aws_socket_options socket_options = manager->socket_options;
+    if (manager->network_interface_names_list != NULL) {
+        struct aws_string *interface_name;
+        aws_array_list_get_at(
+            manager->network_interface_names_list, &interface_name, manager->network_interface_names_list_index);
+        manager->network_interface_names_list_index = manager->network_interface_names_list_index++ %
+                                                      aws_array_list_length(manager->network_interface_names_list);
+        strncpy(
+            socket_options.network_interface_name,
+            aws_string_c_str(interface_name),
+            aws_min_size(interface_name->len, AWS_NETWORK_INTERFACE_MAX_LEN));
+    }
+    options.socket_options = &socket_options;
     options.on_setup = s_aws_http_connection_manager_on_connection_setup;
     options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
     options.manual_window_management = manager->enable_read_back_pressure;
