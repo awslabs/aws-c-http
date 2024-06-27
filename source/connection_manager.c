@@ -1026,6 +1026,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
         manager->network_interface_names_list_index = (manager->network_interface_names_list_index+1) %
                                               aws_array_list_length(manager->network_interface_names_list);
 #if defined(_MSC_VER)
+#    pragma warning(push)
 #    pragma warning(disable : 4996) /* deprecation */
 #endif
         strncpy(
