@@ -1019,7 +1019,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.initial_window_size = manager->initial_window_size;
     struct aws_socket_options socket_options = manager->socket_options;
     if (manager->network_interface_names_list != NULL) {
-        struct aws_string *interface_name;
+        struct aws_string *interface_name = NULL;
         aws_array_list_get_at(
             manager->network_interface_names_list, &interface_name, manager->network_interface_names_list_index);
         manager->network_interface_names_list_index = manager->network_interface_names_list_index++ %
