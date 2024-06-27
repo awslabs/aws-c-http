@@ -1034,7 +1034,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
             aws_string_c_str(interface_name),
             aws_min_size(interface_name->len, AWS_NETWORK_INTERFACE_MAX_LEN));
 #if defined(_MSC_VER)
-#    pragma pop 
+#    pragma warning(pop)
 #endif
     }
     options.socket_options = &socket_options;
