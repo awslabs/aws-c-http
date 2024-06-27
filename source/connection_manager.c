@@ -1025,14 +1025,16 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
             manager->network_interface_names_list, &interface_name, manager->network_interface_names_list_index);
         manager->network_interface_names_list_index = (manager->network_interface_names_list_index+1) %
                                               aws_array_list_length(manager->network_interface_names_list);
-#ifdef AWS_OS_WINDOWS
-        /* suppress deprecation warning for strncpy */
-        #pragma warning(suppress : 4996)
+#if defined(_MSC_VER)
+#    pragma warning(disable : 4996) /* deprecation */
 #endif
         strncpy(
             socket_options.network_interface_name,
             aws_string_c_str(interface_name),
             aws_min_size(interface_name->len, AWS_NETWORK_INTERFACE_MAX_LEN));
+#if defined(_MSC_VER)
+#    pragma pop 
+#endif
     }
     options.socket_options = &socket_options;
     options.on_setup = s_aws_http_connection_manager_on_connection_setup;
