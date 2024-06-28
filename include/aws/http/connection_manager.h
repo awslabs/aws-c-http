@@ -133,7 +133,7 @@ struct aws_http_connection_manager_options {
      * is set, this list will be ignored and all the connections will go to that network interface. This option is only
      * supported on Linux and macOS and will be ignored on other platforms.
      */
-    struct aws_array_list *network_interface_names_list;
+    const struct aws_array_list *network_interface_names_list;
 };
 
 AWS_EXTERN_C_BEGIN
