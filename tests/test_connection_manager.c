@@ -736,7 +736,10 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
     if (tester->verify_network_interface_names) {
         struct aws_byte_cursor interface_name;
         aws_array_list_get_at(
-            tester->verify_network_interface_names, &interface_name, aws_atomic_load_int(&tester->next_connection_id));
+            tester->verify_network_interface_names,
+            &interface_name,
+            aws_atomic_load_int(&tester->next_connection_id) %
+                aws_array_list_length(tester->verify_network_interface_names));
         ASSERT_TRUE(aws_byte_cursor_eq_c_str(&interface_name, options->socket_options->network_interface_name));
     }
 
@@ -835,11 +838,11 @@ static int s_test_connection_manager_with_network_interface_list(struct aws_allo
     struct aws_array_list interface_names_list;
     aws_array_list_init_dynamic(&interface_names_list, allocator, 3, sizeof(struct aws_byte_cursor));
     struct aws_byte_cursor ens32 = aws_byte_cursor_from_c_str("lo0");
-    // struct aws_byte_cursor ens64 = aws_byte_cursor_from_c_str("en1");
-    // struct aws_byte_cursor ens96 = aws_byte_cursor_from_c_str("en2");
+    struct aws_byte_cursor ens64 = aws_byte_cursor_from_c_str("en1");
+    struct aws_byte_cursor ens96 = aws_byte_cursor_from_c_str("en2");
     aws_array_list_push_back(&interface_names_list, &ens32);
-    //    aws_array_list_push_back(&interface_names_list, &ens64);
-    // aws_array_list_push_back(&interface_names_list, &ens96);
+    aws_array_list_push_back(&interface_names_list, &ens64);
+    aws_array_list_push_back(&interface_names_list, &ens96);
 
     struct aws_byte_cursor interface_name;
     aws_array_list_get_at(&interface_names_list, &interface_name, 0);
@@ -851,7 +854,7 @@ static int s_test_connection_manager_with_network_interface_list(struct aws_allo
     };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
-    int num_connections = 1;
+    int num_connections = 6;
     for (size_t i = 0; i < num_connections; ++i) {
         s_add_mock_connections(1, AWS_NCRT_SUCCESS, i % 1 == 0);
     }
