@@ -1029,10 +1029,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
 #    pragma warning(push)
 #    pragma warning(disable : 4996) /* deprecation */
 #endif
-        strncpy(
-            socket_options.network_interface_name,
-            aws_string_c_str(interface_name),
-            AWS_NETWORK_INTERFACE_MAX_LEN);
+        strncpy(socket_options.network_interface_name, aws_string_c_str(interface_name), AWS_NETWORK_INTERFACE_MAX_LEN);
 #if defined(_MSC_VER)
 #    pragma warning(pop)
 #endif
