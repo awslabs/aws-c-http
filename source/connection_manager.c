@@ -1032,7 +1032,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
         strncpy(
             socket_options.network_interface_name,
             aws_string_c_str(interface_name),
-            aws_min_size(interface_name->len + 1, AWS_NETWORK_INTERFACE_MAX_LEN));
+            AWS_NETWORK_INTERFACE_MAX_LEN);
 #if defined(_MSC_VER)
 #    pragma warning(pop)
 #endif
