@@ -837,15 +837,13 @@ static int s_test_connection_manager_with_network_interface_list(struct aws_allo
     (void)ctx;
     struct aws_array_list interface_names_list;
     aws_array_list_init_dynamic(&interface_names_list, allocator, 3, sizeof(struct aws_byte_cursor));
-    struct aws_byte_cursor ens32 = aws_byte_cursor_from_c_str("lo0");
-    struct aws_byte_cursor ens64 = aws_byte_cursor_from_c_str("en1");
-    struct aws_byte_cursor ens96 = aws_byte_cursor_from_c_str("en2");
+    struct aws_byte_cursor ens32 = aws_byte_cursor_from_c_str("ens32");
+    struct aws_byte_cursor ens64 = aws_byte_cursor_from_c_str("ens64");
+    struct aws_byte_cursor ens96 = aws_byte_cursor_from_c_str("ens96");
     aws_array_list_push_back(&interface_names_list, &ens32);
     aws_array_list_push_back(&interface_names_list, &ens64);
     aws_array_list_push_back(&interface_names_list, &ens96);
 
-    struct aws_byte_cursor interface_name;
-    aws_array_list_get_at(&interface_names_list, &interface_name, 0);
     struct cm_tester_options options = {
         .allocator = allocator,
         .max_connections = 20,
