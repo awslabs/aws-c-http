@@ -58,6 +58,7 @@ struct cm_tester_options {
     struct aws_http2_setting *initial_settings_array;
     size_t num_initial_settings;
     bool self_lib_init;
+    struct aws_array_list *verify_network_interface_names;
 };
 
 struct cm_tester {
@@ -73,6 +74,7 @@ struct cm_tester {
     struct aws_tls_ctx_options tls_ctx_options;
     struct aws_tls_connection_options tls_connection_options;
     struct aws_http_proxy_options *verify_proxy_options;
+    struct aws_array_list *verify_network_interface_names;
 
     struct aws_mutex lock;
     struct aws_condition_variable signal;
@@ -234,6 +236,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     }
 
     tester->mock_table = options->mock_table;
+    tester->verify_network_interface_names = options->verify_network_interface_names;
 
     aws_atomic_store_int(&tester->next_connection_id, 0);
 
@@ -590,6 +593,46 @@ AWS_TEST_CASE(
     test_connection_manager_single_http2_connection_with_settings,
     s_test_connection_manager_single_http2_connection_with_settings);
 
+
+
+static int s_test_connection_manager_with_network_interface_list(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    struct aws_array_list interface_names_list;
+    aws_array_list_init_dynamic(&interface_names_list, allocator, 3, sizeof(struct aws_string *));
+    struct aws_string *ens32 = aws_string_new_from_c_str(allocator, "ens32");
+    struct aws_string *ens64 = aws_string_new_from_c_str(allocator, "ens64");
+    struct aws_string *ens96 = aws_string_new_from_c_str(allocator, "ens96");
+    aws_array_list_push_back(&interface_names_list, &ens32);
+    aws_array_list_push_back(&interface_names_list, &ens64);
+    aws_array_list_push_back(&interface_names_list, &ens96);
+    // aws_array_list_push_back(&interface_names_list, aws_string_new_from_c_str(allocator, "ens64"));
+    // aws_array_list_push_back(&interface_names_list, aws_string_new_from_c_str(allocator, "ens96"));
+    // struct cm_tester_options options = {
+    //     .allocator = allocator,
+    //     .max_connections = 20,
+    //     .verify_network_interface_names = &interface_names_list,
+    // };
+
+    // ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    // s_acquire_connections(6);
+
+    // ASSERT_SUCCESS(s_wait_on_connection_reply_count(6));
+
+    // ASSERT_SUCCESS(s_release_connections(6, false));
+    // ASSERT_UINT_EQUALS(0, s_tester.connection_errors);
+
+    // ASSERT_SUCCESS(s_cm_tester_clean_up());
+    for(size_t i=0;i<aws_array_list_length(&interface_names_list); i++){
+        struct aws_string *interface_name = NULL;
+        aws_array_list_get_at(&interface_names_list, &interface_name, i);
+        aws_string_destroy(interface_name);
+    }
+    aws_array_list_clean_up(&interface_names_list);
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_with_network_interface_list, s_test_connection_manager_with_network_interface_list);
+
 static int s_test_connection_manager_many_connections(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
@@ -728,6 +771,12 @@ AWS_TEST_CASE(test_connection_manager_acquire_release_mix, s_test_connection_man
 static int s_aws_http_connection_manager_create_connection_sync_mock(
     const struct aws_http_client_connection_options *options) {
     struct cm_tester *tester = &s_tester;
+
+    if(tester->verify_network_interface_names) {
+        struct aws_string *interface_name;
+            aws_array_list_get_at(tester->verify_network_interface_names, &interface_name,aws_atomic_load_int(&tester->next_connection_id));
+        ASSERT_STR_EQUALS(aws_string_c_str(interface_name), options->socket_options->network_interface_name);
+    }
 
     size_t next_connection_id = aws_atomic_fetch_add(&tester->next_connection_id, 1);
 
