@@ -854,7 +854,7 @@ static int s_test_connection_manager_with_network_interface_list(struct aws_allo
     };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
-    int num_connections = 6;
+    size_t num_connections = 6;
     for (size_t i = 0; i < num_connections; ++i) {
         s_add_mock_connections(1, AWS_NCRT_SUCCESS, i % 1 == 0);
     }
