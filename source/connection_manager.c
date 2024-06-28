@@ -293,7 +293,15 @@ struct aws_http_connection_manager {
     struct aws_task *cull_task;
     struct aws_event_loop *cull_event_loop;
 
+    /*
+     * An aws_array_list<struct aws_string *> of network interface names to distribute the connections using the
+     * round-robin algorithm. We picked round-robin because it is trivial to implement and good enough. We can later
+     * update to a more complex distribution algorithm if required.
+     */
     struct aws_array_list network_interface_names_list;
+    /*
+     * Current index in the network_interface_names list.
+     */
     size_t network_interface_names_list_index;
 };
 
@@ -910,6 +918,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     size_t network_interface_names_list_length = options->network_interface_names_list != NULL
                                                      ? aws_array_list_length(options->network_interface_names_list)
                                                      : 0;
+    /* Ignore the network_interface_names_list if socket_options already contains a network_interface_name. */
     if (manager->socket_options.network_interface_name[0] == '\0' && network_interface_names_list_length > 0) {
         aws_array_list_init_dynamic(
             &manager->network_interface_names_list,
