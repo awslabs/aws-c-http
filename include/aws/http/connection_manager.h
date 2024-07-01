@@ -124,6 +124,16 @@ struct aws_http_connection_manager_options {
      * timeout will be closed automatically.
      */
     uint64_t max_connection_idle_in_milliseconds;
+
+    /**
+     * (Optional)
+     * An `aws_array_list<struct aws_byte_cursor>` of network interface names. The manager will distribute the
+     * connections across network interface names provided in this list. If any interface name is invalid, goes down, or
+     * has any issues like network access, you will see connection failures. If `socket_options.network_interface_name`
+     * is set, this list will be ignored and all the connections will go to that network interface. This option is only
+     * supported on Linux and macOS and will be ignored on other platforms.
+     */
+    const struct aws_array_list *network_interface_names_list;
 };
 
 AWS_EXTERN_C_BEGIN
