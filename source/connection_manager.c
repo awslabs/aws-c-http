@@ -1042,8 +1042,8 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
 #    pragma warning(push)
 #    pragma warning(disable : 4996) /* allow strncpy() */
 #endif
-        /* If the interface_name is too long or not null terminated, it will be caught in the aws_socket_init function so we don't need
-         * to worry about that here.*/
+        /* If the interface_name is too long or not null terminated, it will be caught in the aws_socket_init function
+         * so we don't need to worry about that here.*/
         strncpy(
             socket_options.network_interface_name, aws_string_c_str(interface_name), AWS_NETWORK_INTERFACE_NAME_MAX);
 #if defined(_MSC_VER)
