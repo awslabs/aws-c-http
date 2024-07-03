@@ -127,13 +127,14 @@ struct aws_http_connection_manager_options {
 
     /**
      * (Optional)
-     * An `aws_array_list<struct aws_byte_cursor>` of network interface names. The manager will distribute the
-     * connections across network interface names provided in this list. If any interface name is invalid, goes down, or
+     * An array of network interface names. The manager will distribute the
+     * connections across network interface names provided in this array. If any interface name is invalid, goes down, or
      * has any issues like network access, you will see connection failures. If `socket_options.network_interface_name`
-     * is set, this list will be ignored and all the connections will go to that network interface. This option is only
-     * supported on Linux and macOS and will be ignored on other platforms.
+     * is set, an `` error will be raised. This option is only
+     * supported on Linux and MacOS. On other platforms, `AWS_ERROR_PLATFORM_NOT_SUPPORTED` will be raised.
      */
-    const struct aws_array_list *network_interface_names_list;
+    const struct aws_byte_cursor *network_interface_names_array;
+    size_t num_network_interface_names;
 };
 
 AWS_EXTERN_C_BEGIN

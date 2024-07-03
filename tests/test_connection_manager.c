@@ -58,7 +58,8 @@ struct cm_tester_options {
     struct aws_http2_setting *initial_settings_array;
     size_t num_initial_settings;
     bool self_lib_init;
-    struct aws_array_list *verify_network_interface_names;
+    const struct aws_byte_cursor *verify_network_interface_names_array;
+    size_t num_network_interface_names;
 };
 
 struct cm_tester {
@@ -74,7 +75,8 @@ struct cm_tester {
     struct aws_tls_ctx_options tls_ctx_options;
     struct aws_tls_connection_options tls_connection_options;
     struct aws_http_proxy_options *verify_proxy_options;
-    struct aws_array_list *verify_network_interface_names;
+    const struct aws_byte_cursor *verify_network_interface_names_array;
+    size_t num_network_interface_names;
 
     struct aws_mutex lock;
     struct aws_condition_variable signal;
@@ -221,7 +223,8 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         .http2_prior_knowledge = !options->use_tls && options->http2,
         .initial_settings_array = options->initial_settings_array,
         .num_initial_settings = options->num_initial_settings,
-        .network_interface_names_list = options->verify_network_interface_names,
+        .network_interface_names_array = options->verify_network_interface_names_array,
+        .num_network_interface_names = options->num_network_interface_names,
     };
 
     if (options->mock_table) {
@@ -237,7 +240,8 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     }
 
     tester->mock_table = options->mock_table;
-    tester->verify_network_interface_names = options->verify_network_interface_names;
+    tester->verify_network_interface_names_array = options->verify_network_interface_names_array;
+    tester->num_network_interface_names = options->num_network_interface_names;
 
     aws_atomic_store_int(&tester->next_connection_id, 0);
 
@@ -733,13 +737,8 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
     const struct aws_http_client_connection_options *options) {
     struct cm_tester *tester = &s_tester;
 
-    if (tester->verify_network_interface_names) {
-        struct aws_byte_cursor interface_name;
-        aws_array_list_get_at(
-            tester->verify_network_interface_names,
-            &interface_name,
-            aws_atomic_load_int(&tester->next_connection_id) %
-                aws_array_list_length(tester->verify_network_interface_names));
+    if (tester->num_network_interface_names) {
+        struct aws_byte_cursor interface_name = tester->verify_network_interface_names_array[aws_atomic_load_int(&tester->next_connection_id) % tester->num_network_interface_names];
         ASSERT_TRUE(aws_byte_cursor_eq_c_str(&interface_name, options->socket_options->network_interface_name));
     }
 
@@ -835,20 +834,16 @@ static struct aws_http_connection_manager_system_vtable s_synchronous_mocks = {
 
 static int s_test_connection_manager_with_network_interface_list(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
-    struct aws_array_list interface_names_list;
-    aws_array_list_init_dynamic(&interface_names_list, allocator, 3, sizeof(struct aws_byte_cursor));
-    struct aws_byte_cursor ens32 = aws_byte_cursor_from_c_str("ens32");
-    struct aws_byte_cursor ens64 = aws_byte_cursor_from_c_str("ens64");
-    struct aws_byte_cursor ens96 = aws_byte_cursor_from_c_str("ens96");
-    aws_array_list_push_back(&interface_names_list, &ens32);
-    aws_array_list_push_back(&interface_names_list, &ens64);
-    aws_array_list_push_back(&interface_names_list, &ens96);
+    struct aws_byte_cursor *interface_names_array = aws_mem_calloc(allocator, 3, sizeof(struct aws_byte_cursor));
+    interface_names_array[0] = aws_byte_cursor_from_c_str("ens32");
+    interface_names_array[1] = aws_byte_cursor_from_c_str("ens64");
+    interface_names_array[2] = aws_byte_cursor_from_c_str("ens96");
 
     struct cm_tester_options options = {
         .allocator = allocator,
         .max_connections = 20,
         .mock_table = &s_synchronous_mocks,
-        .verify_network_interface_names = &interface_names_list,
+        .verify_network_interface_names_array = interface_names_array,
     };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
@@ -863,7 +858,7 @@ static int s_test_connection_manager_with_network_interface_list(struct aws_allo
     ASSERT_UINT_EQUALS(0, s_tester.connection_errors);
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
-    aws_array_list_clean_up(&interface_names_list);
+    aws_mem_release(allocator, interface_names_array);
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(

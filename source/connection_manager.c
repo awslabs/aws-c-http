@@ -915,19 +915,14 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->http2_conn_manual_window_management = options->http2_conn_manual_window_management;
 
     manager->network_interface_names_list_index = 0;
-    size_t network_interface_names_list_length = options->network_interface_names_list != NULL
-                                                     ? aws_array_list_length(options->network_interface_names_list)
-                                                     : 0;
-    /* Ignore the network_interface_names_list if socket_options already contains a network_interface_name. */
-    if (manager->socket_options.network_interface_name[0] == '\0' && network_interface_names_list_length > 0) {
+    if (manager->socket_options.network_interface_name[0] == '\0' && options->num_network_interface_names > 0) {
         aws_array_list_init_dynamic(
             &manager->network_interface_names_list,
             allocator,
-            network_interface_names_list_length,
+            options->num_network_interface_names,
             sizeof(struct aws_string *));
-        for (size_t i = 0; i < network_interface_names_list_length; i++) {
-            struct aws_byte_cursor interface_name;
-            aws_array_list_get_at(options->network_interface_names_list, &interface_name, i);
+        for (size_t i = 0; i < options->num_network_interface_names; i++) {
+            struct aws_byte_cursor interface_name = options->network_interface_names_array[i];
             struct aws_string *interface_name_str = aws_string_new_from_cursor(allocator, &interface_name);
             aws_array_list_push_back(&manager->network_interface_names_list, &interface_name_str);
         }
