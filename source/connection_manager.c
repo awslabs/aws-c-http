@@ -837,6 +837,14 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         return NULL;
     }
 
+    if(options->socket_options->network_interface_name[0] != '\0' && options->num_network_interface_names > 0){
+        AWS_LOGF_ERROR(
+        AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - socket_options.network_interface_name and network_interface_names_array can not be both set.");
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+
     struct aws_http_connection_manager *manager =
         aws_mem_calloc(allocator, 1, sizeof(struct aws_http_connection_manager));
     if (manager == NULL) {
@@ -915,7 +923,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->http2_conn_manual_window_management = options->http2_conn_manual_window_management;
 
     manager->network_interface_names_index = 0;
-    if (manager->socket_options.network_interface_name[0] == '\0' && options->num_network_interface_names > 0) {
+    if (options->num_network_interface_names > 0) {
         aws_array_list_init_dynamic(
             &manager->network_interface_names,
             allocator,
