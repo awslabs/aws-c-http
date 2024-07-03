@@ -300,7 +300,7 @@ struct aws_http_connection_manager {
      */
     struct aws_array_list network_interface_names;
     /*
-     * Current index in the network_interface_names list.
+     * Current index in the network_interface_names array_list.
      */
     size_t network_interface_names_index;
 };
@@ -837,13 +837,14 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         return NULL;
     }
 
-    if(options->socket_options->network_interface_name[0] != '\0' && options->num_network_interface_names > 0){
+    if (options->socket_options->network_interface_name[0] != '\0' && options->num_network_interface_names > 0) {
         AWS_LOGF_ERROR(
-        AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - socket_options.network_interface_name and network_interface_names_array can not be both set.");
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "Invalid options - socket_options.network_interface_name and network_interface_names_array cannot be both "
+            "set.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }
-
 
     struct aws_http_connection_manager *manager =
         aws_mem_calloc(allocator, 1, sizeof(struct aws_http_connection_manager));
@@ -1035,12 +1036,14 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
         struct aws_string *interface_name = NULL;
         aws_array_list_get_at(
             &manager->network_interface_names, &interface_name, manager->network_interface_names_index);
-        manager->network_interface_names_index = (manager->network_interface_names_index + 1) %
-                                                      aws_array_list_length(&manager->network_interface_names);
+        manager->network_interface_names_index =
+            (manager->network_interface_names_index + 1) % aws_array_list_length(&manager->network_interface_names);
 #if defined(_MSC_VER)
 #    pragma warning(push)
 #    pragma warning(disable : 4996) /* allow strncpy() */
 #endif
+        /* If the interface_name is too long or not null terminated, it will be caught in the aws-c-io so we don't need
+         * to worry about that here.*/
         strncpy(
             socket_options.network_interface_name, aws_string_c_str(interface_name), AWS_NETWORK_INTERFACE_NAME_MAX);
 #if defined(_MSC_VER)
