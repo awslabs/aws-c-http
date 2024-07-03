@@ -738,7 +738,9 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
     struct cm_tester *tester = &s_tester;
 
     if (tester->num_network_interface_names) {
-        struct aws_byte_cursor interface_name = tester->verify_network_interface_names_array[aws_atomic_load_int(&tester->next_connection_id) % tester->num_network_interface_names];
+        struct aws_byte_cursor interface_name =
+            tester->verify_network_interface_names_array
+                [aws_atomic_load_int(&tester->next_connection_id) % tester->num_network_interface_names];
         ASSERT_TRUE(aws_byte_cursor_eq_c_str(&interface_name, options->socket_options->network_interface_name));
     }
 
