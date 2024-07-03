@@ -300,7 +300,7 @@ struct aws_http_connection_manager {
      */
     struct aws_array_list network_interface_names;
     /*
-     * Current index in the network_interface_names list.
+     * Current index in the network_interface_names array_list.
      */
     size_t network_interface_names_index;
 };
@@ -837,13 +837,14 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         return NULL;
     }
 
-    if(options->socket_options->network_interface_name[0] != '\0' && options->num_network_interface_names > 0){
+    if (options->socket_options->network_interface_name[0] != '\0' && options->num_network_interface_names > 0) {
         AWS_LOGF_ERROR(
-        AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - socket_options.network_interface_name and network_interface_names_array can not be both set.");
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "Invalid options - socket_options.network_interface_name and network_interface_names_array cannot be both "
+            "set.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }
-
 
     struct aws_http_connection_manager *manager =
         aws_mem_calloc(allocator, 1, sizeof(struct aws_http_connection_manager));
@@ -1035,15 +1036,17 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
         struct aws_string *interface_name = NULL;
         aws_array_list_get_at(
             &manager->network_interface_names, &interface_name, manager->network_interface_names_index);
-        manager->network_interface_names_index = (manager->network_interface_names_index + 1) %
-                                                      aws_array_list_length(&manager->network_interface_names);
+        manager->network_interface_names_index =
+            (manager->network_interface_names_index + 1) % aws_array_list_length(&manager->network_interface_names);
 #if defined(_MSC_VER)
 #    pragma warning(push)
 #    pragma warning(disable : 4996) /* allow strncpy() */
 #endif
+        /* If the interface_name is too long or not null terminated, it will be caught in the aws-c-io so we don't need
+         * to worry about that here.*/
         strncpy(
             socket_options.network_interface_name, aws_string_c_str(interface_name), AWS_NETWORK_INTERFACE_NAME_MAX);
-#if defined(_MSC_VER)
+#if defined(_MSC_VER)conmng.c
 #    pragma warning(pop)
 #endif
     }
@@ -1072,26 +1075,56 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     if (aws_http_connection_monitoring_options_is_valid(&manager->monitoring_options)) {
         options.monitoring_options = &manager->monitoring_options;
     }
+    strncpy(socket_options.network_interface_name, aws_string_c_str(interface_name), AWS_NETWORK_INTERFACE_NAME_MAX);
+#if defined(_MSC_VER)
+#    pragma warning(pop)
+#endif
+}
+options.socket_options = &socket_options;
+options.on_setup = s_aws_http_connection_manager_on_connection_setup;
+options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
+options.manual_window_management = manager->enable_read_back_pressure;
+options.proxy_ev_settings = &manager->proxy_ev_settings;
+options.prior_knowledge_http2 = manager->http2_prior_knowledge;
 
-    struct aws_http_proxy_options proxy_options;
-    AWS_ZERO_STRUCT(proxy_options);
+struct aws_http2_connection_options h2_options;
+AWS_ZERO_STRUCT(h2_options);
+if (manager->initial_settings) {
+    h2_options.initial_settings_array = manager->initial_settings->data;
+    h2_options.num_initial_settings = aws_array_list_length(manager->initial_settings);
+}
+h2_options.max_closed_streams = manager->max_closed_streams;
+h2_options.conn_manual_window_management = manager->http2_conn_manual_window_management;
+/* The initial_settings_completed invoked after the other side acknowledges it, and will always be invoked if the
+ * connection set up */
+h2_options.on_initial_settings_completed = s_aws_http_connection_manager_h2_on_initial_settings_completed;
+h2_options.on_goaway_received = s_aws_http_connection_manager_h2_on_goaway_received;
 
-    if (manager->proxy_config) {
-        aws_http_proxy_options_init_from_config(&proxy_options, manager->proxy_config);
-        options.proxy_options = &proxy_options;
-    }
+options.http2_options = &h2_options;
 
-    if (manager->system_vtable->aws_http_client_connect(&options)) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION_MANAGER,
-            "id=%p: http connection creation failed with error code %d(%s)",
-            (void *)manager,
-            aws_last_error(),
-            aws_error_str(aws_last_error()));
-        return AWS_OP_ERR;
-    }
+if (aws_http_connection_monitoring_options_is_valid(&manager->monitoring_options)) {
+    options.monitoring_options = &manager->monitoring_options;
+}
 
-    return AWS_OP_SUCCESS;
+struct aws_http_proxy_options proxy_options;
+AWS_ZERO_STRUCT(proxy_options);
+
+if (manager->proxy_config) {
+    aws_http_proxy_options_init_from_config(&proxy_options, manager->proxy_config);
+    options.proxy_options = &proxy_options;
+}
+
+if (manager->system_vtable->aws_http_client_connect(&options)) {
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_CONNECTION_MANAGER,
+        "id=%p: http connection creation failed with error code %d(%s)",
+        (void *)manager,
+        aws_last_error(),
+        aws_error_str(aws_last_error()));
+    return AWS_OP_ERR;
+}
+
+return AWS_OP_SUCCESS;
 }
 
 static void s_aws_http_connection_manager_execute_transaction(struct aws_connection_management_transaction *work) {

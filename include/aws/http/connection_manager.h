@@ -130,9 +130,9 @@ struct aws_http_connection_manager_options {
      * An array of network interface names. The manager will distribute the
      * connections across network interface names provided in this array. If any interface name is invalid, goes down,
      * or has any issues like network access, you will see connection failures. If
-     * `socket_options.network_interface_name` is set, an `AWS_ERROR_INVALID_ARGUMENT` error will be raised.
+     * `socket_options.network_interface_name` is also set, an `AWS_ERROR_INVALID_ARGUMENT` error will be raised.
      *
-     * This option is only supported on Linux, macOS, and platforms that have either SO_BINDTODEVICE or IP_BOUND_IF. It
+     * This option is only supported on Linux, MacOS, and platforms that have either SO_BINDTODEVICE or IP_BOUND_IF. It
      * is not supported on Windows. `AWS_ERROR_PLATFORM_NOT_SUPPORTED` will be raised on unsupported platforms.
      */
     const struct aws_byte_cursor *network_interface_names_array;
