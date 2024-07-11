@@ -292,6 +292,17 @@ struct aws_http_connection_manager {
      */
     struct aws_task *cull_task;
     struct aws_event_loop *cull_event_loop;
+
+    /*
+     * An aws_array_list<struct aws_string *> of network interface names to distribute the connections using the
+     * round-robin algorithm. We picked round-robin because it is trivial to implement and good enough. We can later
+     * update to a more complex distribution algorithm if required.
+     */
+    struct aws_array_list network_interface_names;
+    /*
+     * Current index in the network_interface_names array_list.
+     */
+    size_t network_interface_names_index;
 };
 
 struct aws_http_connection_manager_snapshot {
@@ -703,6 +714,13 @@ static void s_aws_http_connection_manager_finish_destroy(struct aws_http_connect
         aws_http_proxy_config_destroy(manager->proxy_config);
     }
 
+    for (size_t i = 0; i < aws_array_list_length(&manager->network_interface_names); i++) {
+        struct aws_string *interface_name = NULL;
+        aws_array_list_get_at(&manager->network_interface_names, &interface_name, i);
+        aws_string_destroy(interface_name);
+    }
+    aws_array_list_clean_up(&manager->network_interface_names);
+
     /*
      * If this task exists then we are actually in the corresponding event loop running the final destruction task.
      * In that case, we've already cancelled this task and when you cancel, it runs synchronously.  So in that
@@ -819,6 +837,15 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         return NULL;
     }
 
+    if (options->socket_options->network_interface_name[0] != '\0' && options->num_network_interface_names > 0) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "Invalid options - socket_options.network_interface_name and network_interface_names_array cannot be both "
+            "set.");
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
     struct aws_http_connection_manager *manager =
         aws_mem_calloc(allocator, 1, sizeof(struct aws_http_connection_manager));
     if (manager == NULL) {
@@ -895,6 +922,20 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     }
     manager->max_closed_streams = options->max_closed_streams;
     manager->http2_conn_manual_window_management = options->http2_conn_manual_window_management;
+
+    manager->network_interface_names_index = 0;
+    if (options->num_network_interface_names > 0) {
+        aws_array_list_init_dynamic(
+            &manager->network_interface_names,
+            allocator,
+            options->num_network_interface_names,
+            sizeof(struct aws_string *));
+        for (size_t i = 0; i < options->num_network_interface_names; i++) {
+            struct aws_byte_cursor interface_name = options->network_interface_names_array[i];
+            struct aws_string *interface_name_str = aws_string_new_from_cursor(allocator, &interface_name);
+            aws_array_list_push_back(&manager->network_interface_names, &interface_name_str);
+        }
+    }
 
     /* NOTHING can fail after here */
     s_schedule_connection_culling(manager);
@@ -990,7 +1031,26 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.host_name = aws_byte_cursor_from_string(manager->host);
     options.port = manager->port;
     options.initial_window_size = manager->initial_window_size;
-    options.socket_options = &manager->socket_options;
+    struct aws_socket_options socket_options = manager->socket_options;
+    if (aws_array_list_length(&manager->network_interface_names)) {
+        struct aws_string *interface_name = NULL;
+        aws_array_list_get_at(
+            &manager->network_interface_names, &interface_name, manager->network_interface_names_index);
+        manager->network_interface_names_index =
+            (manager->network_interface_names_index + 1) % aws_array_list_length(&manager->network_interface_names);
+#if defined(_MSC_VER)
+#    pragma warning(push)
+#    pragma warning(disable : 4996) /* allow strncpy() */
+#endif
+        /* If the interface_name is too long or not null terminated, it will be caught in the `aws_socket_init` function
+         * so we don't need to worry about that here.*/
+        strncpy(
+            socket_options.network_interface_name, aws_string_c_str(interface_name), AWS_NETWORK_INTERFACE_NAME_MAX);
+#if defined(_MSC_VER)
+#    pragma warning(pop)
+#endif
+    }
+    options.socket_options = &socket_options;
     options.on_setup = s_aws_http_connection_manager_on_connection_setup;
     options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
     options.manual_window_management = manager->enable_read_back_pressure;
