@@ -159,6 +159,7 @@ add_test_case(strutil_is_http_pseudo_header_name)
 
 add_net_test_case(tls_download_medium_file_h1)
 add_net_test_case(tls_download_medium_file_h2)
+add_net_test_case(test_tls_download_shutdown_with_window_size_0)
 
 add_test_case(websocket_decoder_sanity_check)
 add_test_case(websocket_decoder_simplest_frame)
