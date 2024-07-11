@@ -161,7 +161,7 @@ jobs:
         python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON --config Debug
 
   localhost-test-mac:
-    runs-on: macos-14 # latest
+    runs-on: macos-13 # not use macos-14. It hangs to connect to local socket on macos-14. Not sure why🤷‍♂️
     steps:
     - name: Checkout
       uses: actions/checkout@v3
