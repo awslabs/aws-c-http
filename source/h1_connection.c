@@ -200,13 +200,19 @@ static void s_connection_close(struct aws_http_connection *connection_base) {
     bool should_schedule_task = false;
     { /* BEGIN CRITICAL SECTION */
         aws_h1_connection_lock_synced_data(connection);
-        connection->synced_data.shutdown_requested = true;
-        /* Shutdown the connection without error. */
-        connection->synced_data.shutdown_requested_error_code = AWS_ERROR_SUCCESS;
+        if (!connection->synced_data.shutdown_requested) {
+            connection->synced_data.shutdown_requested = true;
+            /* Shutdown the connection without error. */
+            connection->synced_data.shutdown_requested_error_code = AWS_ERROR_SUCCESS;
+        }
         if (!connection->synced_data.is_cross_thread_work_task_scheduled) {
             connection->synced_data.is_cross_thread_work_task_scheduled = true;
             should_schedule_task = true;
         }
+        /* Even if we're not scheduling shutdown just yet (ex: sent final request but waiting to read final response)
+         * we don't consider the connection "open" anymore so user can't create more streams */
+        connection->synced_data.is_open = false;
+        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
 
         aws_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -427,9 +433,10 @@ void aws_h1_stream_cancel(struct aws_http_stream *stream, int error_code) {
             AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "id=%p: Stream not active, nothing to cancel.", (void *)stream);
             return;
         }
-
-        connection->synced_data.shutdown_requested = true;
-        connection->synced_data.shutdown_requested_error_code = error_code;
+        if (!connection->synced_data.shutdown_requested) {
+            connection->synced_data.shutdown_requested = true;
+            connection->synced_data.shutdown_requested_error_code = error_code;
+        }
         if (!connection->synced_data.is_cross_thread_work_task_scheduled) {
             connection->synced_data.is_cross_thread_work_task_scheduled = true;
             should_schedule_task = true;
@@ -1852,6 +1859,7 @@ static int s_handler_process_read_message(
         AWS_LS_HTTP_CONNECTION, "id=%p: Incoming message of size %zu.", (void *)&connection->base, message_size);
     if (connection->thread_data.is_reading_stopped) {
         /* Read has stopped, ignore the data, shutdown the channel incase it has not started yet. */
+        aws_mem_release(message->allocator, message); /* Release the message as we return success. */
         s_shutdown_due_to_error(connection, AWS_ERROR_HTTP_CONNECTION_CLOSED);
         return AWS_OP_SUCCESS;
     }
