@@ -126,6 +126,7 @@ struct aws_http_connection_manager_options {
     uint64_t max_connection_idle_in_milliseconds;
 
     /**
+     * THIS IS AN EXPERIMENTAL AND UNSTABLE API
      * (Optional)
      * An array of network interface names. The manager will distribute the
      * connections across network interface names provided in this array. If any interface name is invalid, goes down,
