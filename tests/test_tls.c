@@ -254,6 +254,7 @@ static int s_tls_download_medium_file_h2(struct aws_allocator *allocator, void *
 AWS_TEST_CASE(tls_download_medium_file_h2, s_tls_download_medium_file_h2);
 
 static int s_test_tls_download_shutdown_with_window_size_0(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
 
     aws_http_library_init(allocator);
     struct aws_byte_cursor uri_str =
