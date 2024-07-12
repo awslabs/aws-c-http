@@ -146,7 +146,7 @@ static void s_stop(
         connection->thread_data.is_reading_stopped = true;
         /* Increase the window size after shutdown starts, to prevent deadlock when data still pending in the TLS
          * handler. */
-        connection->base.channel_slot->window_size = SIZE_MAX;
+        aws_channel_slot_increment_read_window(connection->base.channel_slot, SIZE_MAX);
     }
 
     if (stop_writing) {
