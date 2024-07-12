@@ -144,6 +144,9 @@ static void s_stop(
     if (stop_reading) {
         AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
         connection->thread_data.is_reading_stopped = true;
+        /* Increase the window size after shutdown starts, to prevent deadlock when data still pending in the TLS
+         * handler. */
+        connection->base.channel_slot->window_size = SIZE_MAX;
     }
 
     if (stop_writing) {
@@ -194,9 +197,30 @@ static void s_shutdown_due_to_error(struct aws_h1_connection *connection, int er
  */
 static void s_connection_close(struct aws_http_connection *connection_base) {
     struct aws_h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h1_connection, base);
+    bool should_schedule_task = false;
+    { /* BEGIN CRITICAL SECTION */
+        aws_h1_connection_lock_synced_data(connection);
+        connection->synced_data.shutdown_requested = true;
+        /* Shutdown the connection without error. */
+        connection->synced_data.shutdown_requested_error_code = AWS_ERROR_SUCCESS;
+        if (!connection->synced_data.is_cross_thread_work_task_scheduled) {
+            connection->synced_data.is_cross_thread_work_task_scheduled = true;
+            should_schedule_task = true;
+        }
 
-    /* Don't stop reading/writing immediately, let that happen naturally during the channel shutdown process. */
-    s_stop(connection, false /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, AWS_ERROR_SUCCESS);
+        aws_h1_connection_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+
+    if (should_schedule_task) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling connection cross-thread work task.", (void *)connection_base);
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Connection cross-thread work task was already scheduled",
+            (void *)connection_base);
+    }
 }
 
 static void s_connection_stop_new_request(struct aws_http_connection *connection_base) {
@@ -392,6 +416,7 @@ void aws_h1_stream_cancel(struct aws_http_stream *stream, int error_code) {
     struct aws_h1_stream *h1_stream = AWS_CONTAINER_OF(stream, struct aws_h1_stream, base);
     struct aws_http_connection *base_connection = stream->owning_connection;
     struct aws_h1_connection *connection = AWS_CONTAINER_OF(base_connection, struct aws_h1_connection, base);
+    bool should_schedule_task = false;
 
     { /* BEGIN CRITICAL SECTION */
         aws_h1_connection_lock_synced_data(connection);
@@ -401,6 +426,13 @@ void aws_h1_stream_cancel(struct aws_http_stream *stream, int error_code) {
             aws_h1_connection_unlock_synced_data(connection);
             AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "id=%p: Stream not active, nothing to cancel.", (void *)stream);
             return;
+        }
+
+        connection->synced_data.shutdown_requested = true;
+        connection->synced_data.shutdown_requested_error_code = error_code;
+        if (!connection->synced_data.is_cross_thread_work_task_scheduled) {
+            connection->synced_data.is_cross_thread_work_task_scheduled = true;
+            should_schedule_task = true;
         }
 
         aws_h1_connection_unlock_synced_data(connection);
@@ -413,7 +445,16 @@ void aws_h1_stream_cancel(struct aws_http_stream *stream, int error_code) {
         error_code,
         aws_error_name(error_code));
 
-    s_stop(connection, false /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, error_code);
+    if (should_schedule_task) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling connection cross-thread work task.", (void *)base_connection);
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Connection cross-thread work task was already scheduled",
+            (void *)base_connection);
+    }
 }
 
 struct aws_http_stream *s_make_request(
@@ -495,10 +536,15 @@ static void s_cross_thread_work_task(struct aws_channel_task *channel_task, void
     bool has_new_client_streams = !aws_linked_list_empty(&connection->synced_data.new_client_stream_list);
     aws_linked_list_move_all_back(
         &connection->thread_data.stream_list, &connection->synced_data.new_client_stream_list);
+    bool shutdown_requested = connection->synced_data.shutdown_requested;
+    int shutdown_error = connection->synced_data.shutdown_requested_error_code;
 
     aws_h1_connection_unlock_synced_data(connection);
     /* END CRITICAL SECTION */
 
+    if (shutdown_requested) {
+        s_stop(connection, true /*stop_reading*/, true /*stop_writing*/, true /*schedule_shutdown*/, shutdown_error);
+    }
     /* Kick off outgoing-stream task if necessary */
     if (has_new_client_streams) {
         aws_h1_connection_try_write_outgoing_stream(connection);
@@ -785,11 +831,11 @@ static void s_http_stream_response_first_byte_timeout_task(
         (void *)connection_base,
         response_first_byte_timeout_ms);
 
-    /* Don't stop reading/writing immediately, let that happen naturally during the channel shutdown process. */
+    /* Shutdown the connection. */
     s_stop(
         connection,
-        false /*stop_reading*/,
-        false /*stop_writing*/,
+        true /*stop_reading*/,
+        true /*stop_writing*/,
         true /*schedule_shutdown*/,
         AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT);
 }
@@ -1804,6 +1850,11 @@ static int s_handler_process_read_message(
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION, "id=%p: Incoming message of size %zu.", (void *)&connection->base, message_size);
+    if (connection->thread_data.is_reading_stopped) {
+        /* Read has stopped, ignore the data, shutdown the channel incase it has not started yet. */
+        s_shutdown_due_to_error(connection, AWS_ERROR_HTTP_CONNECTION_CLOSED);
+        return AWS_OP_SUCCESS;
+    }
 
     /* Shrink connection window by amount of data received. See comments at variable's
      * declaration site on why we use this instead of the official `aws_channel_slot.window_size`. */
