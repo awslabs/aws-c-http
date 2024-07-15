@@ -144,9 +144,6 @@ static void s_stop(
     if (stop_reading) {
         AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
         connection->thread_data.is_reading_stopped = true;
-        /* Increase the window size after shutdown starts, to prevent deadlock when data still pending in the TLS
-         * handler. */
-        aws_channel_slot_increment_read_window(connection->base.channel_slot, SIZE_MAX);
     }
 
     if (stop_writing) {
@@ -172,6 +169,11 @@ static void s_stop(
             aws_error_name(error_code));
 
         aws_channel_shutdown(connection->base.channel_slot->channel, error_code);
+        if (stop_reading) {
+            /* Increase the window size after shutdown starts, to prevent deadlock when data still pending in the TLS
+             * handler. */
+            aws_channel_slot_increment_read_window(connection->base.channel_slot, SIZE_MAX);
+        }
     }
 }
 
