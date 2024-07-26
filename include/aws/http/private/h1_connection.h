@@ -128,7 +128,9 @@ struct aws_h1_connection {
         /* If non-zero, reason to immediately reject new streams. (ex: closing) */
         int new_stream_error_code;
 
-        /* User requested shutdown error code. */
+        /* If true, user has called connection_close() or stream_cancel(),
+         * but the cross_thread_work_task hasn't processed it yet */
+        bool shutdown_requested;
         int shutdown_requested_error_code;
 
         /* See `cross_thread_work_task` */
@@ -136,9 +138,6 @@ struct aws_h1_connection {
 
         /* For checking status from outside the event-loop thread. */
         bool is_open : 1;
-
-        /* User requested shutdown or not. */
-        bool shutdown_requested : 1;
     } synced_data;
 };
 
