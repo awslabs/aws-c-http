@@ -207,6 +207,9 @@ static void s_shutdown_from_off_thread(struct aws_h1_connection *connection, int
             connection->synced_data.shutdown_requested = true;
             connection->synced_data.shutdown_requested_error_code = error_code;
         }
+        /* Connection has shutdown, new streams should not be allowed. */
+        connection->synced_data.is_open = false;
+        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
         aws_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
@@ -227,16 +230,6 @@ static void s_shutdown_from_off_thread(struct aws_h1_connection *connection, int
  */
 static void s_connection_close(struct aws_http_connection *connection_base) {
     struct aws_h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h1_connection, base);
-    { /* BEGIN CRITICAL SECTION */
-        aws_h1_connection_lock_synced_data(connection);
-        /* Even if we're not scheduling shutdown just yet (ex: sent final request but waiting to read final response)
-         * we don't consider the connection "open" anymore so user can't create more streams */
-        connection->synced_data.is_open = false;
-        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
-
-        aws_h1_connection_unlock_synced_data(connection);
-    } /* END CRITICAL SECTION */
-
     s_shutdown_from_off_thread(connection, AWS_ERROR_SUCCESS);
 }
 
