@@ -1282,14 +1282,20 @@ void aws_http_connection_manager_acquire_connection(
 
     if (manager->pending_connection_acquisition_timeout_ms) {
         uint64_t acquire_start_timestamp = 0;
-        if (manager->system_vtable->aws_high_res_clock_get_ticks(&acquire_start_timestamp)) {
-            // TODO: Waahm7 handle error
+        if (manager->system_vtable->aws_high_res_clock_get_ticks(&acquire_start_timestamp) == AWS_OP_SUCCESS) {
+            request->timeout_timestamp =
+                acquire_start_timestamp + aws_timestamp_convert(
+                                              manager->pending_connection_acquisition_timeout_ms,
+                                              AWS_TIMESTAMP_MILLIS,
+                                              AWS_TIMESTAMP_NANOS,
+                                              NULL);
+        } else {
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_CONNECTION_MANAGER,
+                "id=%p: Failed to get current timestamp using aws_high_res_clock_get_ticks function. Ignoring the "
+                "pending_connection_acquisition_timeout_ms value. ",
+                (void *)manager);
         }
-
-        request->timeout_timestamp =
-            acquire_start_timestamp +
-            aws_timestamp_convert(
-                manager->pending_connection_acquisition_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
     }
 
     struct aws_connection_management_transaction work;
@@ -1692,7 +1698,7 @@ static void s_cull_pending_acquisitions(struct aws_http_connection_manager *mana
             s_aws_http_connection_manager_move_front_acquisition(
                 manager, NULL, AWS_ERROR_HTTP_CONNECTION_MANAGER_PENDING_ACQUIRE_TIMEOUT, &work.completions);
             AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: failing pending acquisition with timeout", (void *)manager);
+                AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Failing pending acquires due to timeout", (void *)manager);
         }
     }
 
