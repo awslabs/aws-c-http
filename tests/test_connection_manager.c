@@ -53,6 +53,8 @@ struct cm_tester_options {
     struct aws_tls_connection_options *env_configured_tls;
     size_t max_connections;
     uint64_t max_connection_idle_in_ms;
+    uint64_t pending_connection_acquisition_timeout_ms;
+
     uint64_t starting_mock_time;
     bool http2;
     struct aws_http2_setting *initial_settings_array;
@@ -220,6 +222,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         .shutdown_complete_user_data = tester,
         .shutdown_complete_callback = s_cm_tester_on_cm_shutdown_complete,
         .max_connection_idle_in_milliseconds = options->max_connection_idle_in_ms,
+        .pending_connection_acquisition_timeout_ms = options->pending_connection_acquisition_timeout_ms,
         .http2_prior_knowledge = !options->use_tls && options->http2,
         .initial_settings_array = options->initial_settings_array,
         .num_initial_settings = options->num_initial_settings,
@@ -907,6 +910,43 @@ static int s_test_connection_manager_acquire_release_mix_synchronous(struct aws_
 AWS_TEST_CASE(
     test_connection_manager_acquire_release_mix_synchronous,
     s_test_connection_manager_acquire_release_mix_synchronous);
+
+static int s_test_connection_manager_acquire_timeout(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+        .mock_table = &s_synchronous_mocks,
+        .pending_connection_acquisition_timeout_ms = 500,
+        .starting_mock_time = 0,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    for (size_t i = 0; i < 2; ++i) {
+        s_add_mock_connections(1, AWS_NCRT_SUCCESS, i % 1 == 0);
+    }
+
+    for (size_t i = 0; i < 3; ++i) {
+        s_acquire_connections(1);
+
+        ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
+
+    }
+    for (size_t i = 0; i < 2; ++i) {
+        ASSERT_SUCCESS(s_release_connections(1, false));
+    }
+
+    ASSERT_TRUE(s_tester.connection_errors == 1);
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_connection_manager_acquire_timeout,
+    s_test_connection_manager_acquire_timeout);
 
 static int s_test_connection_manager_connect_callback_failure(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;

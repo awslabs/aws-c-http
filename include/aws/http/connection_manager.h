@@ -125,6 +125,9 @@ struct aws_http_connection_manager_options {
      */
     uint64_t max_connection_idle_in_milliseconds;
 
+    uint64_t pending_connection_acquisition_timeout_ms;
+    uint64_t max_pending_connection_acquisitions;
+
     /**
      * THIS IS AN EXPERIMENTAL AND UNSTABLE API
      * (Optional)
