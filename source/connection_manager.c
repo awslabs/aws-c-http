@@ -1662,12 +1662,8 @@ static void s_cull_pending_acquisitions(struct aws_http_connection_manager *mana
                 break;
             }
 
-            s_aws_http_connection_manager_move_front_acquisition(manager, NULL, AWS_ERROR_HTTP_UNKNOWN, &work.completions);
             current_node = aws_linked_list_next(current_node);
-            aws_linked_list_remove(node);
-            aws_linked_list_push_back(&work.connections_to_release, node);
-            --manager->idle_connection_count;
-
+            s_aws_http_connection_manager_move_front_acquisition(manager, NULL, AWS_ERROR_HTTP_UNKNOWN, &work.completions);
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
                 "id=%p: failing pending acquisition with timeout",
