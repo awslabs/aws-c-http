@@ -193,7 +193,10 @@ struct aws_http_connection_manager {
     struct aws_linked_list idle_connections;
 
     /*
-     * The set of all incomplete connection acquisition requests
+     * The set of all incomplete connection acquisition requests.
+     * This must be a FIFO list. When connections are requested by the user, they are added to the back. When we need to
+     * complete the acquisition, we pop from the front. In this way, the list is always sorted from the oldest (in terms
+     * of timeout timestamp) to the newest and we can cull it similar to idle_connections.
      */
     struct aws_linked_list pending_acquisitions;
 
@@ -820,9 +823,8 @@ static uint64_t s_calculate_pending_connections_acquire_cull_task_time(struct aw
         uint64_t now = 0;
         manager->system_vtable->aws_high_res_clock_get_ticks(&now);
         cull_task_time =
-            now +
-            aws_timestamp_convert(
-                manager->pending_connections_acquire_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
+            now + aws_timestamp_convert(
+                      manager->pending_connections_acquire_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
     }
     aws_mutex_unlock(&manager->lock);
     return cull_task_time;
@@ -1284,11 +1286,9 @@ void aws_http_connection_manager_acquire_connection(
         uint64_t acquire_start_timestamp = 0;
         if (manager->system_vtable->aws_high_res_clock_get_ticks(&acquire_start_timestamp) == AWS_OP_SUCCESS) {
             request->timeout_timestamp =
-                acquire_start_timestamp + aws_timestamp_convert(
-                                              manager->pending_connections_acquire_timeout_ms,
-                                              AWS_TIMESTAMP_MILLIS,
-                                              AWS_TIMESTAMP_NANOS,
-                                              NULL);
+                acquire_start_timestamp +
+                aws_timestamp_convert(
+                    manager->pending_connections_acquire_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
         } else {
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
