@@ -806,12 +806,12 @@ static uint64_t s_calculate_connection_acquire_cull_task_time(struct aws_http_co
     struct aws_linked_list_node *oldest_node = aws_linked_list_begin(&manager->pending_acquisitions);
     if (oldest_node != end) {
         /*
-         * Since the connections are in LIFO order in the list, the front of the list has the closest
+         * Since the pending acquires are in FIFO order in the list, the front of the list has the closest
          * cull time.
          */
-        struct aws_http_connection_acquisition *oldest_idle_connection =
+        struct aws_http_connection_acquisition *oldest_pending_acquire =
             AWS_CONTAINER_OF(oldest_node, struct aws_http_connection_acquisition, node);
-        cull_task_time = oldest_idle_connection->timeout_timestamp;
+        cull_task_time = oldest_pending_acquire->timeout_timestamp;
     } else {
         /*
          * There are no connections in the list, so the absolute minimum anything could be culled is the full
@@ -1682,9 +1682,9 @@ static void s_cull_pending_acquisitions(struct aws_http_connection_manager *mana
         struct aws_linked_list_node *current_node = aws_linked_list_begin(&manager->pending_acquisitions);
         while (current_node != end) {
             struct aws_linked_list_node *node = current_node;
-            struct aws_http_connection_acquisition *current_idle_connection =
+            struct aws_http_connection_acquisition *current_pending_acquire =
                 AWS_CONTAINER_OF(node, struct aws_http_connection_acquisition, node);
-            if (current_idle_connection->timeout_timestamp > now) {
+            if (current_pending_acquire->timeout_timestamp > now) {
                 break;
             }
 
