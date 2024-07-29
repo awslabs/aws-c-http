@@ -129,7 +129,7 @@ struct aws_http_connection_manager_options {
      * If set to a non-zero value, then pending connections acquire will fail with
      * AWS_ERROR_HTTP_CONNECTION_MANAGER_PENDING_ACQUIRE_TIMEOUT error after the specified timeout.
      */
-    uint64_t pending_connection_acquisition_timeout_ms;
+    uint64_t pending_connections_acquire_timeout_ms;
 
     /**
      * THIS IS AN EXPERIMENTAL AND UNSTABLE API
