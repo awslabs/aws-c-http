@@ -989,8 +989,13 @@ static void s_shutdown_channel_task(struct aws_channel_task *task, void *arg, en
 
     s_unlock_synced_data(websocket);
     /* END CRITICAL SECTION */
+    websocket->thread_data.is_reading_stopped = true;
+    websocket->thread_data.is_writing_stopped = true;
 
     aws_channel_shutdown(websocket->channel_slot->channel, error_code);
+    /* Increase the window size after shutdown starts, to prevent deadlock when data still pending in the upstream
+     * handler. */
+    aws_channel_slot_increment_read_window(websocket->channel_slot, SIZE_MAX);
 }
 
 /* Tell the channel to shut down. It is safe to call this multiple times.
