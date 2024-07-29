@@ -125,6 +125,10 @@ struct aws_http_connection_manager_options {
      */
     uint64_t max_connection_idle_in_milliseconds;
 
+    /**
+     * If set to a non-zero value, then pending connections acquire will fail with
+     * AWS_ERROR_HTTP_CONNECTION_MANAGER_PENDING_ACQUIRE_TIMEOUT error after the specified timeout.
+     */
     uint64_t pending_connection_acquisition_timeout_ms;
 
     /**
