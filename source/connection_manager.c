@@ -1290,7 +1290,7 @@ void aws_http_connection_manager_acquire_connection(
                 aws_timestamp_convert(
                     manager->pending_connections_acquire_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
         } else {
-            AWS_LOGF_DEBUG(
+            AWS_LOGF_WARN(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
                 "id=%p: Failed to get current timestamp using aws_high_res_clock_get_ticks function. Ignoring the "
                 "pending_connections_acquire_timeout_ms value. ",
