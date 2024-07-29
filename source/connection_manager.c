@@ -287,7 +287,6 @@ struct aws_http_connection_manager {
     uint64_t max_connection_idle_in_milliseconds;
 
     uint64_t pending_connection_acquisition_timeout_ms;
-    uint64_t max_pending_connection_acquisitions;
 
     /*
      * Task to cull idle connections.  This task is run periodically on the cull_event_loop if a non-zero
@@ -931,7 +930,6 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->shutdown_complete_user_data = options->shutdown_complete_user_data;
     manager->enable_read_back_pressure = options->enable_read_back_pressure;
     manager->max_connection_idle_in_milliseconds = options->max_connection_idle_in_milliseconds;
-    manager->max_pending_connection_acquisitions = options->max_pending_connection_acquisitions;
     manager->pending_connection_acquisition_timeout_ms = options->pending_connection_acquisition_timeout_ms;
 
     if (options->proxy_ev_settings) {
