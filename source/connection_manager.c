@@ -1669,7 +1669,7 @@ static void s_cull_pending_acquisitions(struct aws_http_connection_manager *mana
 
             current_node = aws_linked_list_next(current_node);
             s_aws_http_connection_manager_move_front_acquisition(
-                manager, NULL, AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUIRE_TIMEOUT, &work.completions);
+                manager, NULL, AWS_ERROR_HTTP_CONNECTION_MANAGER_PENDING_ACQUIRE_TIMEOUT, &work.completions);
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: failing pending acquisition with timeout", (void *)manager);
         }

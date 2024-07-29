@@ -950,7 +950,7 @@ static int s_test_connection_manager_acquire_timeout(struct aws_allocator *alloc
     for (int i = 0; i < 3; i++) {
         uint32_t error_code;
         aws_array_list_get_at(&s_tester.connection_errors_list, &error_code, i);
-        ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUIRE_TIMEOUT, error_code);
+        ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_CONNECTION_MANAGER_PENDING_ACQUIRE_TIMEOUT, error_code);
     }
 
     for (size_t i = 0; i < 2; ++i) {
