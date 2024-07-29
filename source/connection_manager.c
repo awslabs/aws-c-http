@@ -829,13 +829,12 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
     aws_mutex_unlock(&manager->lock);
 
     if (manager->max_connection_idle_in_milliseconds != 0 && manager->pending_connection_acquisition_timeout_ms != 0) {
-        cull_task_time = aws_min_u64(cull_task_time, connection_acquire_timeout); 
-    } else if(manager->pending_connection_acquisition_timeout_ms != 0){
+        cull_task_time = aws_min_u64(cull_task_time, connection_acquire_timeout);
+    } else if (manager->pending_connection_acquisition_timeout_ms != 0) {
         cull_task_time = connection_acquire_timeout;
     }
 
-    aws_event_loop_schedule_task_future(
-        manager->cull_event_loop, manager->cull_task, cull_task_time);
+    aws_event_loop_schedule_task_future(manager->cull_event_loop, manager->cull_task, cull_task_time);
 }
 
 struct aws_http_connection_manager *aws_http_connection_manager_new(

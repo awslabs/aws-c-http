@@ -923,7 +923,7 @@ static int s_test_connection_manager_acquire_timeout(struct aws_allocator *alloc
         .allocator = allocator,
         .max_connections = 2,
         .mock_table = &s_synchronous_mocks,
-        .pending_connection_acquisition_timeout_ms = 100,
+        .pending_connection_acquisition_timeout_ms = 1000,
         .starting_mock_time = 0,
     };
 
@@ -945,15 +945,16 @@ static int s_test_connection_manager_acquire_timeout(struct aws_allocator *alloc
     aws_thread_current_sleep(2 * one_sec_in_nanos);
 
     ASSERT_SUCCESS(s_wait_on_connection_reply_count(5));
-    for (size_t i = 0; i < 2; ++i) {
-        ASSERT_SUCCESS(s_release_connections(1, false));
-    }
 
     ASSERT_TRUE(s_tester.connection_errors == 3);
     for (int i = 0; i < 3; i++) {
         uint32_t error_code;
         aws_array_list_get_at(&s_tester.connection_errors_list, &error_code, i);
         ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUIRE_TIMEOUT, error_code);
+    }
+
+    for (size_t i = 0; i < 2; ++i) {
+        ASSERT_SUCCESS(s_release_connections(1, false));
     }
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
