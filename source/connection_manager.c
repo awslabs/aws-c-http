@@ -794,7 +794,7 @@ static uint64_t s_calculate_idle_connection_cull_task_time(struct aws_http_conne
     return cull_task_time;
 }
 
-static uint64_t s_calculate_connection_acquire_cull_task_time(struct aws_http_connection_manager *manager) {
+static uint64_t s_calculate_pending_connections_acquire_cull_task_time(struct aws_http_connection_manager *manager) {
     if (manager->pending_connections_acquire_timeout_ms == 0) {
         return 0;
     }
@@ -846,7 +846,7 @@ static void s_schedule_culling(struct aws_http_connection_manager *manager) {
     AWS_FATAL_ASSERT(manager->cull_event_loop != NULL);
 
     uint64_t cull_task_time = s_calculate_idle_connection_cull_task_time(manager);
-    uint64_t connection_acquire_timeout = s_calculate_connection_acquire_cull_task_time(manager);
+    uint64_t connection_acquire_timeout = s_calculate_pending_connections_acquire_cull_task_time(manager);
 
     if (manager->max_connection_idle_in_milliseconds != 0 && manager->pending_connections_acquire_timeout_ms != 0) {
         cull_task_time = aws_min_u64(cull_task_time, connection_acquire_timeout);

@@ -84,7 +84,7 @@ struct cm_tester {
     struct aws_condition_variable signal;
 
     struct aws_array_list connections;
-    /*aws_array_list<uint32> of error names */
+    /* aws_array_list<uint32> of error codes */
     struct aws_array_list connection_errors_list;
     size_t connection_errors;
     size_t connection_releases;
