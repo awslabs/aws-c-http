@@ -761,25 +761,11 @@ static void s_final_destruction_task(struct aws_task *task, void *arg, enum aws_
 }
 
 static void s_cull_task(struct aws_task *task, void *arg, enum aws_task_status status);
-static void s_schedule_connection_culling(struct aws_http_connection_manager *manager) {
-    if (manager->max_connection_idle_in_milliseconds == 0 && manager->pending_connection_acquisition_timeout_ms == 0) {
-        return;
+static uint64_t s_calculate_idle_connection_cull_task_time(struct aws_http_connection_manager *manager) {
+    if (manager->max_connection_idle_in_milliseconds == 0) {
+        return 0;
     }
-
-    if (manager->cull_task == NULL) {
-        manager->cull_task = aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_task));
-        aws_task_init(manager->cull_task, s_cull_task, manager, "cull_idle_connections");
-        /* For the task to properly run and cancel, we need to keep manager alive */
-        aws_ref_count_acquire(&manager->internal_ref_count);
-    }
-
-    if (manager->cull_event_loop == NULL) {
-        manager->cull_event_loop = aws_event_loop_group_get_next_loop(manager->bootstrap->event_loop_group);
-    }
-    AWS_FATAL_ASSERT(manager->cull_event_loop != NULL);
-
     uint64_t cull_task_time = 0;
-    uint64_t connection_acquire_timeout = 0;
 
     aws_mutex_lock(&manager->lock);
     const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections);
@@ -803,8 +789,21 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
             now + aws_timestamp_convert(
                       manager->max_connection_idle_in_milliseconds, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
     }
-    end = aws_linked_list_end(&manager->pending_acquisitions);
-    oldest_node = aws_linked_list_begin(&manager->pending_acquisitions);
+    aws_mutex_unlock(&manager->lock);
+
+    return cull_task_time;
+}
+
+static uint64_t s_calculate_connection_acquire_cull_task_time(struct aws_http_connection_manager *manager) {
+    if (manager->pending_connection_acquisition_timeout_ms == 0) {
+        return 0;
+    }
+
+    uint64_t cull_task_time = 0;
+    aws_mutex_lock(&manager->lock);
+
+    const struct aws_linked_list_node *end = aws_linked_list_end(&manager->pending_acquisitions);
+    struct aws_linked_list_node *oldest_node = aws_linked_list_begin(&manager->pending_acquisitions);
     if (oldest_node != end) {
         /*
          * Since the connections are in LIFO order in the list, the front of the list has the closest
@@ -812,7 +811,7 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
          */
         struct aws_http_connection_acquisition *oldest_idle_connection =
             AWS_CONTAINER_OF(oldest_node, struct aws_http_connection_acquisition, node);
-        connection_acquire_timeout = oldest_idle_connection->timeout_timestamp;
+        cull_task_time = oldest_idle_connection->timeout_timestamp;
     } else {
         /*
          * There are no connections in the list, so the absolute minimum anything could be culled is the full
@@ -820,12 +819,34 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
          */
         uint64_t now = 0;
         manager->system_vtable->aws_high_res_clock_get_ticks(&now);
-        connection_acquire_timeout =
+        cull_task_time =
             now +
             aws_timestamp_convert(
                 manager->pending_connection_acquisition_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
     }
     aws_mutex_unlock(&manager->lock);
+    return cull_task_time;
+}
+
+static void s_schedule_culling(struct aws_http_connection_manager *manager) {
+    if (manager->max_connection_idle_in_milliseconds == 0 && manager->pending_connection_acquisition_timeout_ms == 0) {
+        return;
+    }
+
+    if (manager->cull_task == NULL) {
+        manager->cull_task = aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_task));
+        aws_task_init(manager->cull_task, s_cull_task, manager, "cull_idle_connections");
+        /* For the task to properly run and cancel, we need to keep manager alive */
+        aws_ref_count_acquire(&manager->internal_ref_count);
+    }
+
+    if (manager->cull_event_loop == NULL) {
+        manager->cull_event_loop = aws_event_loop_group_get_next_loop(manager->bootstrap->event_loop_group);
+    }
+    AWS_FATAL_ASSERT(manager->cull_event_loop != NULL);
+
+    uint64_t cull_task_time = s_calculate_idle_connection_cull_task_time(manager);
+    uint64_t connection_acquire_timeout = s_calculate_connection_acquire_cull_task_time(manager);
 
     if (manager->max_connection_idle_in_milliseconds != 0 && manager->pending_connection_acquisition_timeout_ms != 0) {
         cull_task_time = aws_min_u64(cull_task_time, connection_acquire_timeout);
@@ -970,7 +991,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     }
 
     /* NOTHING can fail after here */
-    s_schedule_connection_culling(manager);
+    s_schedule_culling(manager);
 
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Successfully created", (void *)manager);
 
@@ -1692,7 +1713,7 @@ static void s_cull_task(struct aws_task *task, void *arg, enum aws_task_status s
     s_cull_idle_connections(manager);
     s_cull_pending_acquisitions(manager);
 
-    s_schedule_connection_culling(manager);
+    s_schedule_culling(manager);
 }
 
 void aws_http_connection_manager_fetch_metrics(
