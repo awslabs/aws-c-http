@@ -1672,7 +1672,7 @@ static void s_cull_pending_acquisitions(struct aws_http_connection_manager *mana
 
             current_node = aws_linked_list_next(current_node);
             s_aws_http_connection_manager_move_front_acquisition(
-                manager, NULL, AWS_ERROR_HTTP_UNKNOWN, &work.completions);
+                manager, NULL, AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUIRE_TIMEOUT, &work.completions);
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: failing pending acquisition with timeout", (void *)manager);
         }
@@ -1692,12 +1692,8 @@ static void s_cull_task(struct aws_task *task, void *arg, enum aws_task_status s
     }
 
     struct aws_http_connection_manager *manager = arg;
-    if(manager->max_connection_idle_in_milliseconds != 0){
-        s_cull_idle_connections(manager);
-    }
-    if(manager->pending_connection_acquisition_timeout_ms != 0){
-        s_cull_pending_acquisitions(manager);
-    }
+    s_cull_idle_connections(manager);
+    s_cull_pending_acquisitions(manager);
 
     s_schedule_connection_culling(manager);
 }
