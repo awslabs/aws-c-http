@@ -943,7 +943,7 @@ static int s_test_connection_manager_acquire_timeout(struct aws_allocator *alloc
 
     ASSERT_SUCCESS(s_wait_on_connection_reply_count(num_connections + num_pending_connections));
     ASSERT_UINT_EQUALS(num_pending_connections, s_tester.connection_errors);
-    for (int i = 0; i < num_pending_connections; i++) {
+    for (size_t i = 0; i < num_pending_connections; i++) {
         uint32_t error_code;
         aws_array_list_get_at(&s_tester.connection_errors_list, &error_code, i);
         ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_CONNECTION_MANAGER_PENDING_ACQUIRE_TIMEOUT, error_code);
