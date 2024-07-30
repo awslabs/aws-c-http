@@ -918,10 +918,12 @@ AWS_TEST_CASE(
 
 static int s_test_connection_manager_acquire_timeout(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
-
+    
+    size_t num_connections = 2;
+    size_t num_pending_connections = 3;
     struct cm_tester_options options = {
         .allocator = allocator,
-        .max_connections = 2,
+        .max_connections = num_connections,
         .mock_table = &s_synchronous_mocks,
         .pending_connections_acquire_timeout_ms = 1000,
         .starting_mock_time = 0,
@@ -929,13 +931,8 @@ static int s_test_connection_manager_acquire_timeout(struct aws_allocator *alloc
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
-    for (size_t i = 0; i < 2; ++i) {
-        s_add_mock_connections(1, AWS_NCRT_SUCCESS, i % 1 == 0);
-    }
-
-    for (size_t i = 0; i < 5; ++i) {
-        s_acquire_connections(1);
-    }
+    s_add_mock_connections(num_connections, AWS_NCRT_SUCCESS, true);
+    s_acquire_connections(num_connections + num_pending_connections);
 
     /* advance fake time enough to cause the acquire connections to timeout, also sleep for real to give the cull task
      * a chance to run in the real event loop
@@ -944,18 +941,14 @@ static int s_test_connection_manager_acquire_timeout(struct aws_allocator *alloc
     s_tester_set_mock_time(2 * one_sec_in_nanos);
     aws_thread_current_sleep(2 * one_sec_in_nanos);
 
-    ASSERT_SUCCESS(s_wait_on_connection_reply_count(5));
-
-    ASSERT_TRUE(s_tester.connection_errors == 3);
-    for (int i = 0; i < 3; i++) {
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(num_connections + num_pending_connections));
+    ASSERT_UINT_EQUALS(num_pending_connections, s_tester.connection_errors);
+    for (int i = 0; i < num_pending_connections; i++) {
         uint32_t error_code;
         aws_array_list_get_at(&s_tester.connection_errors_list, &error_code, i);
         ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_CONNECTION_MANAGER_PENDING_ACQUIRE_TIMEOUT, error_code);
     }
-
-    for (size_t i = 0; i < 2; ++i) {
-        ASSERT_SUCCESS(s_release_connections(1, false));
-    }
+    ASSERT_SUCCESS(s_release_connections(num_connections, false));
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
 
