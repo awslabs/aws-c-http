@@ -817,7 +817,7 @@ static uint64_t s_calculate_pending_connections_acquire_cull_task_time(struct aw
         cull_task_time = oldest_pending_acquire->timeout_timestamp;
     } else {
         /*
-         * There are no connections in the list, so the absolute minimum anything could be culled is the full
+         * There are no acquisition in the list, so the absolute minimum anything could be culled is the full
          * culling interval from now.
          */
         uint64_t now = 0;
