@@ -815,8 +815,7 @@ static uint64_t s_calculate_pending_acquisition_cull_task_time_synced(struct aws
     struct aws_linked_list_node *oldest_node = aws_linked_list_begin(&manager->pending_acquisitions);
     if (oldest_node != end) {
         /*
-         * Since the pending acquires are in FIFO order in the list, the front of the list has the closest
-         * cull time.
+         * front of the list has the closest cull time
          */
         struct aws_http_connection_acquisition *oldest_pending_acquire =
             AWS_CONTAINER_OF(oldest_node, struct aws_http_connection_acquisition, node);
