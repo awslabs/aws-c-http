@@ -852,14 +852,14 @@ static void s_schedule_culling(struct aws_http_connection_manager *manager) {
     AWS_FATAL_ASSERT(manager->cull_event_loop != NULL);
 
     aws_mutex_lock(&manager->lock);
-    uint64_t cull_task_timestamp = s_calculate_idle_connection_cull_task_time_synced(manager);
-    uint64_t connection_acquisition_timestamp = s_calculate_pending_acquisition_cull_task_time_synced(manager);
+    uint64_t idle_cull_time = s_calculate_idle_connection_cull_task_time_synced(manager);
+    uint64_t acquisition_cull_time = s_calculate_pending_acquisition_cull_task_time_synced(manager);
     aws_mutex_unlock(&manager->lock);
 
     aws_event_loop_schedule_task_future(
         manager->cull_event_loop,
         manager->cull_task,
-        aws_min_u64(cull_task_timestamp, connection_acquisition_timestamp));
+        aws_min_u64(idle_cull_time, acquisition_cull_time));
 }
 
 struct aws_http_connection_manager *aws_http_connection_manager_new(
