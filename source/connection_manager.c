@@ -766,8 +766,8 @@ static void s_final_destruction_task(struct aws_task *task, void *arg, enum aws_
 static void s_cull_task(struct aws_task *task, void *arg, enum aws_task_status status);
 
 /*
- * Calculates the next timestamp the idle connections should be culled. Manager lock must be held somewhere in the call stack.
- * Returns UINT64_MAX if max_connection_idle_in_milliseconds is not set.
+ * Calculates the next timestamp the idle connections should be culled. Manager lock must be held somewhere in the call
+ * stack. Returns UINT64_MAX if max_connection_idle_in_milliseconds is not set.
  */
 static uint64_t s_calculate_idle_connection_cull_task_time_synced(struct aws_http_connection_manager *manager) {
     if (manager->max_connection_idle_in_milliseconds == 0) {
@@ -801,8 +801,8 @@ static uint64_t s_calculate_idle_connection_cull_task_time_synced(struct aws_htt
 }
 
 /*
- * Calculates the next timestamp the pending acquisitions should be culled. Manager lock must be held somewhere in the call stack.
- * Returns UINT64_MAX if connection_acquisition_timeout_ms is not set.
+ * Calculates the next timestamp the pending acquisitions should be culled. Manager lock must be held somewhere in the
+ * call stack. Returns UINT64_MAX if connection_acquisition_timeout_ms is not set.
  */
 static uint64_t s_calculate_pending_acquisition_cull_task_time_synced(struct aws_http_connection_manager *manager) {
     if (manager->connection_acquisition_timeout_ms == 0) {
@@ -857,7 +857,10 @@ static void s_schedule_culling(struct aws_http_connection_manager *manager) {
     uint64_t connection_acquisition_timestamp = s_calculate_pending_acquisition_cull_task_time_synced(manager);
     aws_mutex_unlock(&manager->lock);
 
-    aws_event_loop_schedule_task_future(manager->cull_event_loop, manager->cull_task, aws_min_u64(cull_task_timestamp, connection_acquisition_timestamp));
+    aws_event_loop_schedule_task_future(
+        manager->cull_event_loop,
+        manager->cull_task,
+        aws_min_u64(cull_task_timestamp, connection_acquisition_timestamp));
 }
 
 struct aws_http_connection_manager *aws_http_connection_manager_new(
@@ -1618,7 +1621,8 @@ static void s_aws_http_connection_manager_on_connection_shutdown(
 }
 
 static void s_cull_task_impl(struct aws_http_connection_manager *manager) {
-    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: culling idle connections and pending acquisitions", (void *)manager);
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: culling idle connections and pending acquisitions", (void *)manager);
 
     if (manager == NULL || manager->max_connection_idle_in_milliseconds == 0) {
         return;
@@ -1658,10 +1662,12 @@ static void s_cull_task_impl(struct aws_http_connection_manager *manager) {
                 (void *)manager,
                 (void *)current_idle_connection->connection);
         }
-        
+
         /* cull pending acquisitions */
-        const struct aws_linked_list_node *pending_acquisitions_end = aws_linked_list_end(&manager->pending_acquisitions);
-        struct aws_linked_list_node *pending_acquisitions_current = aws_linked_list_begin(&manager->pending_acquisitions);
+        const struct aws_linked_list_node *pending_acquisitions_end =
+            aws_linked_list_end(&manager->pending_acquisitions);
+        struct aws_linked_list_node *pending_acquisitions_current =
+            aws_linked_list_begin(&manager->pending_acquisitions);
         while (pending_acquisitions_current != pending_acquisitions_end) {
             struct aws_linked_list_node *node = pending_acquisitions_current;
             struct aws_http_connection_acquisition *current_pending_acquire =
