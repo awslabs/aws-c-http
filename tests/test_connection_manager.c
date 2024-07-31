@@ -916,7 +916,7 @@ AWS_TEST_CASE(
     test_connection_manager_acquire_release_mix_synchronous,
     s_test_connection_manager_acquire_release_mix_synchronous);
 
-static int s_s_test_connection_manager_acquisition_timeout(struct aws_allocator *allocator, void *ctx) {
+static int s_test_connection_manager_acquisition_timeout(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
     size_t num_connections = 2;
@@ -954,7 +954,7 @@ static int s_s_test_connection_manager_acquisition_timeout(struct aws_allocator 
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(s_test_connection_manager_acquisition_timeout, s_s_test_connection_manager_acquisition_timeout);
+AWS_TEST_CASE(test_connection_manager_acquisition_timeout, s_test_connection_manager_acquisition_timeout);
 
 static int s_test_connection_manager_connect_callback_failure(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
