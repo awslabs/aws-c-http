@@ -1624,7 +1624,7 @@ static void s_cull_task_impl(struct aws_http_connection_manager *manager) {
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: culling idle connections and pending acquisitions", (void *)manager);
 
-    if (manager == NULL || manager->max_connection_idle_in_milliseconds == 0) {
+    if (manager == NULL) {
         return;
     }
 
@@ -1641,46 +1641,52 @@ static void s_cull_task_impl(struct aws_http_connection_manager *manager) {
     /* Only if we're not shutting down */
     if (manager->state == AWS_HCMST_READY) {
         /* cull idle connections */
-        const struct aws_linked_list_node *idle_connections_end = aws_linked_list_end(&manager->idle_connections);
-        struct aws_linked_list_node *idle_connections_current = aws_linked_list_begin(&manager->idle_connections);
-        while (idle_connections_current != idle_connections_end) {
-            struct aws_linked_list_node *node = idle_connections_current;
-            struct aws_idle_connection *current_idle_connection =
-                AWS_CONTAINER_OF(node, struct aws_idle_connection, node);
-            if (current_idle_connection->cull_timestamp > now) {
-                break;
+        if (manager->max_connection_idle_in_milliseconds != 0) {
+            const struct aws_linked_list_node *idle_connections_end = aws_linked_list_end(&manager->idle_connections);
+            struct aws_linked_list_node *idle_connections_current = aws_linked_list_begin(&manager->idle_connections);
+            while (idle_connections_current != idle_connections_end) {
+                struct aws_linked_list_node *node = idle_connections_current;
+                struct aws_idle_connection *current_idle_connection =
+                    AWS_CONTAINER_OF(node, struct aws_idle_connection, node);
+                if (current_idle_connection->cull_timestamp > now) {
+                    break;
+                }
+
+                idle_connections_current = aws_linked_list_next(idle_connections_current);
+                aws_linked_list_remove(node);
+                aws_linked_list_push_back(&work.connections_to_release, node);
+                --manager->idle_connection_count;
+
+                AWS_LOGF_DEBUG(
+                    AWS_LS_HTTP_CONNECTION_MANAGER,
+                    "id=%p: culling idle connection (%p)",
+                    (void *)manager,
+                    (void *)current_idle_connection->connection);
             }
-
-            idle_connections_current = aws_linked_list_next(idle_connections_current);
-            aws_linked_list_remove(node);
-            aws_linked_list_push_back(&work.connections_to_release, node);
-            --manager->idle_connection_count;
-
-            AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: culling idle connection (%p)",
-                (void *)manager,
-                (void *)current_idle_connection->connection);
         }
 
         /* cull pending acquisitions */
-        const struct aws_linked_list_node *pending_acquisitions_end =
-            aws_linked_list_end(&manager->pending_acquisitions);
-        struct aws_linked_list_node *pending_acquisitions_current =
-            aws_linked_list_begin(&manager->pending_acquisitions);
-        while (pending_acquisitions_current != pending_acquisitions_end) {
-            struct aws_linked_list_node *node = pending_acquisitions_current;
-            struct aws_http_connection_acquisition *current_pending_acquire =
-                AWS_CONTAINER_OF(node, struct aws_http_connection_acquisition, node);
-            if (current_pending_acquire->timeout_timestamp > now) {
-                break;
-            }
+        if (manager->connection_acquisition_timeout_ms != 0) {
+            const struct aws_linked_list_node *pending_acquisitions_end =
+                aws_linked_list_end(&manager->pending_acquisitions);
+            struct aws_linked_list_node *pending_acquisitions_current =
+                aws_linked_list_begin(&manager->pending_acquisitions);
+            while (pending_acquisitions_current != pending_acquisitions_end) {
+                struct aws_linked_list_node *node = pending_acquisitions_current;
+                struct aws_http_connection_acquisition *current_pending_acquire =
+                    AWS_CONTAINER_OF(node, struct aws_http_connection_acquisition, node);
+                if (current_pending_acquire->timeout_timestamp > now) {
+                    break;
+                }
 
-            pending_acquisitions_current = aws_linked_list_next(pending_acquisitions_current);
-            s_aws_http_connection_manager_move_front_acquisition(
-                manager, NULL, AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUISITION_TIMEOUT, &work.completions);
-            AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Failing pending acquires due to timeout", (void *)manager);
+                pending_acquisitions_current = aws_linked_list_next(pending_acquisitions_current);
+                s_aws_http_connection_manager_move_front_acquisition(
+                    manager, NULL, AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUISITION_TIMEOUT, &work.completions);
+                AWS_LOGF_DEBUG(
+                    AWS_LS_HTTP_CONNECTION_MANAGER,
+                    "id=%p: Failing pending acquisition due to timeout",
+                    (void *)manager);
+            }
         }
     }
 
