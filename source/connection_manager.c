@@ -1678,7 +1678,7 @@ static void s_cull_task_impl(struct aws_http_connection_manager *manager) {
 
             pending_acquisitions_current = aws_linked_list_next(pending_acquisitions_current);
             s_aws_http_connection_manager_move_front_acquisition(
-                manager, NULL, AWS_ERROR_HTTP_CONNECTION_MANAGER_PENDING_ACQUIRE_TIMEOUT, &work.completions);
+                manager, NULL, AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUISITION_TIMEOUT, &work.completions);
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Failing pending acquires due to timeout", (void *)manager);
         }
