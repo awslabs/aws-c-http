@@ -857,9 +857,7 @@ static void s_schedule_culling(struct aws_http_connection_manager *manager) {
     aws_mutex_unlock(&manager->lock);
 
     aws_event_loop_schedule_task_future(
-        manager->cull_event_loop,
-        manager->cull_task,
-        aws_min_u64(idle_cull_time, acquisition_cull_time));
+        manager->cull_event_loop, manager->cull_task, aws_min_u64(idle_cull_time, acquisition_cull_time));
 }
 
 struct aws_http_connection_manager *aws_http_connection_manager_new(
