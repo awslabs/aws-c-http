@@ -289,7 +289,7 @@ struct aws_http_connection_manager {
      */
     uint64_t max_connection_idle_in_milliseconds;
 
-    uint64_t pending_connections_acquire_timeout_ms;
+    uint64_t connection_acquisition_timeout_ms;
 
     /*
      * Task to cull idle connections.  This task is run periodically on the cull_event_loop if a non-zero
@@ -798,7 +798,7 @@ static uint64_t s_calculate_idle_connection_cull_task_time(struct aws_http_conne
 }
 
 static uint64_t s_calculate_pending_connections_acquire_cull_task_time(struct aws_http_connection_manager *manager) {
-    if (manager->pending_connections_acquire_timeout_ms == 0) {
+    if (manager->connection_acquisition_timeout_ms == 0) {
         return 0;
     }
 
@@ -824,14 +824,14 @@ static uint64_t s_calculate_pending_connections_acquire_cull_task_time(struct aw
         manager->system_vtable->aws_high_res_clock_get_ticks(&now);
         cull_task_time =
             now + aws_timestamp_convert(
-                      manager->pending_connections_acquire_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
+                      manager->connection_acquisition_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
     }
     aws_mutex_unlock(&manager->lock);
     return cull_task_time;
 }
 
 static void s_schedule_culling(struct aws_http_connection_manager *manager) {
-    if (manager->max_connection_idle_in_milliseconds == 0 && manager->pending_connections_acquire_timeout_ms == 0) {
+    if (manager->max_connection_idle_in_milliseconds == 0 && manager->connection_acquisition_timeout_ms == 0) {
         return;
     }
 
@@ -850,9 +850,9 @@ static void s_schedule_culling(struct aws_http_connection_manager *manager) {
     uint64_t cull_task_time = s_calculate_idle_connection_cull_task_time(manager);
     uint64_t connection_acquire_timeout = s_calculate_pending_connections_acquire_cull_task_time(manager);
 
-    if (manager->max_connection_idle_in_milliseconds != 0 && manager->pending_connections_acquire_timeout_ms != 0) {
+    if (manager->max_connection_idle_in_milliseconds != 0 && manager->connection_acquisition_timeout_ms != 0) {
         cull_task_time = aws_min_u64(cull_task_time, connection_acquire_timeout);
-    } else if (manager->pending_connections_acquire_timeout_ms != 0) {
+    } else if (manager->connection_acquisition_timeout_ms != 0) {
         cull_task_time = connection_acquire_timeout;
     }
 
@@ -953,7 +953,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->shutdown_complete_user_data = options->shutdown_complete_user_data;
     manager->enable_read_back_pressure = options->enable_read_back_pressure;
     manager->max_connection_idle_in_milliseconds = options->max_connection_idle_in_milliseconds;
-    manager->pending_connections_acquire_timeout_ms = options->pending_connections_acquire_timeout_ms;
+    manager->connection_acquisition_timeout_ms = options->connection_acquisition_timeout_ms;
 
     if (options->proxy_ev_settings) {
         manager->proxy_ev_settings = *options->proxy_ev_settings;
@@ -1282,18 +1282,18 @@ void aws_http_connection_manager_acquire_connection(
     request->user_data = user_data;
     request->manager = manager;
 
-    if (manager->pending_connections_acquire_timeout_ms) {
+    if (manager->connection_acquisition_timeout_ms) {
         uint64_t acquire_start_timestamp = 0;
         if (manager->system_vtable->aws_high_res_clock_get_ticks(&acquire_start_timestamp) == AWS_OP_SUCCESS) {
             request->timeout_timestamp =
                 acquire_start_timestamp +
                 aws_timestamp_convert(
-                    manager->pending_connections_acquire_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
+                    manager->connection_acquisition_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
         } else {
             AWS_LOGF_WARN(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
                 "id=%p: Failed to get current timestamp using aws_high_res_clock_get_ticks function. Ignoring the "
-                "pending_connections_acquire_timeout_ms value. ",
+                "connection_acquisition_timeout_ms value. ",
                 (void *)manager);
         }
     }
@@ -1668,7 +1668,7 @@ static void s_cull_idle_connections(struct aws_http_connection_manager *manager)
 static void s_cull_pending_acquisitions(struct aws_http_connection_manager *manager) {
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: culling idle connections", (void *)manager);
 
-    if (manager == NULL || manager->pending_connections_acquire_timeout_ms == 0) {
+    if (manager == NULL || manager->connection_acquisition_timeout_ms == 0) {
         return;
     }
 

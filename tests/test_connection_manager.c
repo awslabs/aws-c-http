@@ -53,7 +53,7 @@ struct cm_tester_options {
     struct aws_tls_connection_options *env_configured_tls;
     size_t max_connections;
     uint64_t max_connection_idle_in_ms;
-    uint64_t pending_connections_acquire_timeout_ms;
+    uint64_t connection_acquisition_timeout_ms;
 
     uint64_t starting_mock_time;
     bool http2;
@@ -227,7 +227,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         .shutdown_complete_user_data = tester,
         .shutdown_complete_callback = s_cm_tester_on_cm_shutdown_complete,
         .max_connection_idle_in_milliseconds = options->max_connection_idle_in_ms,
-        .pending_connections_acquire_timeout_ms = options->pending_connections_acquire_timeout_ms,
+        .connection_acquisition_timeout_ms = options->connection_acquisition_timeout_ms,
         .http2_prior_knowledge = !options->use_tls && options->http2,
         .initial_settings_array = options->initial_settings_array,
         .num_initial_settings = options->num_initial_settings,
@@ -925,7 +925,7 @@ static int s_test_connection_manager_acquire_timeout(struct aws_allocator *alloc
         .allocator = allocator,
         .max_connections = num_connections,
         .mock_table = &s_synchronous_mocks,
-        .pending_connections_acquire_timeout_ms = 1000,
+        .connection_acquisition_timeout_ms = 1000,
         .starting_mock_time = 0,
     };
 
