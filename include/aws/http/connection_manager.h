@@ -126,6 +126,13 @@ struct aws_http_connection_manager_options {
     uint64_t max_connection_idle_in_milliseconds;
 
     /**
+     * If set to a non-zero value, aws_http_connection_manager_acquire_connection() calls
+     * will give up after waiting this long for a connection from the pool,
+     * failing with error AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUISITION_TIMEOUT.
+     */
+    uint64_t connection_acquisition_timeout_ms;
+
+    /**
      * THIS IS AN EXPERIMENTAL AND UNSTABLE API
      * (Optional)
      * An array of network interface names. The manager will distribute the
