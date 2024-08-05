@@ -748,7 +748,6 @@ AWS_TEST_CASE(test_connection_manager_acquire_release_mix, s_test_connection_man
 static int s_test_connection_manager_max_pending_acquisitions(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-
     size_t num_connections = 2;
     size_t num_pending_connections = 3;
     struct cm_tester_options options = {
