@@ -1315,7 +1315,7 @@ void aws_http_connection_manager_acquire_connection(
         aws_linked_list_push_back(&manager->pending_acquisitions, &request->node);
         ++manager->pending_acquisition_count;
     } else {
-        request->error_code = AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_AQUISITONS_EXCEEDED;
+        request->error_code = AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED;
         aws_linked_list_push_back(&work.completions, &request->node);
     }
 

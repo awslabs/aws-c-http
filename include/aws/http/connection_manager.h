@@ -132,6 +132,9 @@ struct aws_http_connection_manager_options {
      */
     uint64_t connection_acquisition_timeout_ms;
 
+    /*
+     * If set to a non-zero value, aws_http_connection_manager_acquire_connection() calls will fail with AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED if there are already `max_pending_connection_acquisitions`.
+     */
     uint64_t max_pending_connection_acquisitions;
 
     /**

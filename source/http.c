@@ -155,7 +155,7 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUISITION_TIMEOUT,
         "Connection Manager failed to acquire a connection within the defined timeout."),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_AQUISITONS_EXCEEDED,
+        AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED,
         "Max pending acquisitions reached"),
 };
 /* clang-format on */

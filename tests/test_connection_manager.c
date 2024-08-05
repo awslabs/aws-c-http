@@ -765,7 +765,7 @@ static int s_test_connection_manager_max_pending_acquisitions(struct aws_allocat
     for (size_t i = 0; i < num_pending_connections; i++) {
         uint32_t error_code;
         aws_array_list_get_at(&s_tester.connection_errors_list, &error_code, i);
-        ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_AQUISITONS_EXCEEDED, error_code);
+        ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED, error_code);
     }
     ASSERT_SUCCESS(s_release_connections(num_connections, false));
 
