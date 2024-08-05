@@ -4563,9 +4563,16 @@ H1_CLIENT_TEST_CASE(h1_client_connection_close_before_request_finishes_with_buff
         "\r\n"
         "Call Momo"));
 
+    /* All the response data has been processed, buffered in the connection level. */
     testing_channel_run_currently_queued_tasks(&tester.testing_channel);
 
+    /* Some handler starts the shutdown process, while the stream still has 0 window left. (eg: socket reads EOF, TLS
+     * reads graceful shutdown) */
     aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_UNKNOWN);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    /* We should not complete the stream, since the window for the stream is still 0. */
+    ASSERT_FALSE(stream_tester.complete);
+
     /* Updated the window after shutdown happens */
     aws_http_stream_update_window(stream_tester.stream, 5);
     /* Wait for channel to finish shutdown */
