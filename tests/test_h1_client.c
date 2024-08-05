@@ -4519,3 +4519,75 @@ H1_CLIENT_TEST_CASE(h1_client_response_first_byte_timeout_request_override) {
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
+
+/**
+ * Once upon a time, when the connection received data from the channel, we buffer the data in the connection level,
+ and
+ * then send it to the stream.
+ * When stream has no window left to receive the data from connection, the data will be kept in the buffer.
+ * If the connection starts to shutdown before stream opens its window, the buffered data will be throw away because
+ of
+ * shutdown process.
+ * But, the connection actually received the full response, which is an unexpected behavior for the
+ * stream to report connection close with error.
+ */
+H1_CLIENT_TEST_CASE(h1_client_connection_close_before_request_finishes_with_buffer) {
+    (void)ctx;
+    struct tester_options tester_opts = {
+        .manual_window_management = true,
+        .initial_stream_window_size = 5,
+        .read_buffer_capacity = SIZE_MAX,
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init_ex(&tester, allocator, &tester_opts));
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+    /* send head of request */
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
+    /* send close connection response */
+    ASSERT_SUCCESS(testing_channel_push_read_str(
+        &tester.testing_channel,
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 9\r\n"
+        "\r\n"
+        "Call Momo"));
+
+    /* All the response data has been processed, buffered in the connection level. */
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+
+    /* Some handler starts the shutdown process, while the stream still has 0 window left. (eg: socket reads EOF, TLS
+     * reads graceful shutdown) */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_UNKNOWN);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    /* We should not complete the stream, since the window for the stream is still 0. */
+    ASSERT_FALSE(stream_tester.complete);
+
+    /* Updated the window after shutdown happens */
+    aws_http_stream_update_window(stream_tester.stream, 5);
+    /* Wait for channel to finish shutdown */
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(200, stream_tester.response_status);
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(stream_tester.response_headers));
+    ASSERT_SUCCESS(s_check_header(stream_tester.response_headers, 0, "Content-Length", "9"));
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&stream_tester.response_body, "Call Momo"));
+
+    /* clean up */
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
