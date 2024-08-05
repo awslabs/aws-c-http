@@ -1309,7 +1309,8 @@ void aws_http_connection_manager_acquire_connection(
 
     /* It's a use after free crime, we don't want to handle */
     AWS_FATAL_ASSERT(manager->state == AWS_HCMST_READY);
-    if (manager->pending_acquisition_count < manager->max_pending_connection_acquisitions) {
+    if (manager->max_pending_connection_acquisitions > 0 &&
+        manager->pending_acquisition_count < manager->max_pending_connection_acquisitions) {
         aws_linked_list_push_back(&manager->pending_acquisitions, &request->node);
         ++manager->pending_acquisition_count;
     } else {
