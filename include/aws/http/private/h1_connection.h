@@ -96,6 +96,9 @@ struct aws_h1_connection {
         uint64_t outgoing_stream_timestamp_ns;
         uint64_t incoming_stream_timestamp_ns;
 
+        int pending_shutdown_error_code;
+        bool is_reading_shutdown_pending : 1;
+
         /* True when read and/or writing has stopped, whether due to errors or normal channel shutdown. */
         bool is_reading_stopped : 1;
         bool is_writing_stopped : 1;

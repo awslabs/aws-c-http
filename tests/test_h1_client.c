@@ -4519,3 +4519,70 @@ H1_CLIENT_TEST_CASE(h1_client_response_first_byte_timeout_request_override) {
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
+
+// /**
+//  * Once upon a time, when the connection received data from the channel, we buffer the data in the connection level,
+//  and
+//  * then send it to the stream.
+//  * When stream has no window left to receive the data from connection, the data will be kept in the buffer.
+//  * If the connection starts to shutdown before stream opens its window, the buffered data will be throw away because
+//  of
+//  * shutdown process.
+//  * But, the connection actually received the full response, which is an unexpected behavior for the
+//  * stream to report connection close with error.
+//  */
+// H1_CLIENT_TEST_CASE(h1_client_connection_close_before_request_finishes) {
+//     (void)ctx;
+//     struct tester tester;
+//     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+//     struct aws_http_header headers[] = {
+//         {
+//             .name = aws_byte_cursor_from_c_str("Content-Length"),
+//             .value = aws_byte_cursor_from_c_str("16"),
+//         },
+//     };
+
+//     struct aws_http_message *request = aws_http_message_new_request(allocator);
+//     ASSERT_NOT_NULL(request);
+//     ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET")));
+//     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+//     ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
+
+//     struct client_stream_tester stream_tester;
+//     ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+//     /* send head of request */
+//     testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+
+//     /* Ensure the request can be destroyed after request is sent */
+//     aws_http_message_destroy(request);
+
+//     /* send close connection response */
+//     ASSERT_SUCCESS(testing_channel_push_read_str(
+//         &tester.testing_channel,
+//         "HTTP/1.1 200OK\r\n"
+//         "Content-Length: 9\r\n"
+//         "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
+//         "\r\n"
+//         "Call Momo"));
+
+//     testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+
+//     aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+//     /* Wait for channel to finish shutdown */
+//     testing_channel_drain_queued_tasks(&tester.testing_channel);
+//     /* check result, should not receive any body */
+//     const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
+//                            "Content-Length: 16\r\n"
+//                            "\r\n";
+//     ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
+
+//     ASSERT_TRUE(stream_tester.complete);
+//     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
+
+//     /* clean up */
+//     client_stream_tester_clean_up(&stream_tester);
+//     ASSERT_SUCCESS(s_tester_clean_up(&tester));
+//     return AWS_OP_SUCCESS;
+// }

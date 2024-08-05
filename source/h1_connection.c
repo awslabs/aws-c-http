@@ -1908,6 +1908,12 @@ void aws_h1_connection_try_process_read_messages(struct aws_h1_connection *conne
         }
     }
 
+    if (connection->thread_data.is_reading_shutdown_pending && connection->thread_data.read_buffer.pending_bytes == 0) {
+        /* Done processing the pending buffer. */
+        aws_raise_error(connection->thread_data.pending_shutdown_error_code);
+        goto shutdown;
+    }
+
     /* Increment connection window, if necessary */
     if (s_update_connection_window(connection)) {
         goto shutdown;
@@ -1917,7 +1923,17 @@ void aws_h1_connection_try_process_read_messages(struct aws_h1_connection *conne
     return;
 
 shutdown:
-    s_shutdown_due_to_error(connection, aws_last_error());
+    if (connection->thread_data.is_reading_shutdown_pending) {
+        int error_code = aws_last_error();
+        if (connection->thread_data.pending_shutdown_error_code != 0) {
+            error_code = connection->thread_data.pending_shutdown_error_code;
+        }
+        s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, false /*schedule_shutdown*/, error_code);
+        aws_channel_slot_on_handler_shutdown_complete(
+            connection->base.channel_slot, AWS_CHANNEL_DIR_READ, error_code, false);
+    } else {
+        s_shutdown_due_to_error(connection, aws_last_error());
+    }
 }
 
 /* Try to process the next queued aws_io_message as normal HTTP data for an aws_http_stream.
@@ -2122,6 +2138,31 @@ error:
     return AWS_OP_SUCCESS;
 }
 
+static void s_initialize_read_delay_shutdown(struct aws_h1_connection *connection, int error_code) {
+
+    AWS_LOGF_DEBUG(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Connection still have pending data to be delivered during shutdown. Wait until downstream "
+        "reads the data.",
+        (void *)&connection->base);
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Current window stats: connection=%zu, stream=%" PRIu64 " buffer=%zu/%zu",
+        (void *)&connection->base,
+        connection->thread_data.connection_window,
+        connection->thread_data.incoming_stream ? connection->thread_data.incoming_stream->thread_data.stream_window
+                                                : 0,
+        connection->thread_data.read_buffer.pending_bytes,
+        connection->thread_data.read_buffer.capacity);
+
+    /* Still have data buffered in connection, wait for it to be processed */
+    connection->thread_data.is_reading_shutdown_pending = true;
+    connection->thread_data.pending_shutdown_error_code = error_code;
+    /* Try to process messages in queue */
+    aws_h1_connection_try_process_read_messages(connection);
+}
+
 static int s_handler_shutdown(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
@@ -2142,6 +2183,12 @@ static int s_handler_shutdown(
 
     if (dir == AWS_CHANNEL_DIR_READ) {
         /* This call ensures that no further streams will be created or worked on. */
+        if (!free_scarce_resources_immediately && !connection->thread_data.is_reading_stopped &&
+            connection->thread_data.read_buffer.pending_bytes > 0) {
+            s_initialize_read_delay_shutdown(connection, error_code);
+            /* Return success, and wait for the buffered data to be processed to propagate the shutdown. */
+            return AWS_OP_SUCCESS;
+        }
         s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, false /*schedule_shutdown*/, error_code);
     } else /* dir == AWS_CHANNEL_DIR_WRITE */ {
 
