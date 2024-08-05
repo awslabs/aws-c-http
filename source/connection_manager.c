@@ -1309,13 +1309,14 @@ void aws_http_connection_manager_acquire_connection(
 
     /* It's a use after free crime, we don't want to handle */
     AWS_FATAL_ASSERT(manager->state == AWS_HCMST_READY);
+
     if (manager->max_pending_connection_acquisitions > 0 &&
-        manager->pending_acquisition_count < manager->max_pending_connection_acquisitions) {
-        aws_linked_list_push_back(&manager->pending_acquisitions, &request->node);
-        ++manager->pending_acquisition_count;
-    } else {
+        manager->pending_acquisition_count >= manager->max_pending_connection_acquisitions) {
         request->error_code = AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_AQUISITONS_EXCEEDED;
         aws_linked_list_push_back(&work.completions, &request->node);
+    } else {
+        aws_linked_list_push_back(&manager->pending_acquisitions, &request->node);
+        ++manager->pending_acquisition_count;
     }
 
     s_aws_http_connection_manager_build_transaction(&work);
