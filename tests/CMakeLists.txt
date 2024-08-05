@@ -540,6 +540,7 @@ add_net_test_case(test_connection_manager_many_http2_connections)
 add_net_test_case(test_connection_manager_acquire_release)
 add_net_test_case(test_connection_manager_close_and_release)
 add_net_test_case(test_connection_manager_acquire_release_mix)
+add_net_test_case(test_connection_manager_max_pending_acquisitions)
 
 # Integration test that requires proxy envrionment in us-east-1 region.
 # TODO: test the server name validation properly

@@ -291,6 +291,8 @@ struct aws_http_connection_manager {
 
     uint64_t connection_acquisition_timeout_ms;
 
+    uint64_t max_pending_connection_acquisitions;
+
     /*
      * Task to cull idle connections.  This task is run periodically on the cull_event_loop if a non-zero
      * culling time interval is specified.
@@ -955,6 +957,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->enable_read_back_pressure = options->enable_read_back_pressure;
     manager->max_connection_idle_in_milliseconds = options->max_connection_idle_in_milliseconds;
     manager->connection_acquisition_timeout_ms = options->connection_acquisition_timeout_ms;
+    manager->max_pending_connection_acquisitions = options->max_pending_connection_acquisitions;
 
     if (options->proxy_ev_settings) {
         manager->proxy_ev_settings = *options->proxy_ev_settings;
@@ -1306,9 +1309,13 @@ void aws_http_connection_manager_acquire_connection(
 
     /* It's a use after free crime, we don't want to handle */
     AWS_FATAL_ASSERT(manager->state == AWS_HCMST_READY);
-
-    aws_linked_list_push_back(&manager->pending_acquisitions, &request->node);
-    ++manager->pending_acquisition_count;
+    if(manager->pending_acquisition_count < manager->max_pending_connection_acquisitions) {
+        aws_linked_list_push_back(&manager->pending_acquisitions, &request->node);
+        ++manager->pending_acquisition_count;
+    } else {
+        request->error_code = AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_AQUISITONS_EXCEEDED;
+        aws_linked_list_push_back(&work.completions, &request->node);
+    }
 
     s_aws_http_connection_manager_build_transaction(&work);
 
