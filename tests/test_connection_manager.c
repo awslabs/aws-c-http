@@ -54,6 +54,7 @@ struct cm_tester_options {
     size_t max_connections;
     uint64_t max_connection_idle_in_ms;
     uint64_t connection_acquisition_timeout_ms;
+    uint64_t max_pending_connection_acquisitions;
 
     uint64_t starting_mock_time;
     bool http2;
@@ -228,6 +229,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         .shutdown_complete_callback = s_cm_tester_on_cm_shutdown_complete,
         .max_connection_idle_in_milliseconds = options->max_connection_idle_in_ms,
         .connection_acquisition_timeout_ms = options->connection_acquisition_timeout_ms,
+        .max_pending_connection_acquisitions = options->max_pending_connection_acquisitions,
         .http2_prior_knowledge = !options->use_tls && options->http2,
         .initial_settings_array = options->initial_settings_array,
         .num_initial_settings = options->num_initial_settings,
@@ -742,6 +744,36 @@ static int s_test_connection_manager_acquire_release_mix(struct aws_allocator *a
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_acquire_release_mix, s_test_connection_manager_acquire_release_mix);
+
+static int s_test_connection_manager_max_pending_acquisitions(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    size_t num_connections = 2;
+    size_t num_pending_connections = 3;
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = num_connections,
+        .max_pending_connection_acquisitions = num_connections,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_acquire_connections(num_connections + num_pending_connections);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(num_connections + num_pending_connections));
+    ASSERT_UINT_EQUALS(num_pending_connections, s_tester.connection_errors);
+    for (size_t i = 0; i < num_pending_connections; i++) {
+        uint32_t error_code;
+        aws_array_list_get_at(&s_tester.connection_errors_list, &error_code, i);
+        ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED, error_code);
+    }
+    ASSERT_SUCCESS(s_release_connections(num_connections, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_max_pending_acquisitions, s_test_connection_manager_max_pending_acquisitions);
 
 static int s_aws_http_connection_manager_create_connection_sync_mock(
     const struct aws_http_client_connection_options *options) {
