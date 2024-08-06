@@ -4591,3 +4591,145 @@ H1_CLIENT_TEST_CASE(h1_client_connection_close_before_request_finishes_with_buff
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
+
+H1_CLIENT_TEST_CASE(h1_client_connection_close_before_request_finishes_with_buffer_incomplete_response) {
+    (void)ctx;
+    struct tester_options tester_opts = {
+        .manual_window_management = true,
+        .initial_stream_window_size = 5,
+        .read_buffer_capacity = SIZE_MAX,
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init_ex(&tester, allocator, &tester_opts));
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+    /* send head of request */
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
+    /* Send the incomplete response. */
+    ASSERT_SUCCESS(testing_channel_push_read_str(
+        &tester.testing_channel,
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 9\r\n"
+        "\r\n"
+        "Call Mo"));
+
+    /* All the response data has been processed, buffered in the connection level. */
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+
+    /* Some handler starts the shutdown process, while the stream still has 0 window left. (eg: socket reads EOF, TLS
+     * reads graceful shutdown) */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_UNIMPLEMENTED);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    /* We should not complete the stream, since the window for the stream is still 0. */
+    ASSERT_FALSE(stream_tester.complete);
+
+    /* Updated the window after shutdown happens */
+    aws_http_stream_update_window(stream_tester.stream, 5);
+    /* Wait for channel to finish shutdown */
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    ASSERT_TRUE(stream_tester.complete);
+    /* Fail  */
+    ASSERT_INT_EQUALS(AWS_ERROR_UNIMPLEMENTED, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(200, stream_tester.response_status);
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(stream_tester.response_headers));
+    ASSERT_SUCCESS(s_check_header(stream_tester.response_headers, 0, "Content-Length", "9"));
+    /* Incomplete response received */
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&stream_tester.response_body, "Call Mo"));
+
+    /* clean up */
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+static int s_h1_client_connection_close_before_request_finishes_with_buffer_force_shutdown_helper(
+    struct aws_allocator *allocator,
+    bool connection_close) {
+    struct tester_options tester_opts = {
+        .manual_window_management = true,
+        .initial_stream_window_size = 5,
+        .read_buffer_capacity = SIZE_MAX,
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init_ex(&tester, allocator, &tester_opts));
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+    /* send head of request */
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
+    /* Send the incomplete response. */
+    ASSERT_SUCCESS(testing_channel_push_read_str(
+        &tester.testing_channel,
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 9\r\n"
+        "\r\n"
+        "Call Mo"));
+
+    /* All the response data has been processed, buffered in the connection level. */
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+
+    /* Some handler starts the shutdown process, while the stream still has 0 window left. (eg: socket reads EOF, TLS
+     * reads graceful shutdown) */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_UNIMPLEMENTED);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    /* We should not complete the stream, since the window for the stream is still 0. */
+    ASSERT_FALSE(stream_tester.complete);
+
+    /* Don't update the window, just cancel the stream should also complete the stream. */
+    if (connection_close) {
+        aws_http_connection_close(tester.connection);
+    } else {
+        /* Stream cancel error will be override as the connection shutdown happens before cancel. */
+        aws_http_stream_cancel(stream_tester.stream, AWS_ERROR_UNKNOWN);
+    }
+    /* Wait for channel to finish shutdown */
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    ASSERT_TRUE(stream_tester.complete);
+    /* Fail  */
+    ASSERT_INT_EQUALS(AWS_ERROR_UNIMPLEMENTED, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(200, stream_tester.response_status);
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(stream_tester.response_headers));
+    ASSERT_SUCCESS(s_check_header(stream_tester.response_headers, 0, "Content-Length", "9"));
+    /* Incomplete response received */
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&stream_tester.response_body, "Call "));
+
+    /* clean up */
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_connection_close_before_request_finishes_with_buffer_force_shutdown) {
+    (void)ctx;
+    return s_h1_client_connection_close_before_request_finishes_with_buffer_force_shutdown_helper(allocator, true);
+}
+
+H1_CLIENT_TEST_CASE(h1_client_connection_close_before_request_finishes_with_buffer_stream_cancel) {
+    (void)ctx;
+    return s_h1_client_connection_close_before_request_finishes_with_buffer_force_shutdown_helper(allocator, false);
+}

@@ -165,8 +165,16 @@ static void s_stop(
             (void *)&connection->base,
             error_code,
             aws_error_name(error_code));
-
-        aws_channel_shutdown(connection->base.channel_slot->channel, error_code);
+        if (connection->thread_data.is_reading_shutdown_pending) {
+            /* Shutdown after pending */
+            if (connection->thread_data.pending_shutdown_error_code != 0) {
+                error_code = connection->thread_data.pending_shutdown_error_code;
+            }
+            aws_channel_slot_on_handler_shutdown_complete(
+                connection->base.channel_slot, AWS_CHANNEL_DIR_READ, error_code, false);
+        } else {
+            aws_channel_shutdown(connection->base.channel_slot->channel, error_code);
+        }
         if (stop_reading) {
             /* Increase the window size after shutdown starts, to prevent deadlock when data still pending in the TLS
              * handler. */
@@ -1868,7 +1876,7 @@ static int s_handler_process_read_message(
 }
 
 void aws_h1_connection_try_process_read_messages(struct aws_h1_connection *connection) {
-
+    int error_code = 0;
     /* Protect against this function being called recursively. */
     if (connection->thread_data.is_processing_read_messages) {
         return;
@@ -1923,14 +1931,14 @@ void aws_h1_connection_try_process_read_messages(struct aws_h1_connection *conne
     return;
 
 shutdown:
-    if (connection->thread_data.is_reading_shutdown_pending) {
-        int error_code = aws_last_error();
-        if (connection->thread_data.pending_shutdown_error_code != 0) {
-            error_code = connection->thread_data.pending_shutdown_error_code;
-        }
-        s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, false /*schedule_shutdown*/, error_code);
-        aws_channel_slot_on_handler_shutdown_complete(
-            connection->base.channel_slot, AWS_CHANNEL_DIR_READ, error_code, false);
+    error_code = aws_last_error();
+    if (connection->thread_data.is_reading_shutdown_pending &&
+        connection->thread_data.pending_shutdown_error_code != 0) {
+        error_code = connection->thread_data.pending_shutdown_error_code;
+    }
+    if (error_code == 0) {
+        /* Graceful shutdown, don't stop writing yet. */
+        s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, error_code);
     } else {
         s_shutdown_due_to_error(connection, aws_last_error());
     }
