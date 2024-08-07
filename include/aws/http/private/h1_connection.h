@@ -15,6 +15,12 @@
 #    pragma warning(disable : 4214) /* nonstandard extension used: bit field types other than int */
 #endif
 
+enum aws_h1_connection_read_state {
+    AWS_CONNECTION_READ_OPEN,
+    AWS_CONNECTION_READ_SHUTTING_DOWN,
+    AWS_CONNECTION_READ_SHUT_DOWN_COMPLETE,
+};
+
 struct aws_h1_connection {
     struct aws_http_connection base;
 
@@ -96,8 +102,10 @@ struct aws_h1_connection {
         uint64_t outgoing_stream_timestamp_ns;
         uint64_t incoming_stream_timestamp_ns;
 
+        int pending_shutdown_error_code;
+        enum aws_h1_connection_read_state read_state;
+
         /* True when read and/or writing has stopped, whether due to errors or normal channel shutdown. */
-        bool is_reading_stopped : 1;
         bool is_writing_stopped : 1;
 
         /* If true, the connection has upgraded to another protocol.
