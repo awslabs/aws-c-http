@@ -1,10 +1,6 @@
 cmake_minimum_required(VERSION 3.1)
 project(aws-c-http C)
 
-if (POLICY CMP0069)
-    cmake_policy(SET CMP0069 NEW) # Enable LTO/IPO if available in the compiler, see AwsCFlags
-endif()
-
 option(ENABLE_PROXY_INTEGRATION_TESTS "Whether to run the proxy integration tests that rely on pre-configured proxy" OFF)
 option(ENABLE_LOCALHOST_INTEGRATION_TESTS "Whether to run the integration tests that rely on pre-configured localhost" OFF)
 
@@ -56,6 +52,7 @@ file(GLOB HTTP_SRC
         ${AWS_HTTP_SRC}
         )
 
+aws_set_common_policies()
 add_library(${PROJECT_NAME} ${HTTP_HEADERS} ${HTTP_SRC})
 aws_set_common_properties(${PROJECT_NAME})
 aws_prepare_symbol_visibility_args(${PROJECT_NAME} "AWS_HTTP")
