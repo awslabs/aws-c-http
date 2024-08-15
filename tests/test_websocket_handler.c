@@ -1883,6 +1883,34 @@ TEST_CASE(websocket_handler_wont_send_pong_after_close_frame) {
     return AWS_OP_SUCCESS;
 }
 
+TEST_CASE(websocket_handler_fail_sending_frame_after_close) {
+    (void)ctx;
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+    aws_websocket_close(tester.websocket, false);
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
+
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
+    struct aws_byte_cursor payload = aws_byte_cursor_from_c_str("bitter butter.");
+    struct send_tester send = {
+        .payload = payload,
+        .def =
+            {
+                .opcode = AWS_WEBSOCKET_OPCODE_PING,
+                .fin = true,
+            },
+    };
+    ASSERT_FAILS(s_send_frame(&tester, &send));
+    ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_CLOSE_FRAME_SENT, aws_last_error());
+    /* Check that PONG is NOT sent automatically, because a CLOSE was sent before it */
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 TEST_CASE(websocket_midchannel_read_message) {
     (void)ctx;
     struct tester tester;
