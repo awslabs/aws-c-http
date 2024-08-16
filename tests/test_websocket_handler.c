@@ -1883,18 +1883,23 @@ TEST_CASE(websocket_handler_wont_send_pong_after_close_frame) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(websocket_handler_fail_sending_frame_after_close) {
+/* This is a regression test. If aws_websocket_close() leads to shutdown,
+ * then subsequent calls to aws_websocket_send_frame() should fail. */
+TEST_CASE(websocket_handler_send_frame_fails_if_websocket_closed) {
     (void)ctx;
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
+    /* Call aws_websocket_close() and wait for shutdown to complete */
     testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
     aws_websocket_close(tester.websocket, false);
     testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
 
     ASSERT_SUCCESS(s_drain_written_messages(&tester));
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
+
+    /* aws_websocket_send_frame() should fail */
     struct aws_byte_cursor payload = aws_byte_cursor_from_c_str("bitter butter.");
     struct send_tester send = {
         .payload = payload,
@@ -1906,7 +1911,6 @@ TEST_CASE(websocket_handler_fail_sending_frame_after_close) {
     };
     ASSERT_FAILS(s_send_frame(&tester, &send));
     ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_CLOSE_FRAME_SENT, aws_last_error());
-    /* Check that PONG is NOT sent automatically, because a CLOSE was sent before it */
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
