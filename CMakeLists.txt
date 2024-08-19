@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.13)
 project(aws-c-http C)
 
 option(ENABLE_PROXY_INTEGRATION_TESTS "Whether to run the proxy integration tests that rely on pre-configured proxy" OFF)
@@ -52,7 +52,6 @@ file(GLOB HTTP_SRC
         ${AWS_HTTP_SRC}
         )
 
-aws_set_common_policies()
 add_library(${PROJECT_NAME} ${HTTP_HEADERS} ${HTTP_SRC})
 aws_set_common_properties(${PROJECT_NAME})
 aws_prepare_symbol_visibility_args(${PROJECT_NAME} "AWS_HTTP")
