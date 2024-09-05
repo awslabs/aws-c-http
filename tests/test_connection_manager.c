@@ -780,8 +780,9 @@ static int s_test_connection_manager_max_pending_acquisitions(struct aws_allocat
 }
 AWS_TEST_CASE(test_connection_manager_max_pending_acquisitions, s_test_connection_manager_max_pending_acquisitions);
 
-
-static int s_test_connection_manager_max_pending_acquisitions_with_vended_connections(struct aws_allocator *allocator, void *ctx) {
+static int s_test_connection_manager_max_pending_acquisitions_with_vended_connections(
+    struct aws_allocator *allocator,
+    void *ctx) {
     (void)ctx;
 
     size_t num_connections = 2;
@@ -819,8 +820,9 @@ static int s_test_connection_manager_max_pending_acquisitions_with_vended_connec
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_max_pending_acquisitions_with_vended_connections, s_test_connection_manager_max_pending_acquisitions_with_vended_connections);
-
+AWS_TEST_CASE(
+    test_connection_manager_max_pending_acquisitions_with_vended_connections,
+    s_test_connection_manager_max_pending_acquisitions_with_vended_connections);
 
 static int s_aws_http_connection_manager_create_connection_sync_mock(
     const struct aws_http_client_connection_options *options) {
