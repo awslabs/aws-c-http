@@ -749,31 +749,80 @@ static int s_test_connection_manager_max_pending_acquisitions(struct aws_allocat
     (void)ctx;
 
     size_t num_connections = 2;
-    size_t num_pending_connections = 3;
+    size_t max_pending_connection_acquisitions = 2;
+    size_t num_connections_pending_error = 4;
     struct cm_tester_options options = {
         .allocator = allocator,
         .max_connections = num_connections,
-        .max_pending_connection_acquisitions = num_connections,
+        .max_pending_connection_acquisitions = max_pending_connection_acquisitions,
     };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
-    s_acquire_connections(num_connections + num_pending_connections);
+    s_acquire_connections(num_connections + max_pending_connection_acquisitions + num_connections_pending_error);
 
-    ASSERT_SUCCESS(s_wait_on_connection_reply_count(num_connections + num_pending_connections));
-    ASSERT_UINT_EQUALS(num_pending_connections, s_tester.connection_errors);
-    for (size_t i = 0; i < num_pending_connections; i++) {
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(num_connections + num_connections_pending_error));
+    ASSERT_UINT_EQUALS(num_connections_pending_error, s_tester.connection_errors);
+    for (size_t i = 0; i < num_connections_pending_error; i++) {
         uint32_t error_code;
         aws_array_list_get_at(&s_tester.connection_errors_list, &error_code, i);
         ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED, error_code);
     }
+
     ASSERT_SUCCESS(s_release_connections(num_connections, false));
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(
+        num_connections + max_pending_connection_acquisitions + num_connections_pending_error));
+    ASSERT_SUCCESS(s_release_connections(max_pending_connection_acquisitions, false));
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
 
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_max_pending_acquisitions, s_test_connection_manager_max_pending_acquisitions);
+
+static int s_test_connection_manager_max_pending_acquisitions_with_vended_connections(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+
+    size_t num_connections = 2;
+    size_t max_pending_connection_acquisitions = 2;
+    size_t num_connections_pending_error = 4;
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = num_connections,
+        .max_pending_connection_acquisitions = max_pending_connection_acquisitions,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    // fill the connection pool
+    s_acquire_connections(num_connections);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(num_connections));
+
+    // try to acquire over max_pending_connection_acquisitions
+    s_acquire_connections(max_pending_connection_acquisitions + num_connections_pending_error);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(num_connections + num_connections_pending_error));
+
+    ASSERT_UINT_EQUALS(num_connections_pending_error, s_tester.connection_errors);
+    for (size_t i = 0; i < num_connections_pending_error; i++) {
+        uint32_t error_code;
+        aws_array_list_get_at(&s_tester.connection_errors_list, &error_code, i);
+        ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED, error_code);
+    }
+
+    ASSERT_SUCCESS(s_release_connections(num_connections, false));
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(
+        num_connections + max_pending_connection_acquisitions + num_connections_pending_error));
+    ASSERT_SUCCESS(s_release_connections(max_pending_connection_acquisitions, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_connection_manager_max_pending_acquisitions_with_vended_connections,
+    s_test_connection_manager_max_pending_acquisitions_with_vended_connections);
 
 static int s_aws_http_connection_manager_create_connection_sync_mock(
     const struct aws_http_client_connection_options *options) {
