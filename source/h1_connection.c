@@ -831,8 +831,8 @@ static void s_http_stream_response_first_byte_timeout_task(
                                                   : stream->base.client_data->response_first_byte_timeout_ms;
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
-        "id=%p: Closing connection as timeout after request sent to the first byte received happened. "
-        "response_first_byte_timeout_ms is %" PRIu64 ".",
+        "id=%p: Closing connection. Timed out waiting for first byte of HTTP response, after sending the full request."
+        " response_first_byte_timeout_ms=%" PRIu64,
         (void *)connection_base,
         response_first_byte_timeout_ms);
 
