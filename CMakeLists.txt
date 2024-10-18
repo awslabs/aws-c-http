@@ -1,9 +1,5 @@
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.9)
 project(aws-c-http C)
-
-if (POLICY CMP0069)
-    cmake_policy(SET CMP0069 NEW) # Enable LTO/IPO if available in the compiler, see AwsCFlags
-endif()
 
 option(ENABLE_PROXY_INTEGRATION_TESTS "Whether to run the proxy integration tests that rely on pre-configured proxy" OFF)
 option(ENABLE_LOCALHOST_INTEGRATION_TESTS "Whether to run the integration tests that rely on pre-configured localhost" OFF)
