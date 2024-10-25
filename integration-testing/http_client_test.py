@@ -7,7 +7,7 @@ import urllib.request
 import unittest
 import os.path
 
-TIMEOUT = 100
+TIMEOUT = 300
 
 # Accepting multiple args so we can pass something like: python elasticurl.py
 elasticurl_cmd_prefix = sys.argv[1:]
