@@ -134,15 +134,6 @@ static void s_cm_tester_on_cm_shutdown_complete(void *user_data) {
     aws_mutex_unlock(&tester->lock);
 }
 
-static struct aws_event_loop *s_new_event_loop(
-    struct aws_allocator *alloc,
-    const struct aws_event_loop_options *options,
-    void *new_loop_user_data) {
-    (void)new_loop_user_data;
-
-    return aws_event_loop_new_default(alloc, options->clock);
-}
-
 static int s_cm_tester_init(struct cm_tester_options *options) {
     struct cm_tester *tester = &s_tester;
 
@@ -170,7 +161,12 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         clock_fn = options->mock_table->aws_high_res_clock_get_ticks;
     }
 
-    tester->event_loop_group = aws_event_loop_group_new(tester->allocator, clock_fn, 1, s_new_event_loop, NULL, NULL);
+    struct aws_event_loop_group_options elg_options = {
+        .loop_count = 1,
+        .clock_override = clock_fn,
+    };
+
+    tester->event_loop_group = aws_event_loop_group_new(tester->allocator, &elg_options);
 
     struct aws_host_resolver_default_options resolver_options = {
         .el_group = tester->event_loop_group,
