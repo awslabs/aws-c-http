@@ -15,12 +15,15 @@
  * If a complete entry has not been decoded yet, type is ONGOING.
  * Otherwise, type informs which data to look at.
  */
+
+enum aws_hpack_decode_type {
+    AWS_HPACK_DECODE_T_ONGOING,
+    AWS_HPACK_DECODE_T_HEADER_FIELD,
+    AWS_HPACK_DECODE_T_DYNAMIC_TABLE_RESIZE,
+};
+
 struct aws_hpack_decode_result {
-    enum aws_hpack_decode_type {
-        AWS_HPACK_DECODE_T_ONGOING,
-        AWS_HPACK_DECODE_T_HEADER_FIELD,
-        AWS_HPACK_DECODE_T_DYNAMIC_TABLE_RESIZE,
-    } type;
+    enum aws_hpack_decode_type type;
 
     union {
         /* If type is AWS_HPACK_DECODE_T_HEADER_FIELD */
