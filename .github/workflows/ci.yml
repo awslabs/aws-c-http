@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-24.04 # latest
     strategy:
       matrix:
-        variant:
+        compiler:
           - name: clang-3
           - name: clang-6
           - name: clang-8
