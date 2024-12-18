@@ -81,7 +81,7 @@ jobs:
           #
           # We can bypass this problem by linking with "resolv" manually until we bump 
           # our base Linux image to Ubuntu 22.
-            extra-build-flag: --cmake-extra=-DCMAKE_EXE_LINKER_FLAGS="-lresolv" 
+          # extra-build-flag: --cmake-extra=-DCMAKE_EXE_LINKER_FLAGS="-lresolv" 
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
