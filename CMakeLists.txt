@@ -56,7 +56,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC ${DEP_AWS_LIBS})
 aws_prepare_shared_lib_exports(${PROJECT_NAME})
 
 aws_check_headers(${PROJECT_NAME} ${AWS_HTTP_HEADERS})
-install(FILES ${AWS_HTTP_HEADERS} DESTINATION "include/aws/http")
+install(FILES ${AWS_HTTP_HEADERS} DESTINATION "${INCLUDE_DIRECTORY}/aws/http")
 
 if (BUILD_SHARED_LIBS)
    set (TARGET_DIR "shared")
