@@ -15,6 +15,7 @@ include(AwsSharedLibSetup)
 include(AwsSanitizers)
 include(CheckCCompilerFlag)
 include(AwsFindPackage)
+include(GNUInstallDirs)
 
 file(GLOB AWS_HTTP_HEADERS
         "include/aws/http/*.h"
@@ -56,7 +57,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC ${DEP_AWS_LIBS})
 aws_prepare_shared_lib_exports(${PROJECT_NAME})
 
 aws_check_headers(${PROJECT_NAME} ${AWS_HTTP_HEADERS})
-install(FILES ${AWS_HTTP_HEADERS} DESTINATION "${INCLUDE_DIRECTORY}/aws/http")
+install(FILES ${AWS_HTTP_HEADERS} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/aws/http")
 
 if (BUILD_SHARED_LIBS)
    set (TARGET_DIR "shared")
@@ -65,7 +66,7 @@ else()
 endif()
 
 install(EXPORT "${PROJECT_NAME}-targets"
-        DESTINATION "${LIBRARY_DIRECTORY}/cmake/${PROJECT_NAME}/${TARGET_DIR}/"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}/${TARGET_DIR}/"
         NAMESPACE AWS::
         COMPONENT Development)
 
@@ -74,7 +75,7 @@ configure_file("cmake/${PROJECT_NAME}-config.cmake"
         @ONLY)
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
-        DESTINATION "${LIBRARY_DIRECTORY}/cmake/${PROJECT_NAME}/"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}/"
         COMPONENT Development)
 
 include(CTest)
