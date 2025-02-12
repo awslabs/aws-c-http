@@ -11,6 +11,8 @@
 
 #include <aws/http/private/proxy_impl.h>
 
+#include <aws/io/private/socket_impl.h>
+
 #include <aws/common/condition_variable.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/mutex.h>
@@ -729,15 +731,9 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     };
 
     int listen_error = AWS_OP_SUCCESS;
-#if (defined(AWS_ENABLE_DISPATCH_QUEUE) && !defined(AWS_ENABLE_KQUEUE)) || defined(AWS_USE_APPLE_NETWORK_FRAMEWORK)
-#    define AWS_NETWORK_FRAMEWORK_ENABLED 1
-#else
-#    define AWS_NETWORK_FRAMEWORK_ENABLED 0
-#endif
-
     if (bootstrap_options.socket_options->impl_type == AWS_SOCKET_IMPL_APPLE_NETWORK_FRAMEWORK ||
-        (AWS_NETWORK_FRAMEWORK_ENABLED &&
-         bootstrap_options.socket_options->impl_type == AWS_SOCKET_IMPL_PLATFORM_DEFAULT)) {
+        (bootstrap_options.socket_options->impl_type == AWS_SOCKET_IMPL_PLATFORM_DEFAULT &&
+         aws_socket_get_default_impl_type() == AWS_SOCKET_IMPL_APPLE_NETWORK_FRAMEWORK)) {
         /*
          * WARNING!!!!
          * For Apple Network Framework, socket listen is an async function, we would need block here waiting for
