@@ -11,6 +11,7 @@
 
 #include <aws/http/private/proxy_impl.h>
 
+#include <aws/common/condition_variable.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
@@ -431,6 +432,15 @@ void aws_http_connection_release(struct aws_http_connection *connection) {
     }
 }
 
+struct aws_server_user_data {
+    struct aws_allocator *alloc;
+    struct aws_http_server *server;
+    struct aws_mutex mutex;
+    struct aws_condition_variable condition_variable;
+    int setup_error_code;
+    bool setup_complete;
+};
+
 /* At this point, the server bootstrapper has accepted an incoming connection from a client and set up a channel.
  * Now we need to create an aws_http_connection and insert it into the channel as a channel-handler.
  * Note: Be careful not to access server->socket until lock is acquired to avoid race conditions */
@@ -442,7 +452,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
 
     (void)bootstrap;
     AWS_ASSERT(user_data);
-    struct aws_http_server *server = user_data;
+    struct aws_server_user_data *server_user_data = user_data;
+    struct aws_http_server *server = server_user_data->server;
     bool user_cb_invoked = false;
     struct aws_http_connection *connection = NULL;
     if (error_code) {
@@ -588,7 +599,8 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
 
     (void)bootstrap;
     AWS_ASSERT(user_data);
-    struct aws_http_server *server = user_data;
+    struct aws_server_user_data *server_user_data = user_data;
+    struct aws_http_server *server = server_user_data->server;
 
     /* Figure out which connection this was, and remove that entry from the map.
      * It won't be in the map if something went wrong while setting up the connection. */
@@ -617,8 +629,30 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
 static void s_server_bootstrap_on_server_listener_destroy(struct aws_server_bootstrap *bootstrap, void *user_data) {
     (void)bootstrap;
     AWS_ASSERT(user_data);
-    struct aws_http_server *server = user_data;
+    struct aws_server_user_data *server_user_data = user_data;
+    struct aws_http_server *server = server_user_data->server;
     s_http_server_clean_up(server);
+    aws_mem_release(server_user_data->alloc, server_user_data);
+}
+
+static bool s_listener_connected_predicate(void *user_data) {
+    struct aws_server_user_data *setup_test_args = (struct aws_server_user_data *)user_data;
+    bool finished = setup_test_args->setup_complete;
+    return finished;
+}
+
+/* the server listener has finished setup. We released the socket if error_code is not 0. */
+static void s_server_bootstrap_on_server_listener_setup(
+    struct aws_server_bootstrap *bootstrap,
+    int error_code,
+    void *user_data) {
+    (void)bootstrap;
+    struct aws_server_user_data *server_user_data = user_data;
+    aws_mutex_lock(&server_user_data->mutex);
+    server_user_data->setup_error_code = error_code;
+    server_user_data->setup_complete = true;
+    aws_condition_variable_notify_one(&server_user_data->condition_variable);
+    aws_mutex_unlock(&server_user_data->mutex);
 }
 
 struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options) {
@@ -672,6 +706,14 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
         server->is_using_tls = true;
     }
 
+    struct aws_server_user_data *server_user_data =
+        aws_mem_calloc(options->allocator, 1, sizeof(struct aws_server_user_data));
+    server_user_data->server = server;
+    server_user_data->alloc = options->allocator;
+    aws_mutex_init(&server_user_data->mutex);
+    aws_condition_variable_init(&server_user_data->condition_variable);
+    server_user_data->setup_complete = false;
+
     struct aws_server_socket_channel_bootstrap_options bootstrap_options = {
         .enable_read_back_pressure = options->manual_window_management,
         .tls_options = options->tls_options,
@@ -680,21 +722,44 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
         .incoming_callback = s_server_bootstrap_on_accept_channel_setup,
         .shutdown_callback = s_server_bootstrap_on_accept_channel_shutdown,
         .destroy_callback = s_server_bootstrap_on_server_listener_destroy,
+        .setup_callback = s_server_bootstrap_on_server_listener_setup,
         .host_name = options->endpoint->address,
         .port = options->endpoint->port,
-        .user_data = server,
+        .user_data = server_user_data,
     };
 
-    server->socket = aws_server_bootstrap_new_socket_listener(&bootstrap_options);
+    int listen_error = AWS_OP_SUCCESS;
+    // DEBUG
+    if (bootstrap_options.socket_options->impl_type == AWS_SOCKET_IMPL_APPLE_NETWORK_FRAMEWORK ||
+        (bootstrap_options.socket_options->impl_type == AWS_SOCKET_IMPL_PLATFORM_DEFAULT &&
+         AWS_USE_APPLE_NETWORK_FRAMEWORK)) {
+        /*
+         * WARNING!!!!
+         * For Apple Network Framework, socket listen is an async function, we would need block here waiting for
+         * setup complete.
+         */
+        server->socket = aws_server_bootstrap_new_socket_listener_async(&bootstrap_options);
+        aws_mutex_lock(&server_user_data->mutex);
+        aws_condition_variable_wait_pred(
+            &server_user_data->condition_variable,
+            &server_user_data->mutex,
+            s_listener_connected_predicate,
+            server_user_data);
+        aws_mutex_unlock(&server_user_data->mutex);
+        listen_error = server_user_data->setup_error_code;
+    } else {
+        server->socket = aws_server_bootstrap_new_socket_listener(&bootstrap_options);
+        listen_error = aws_last_error();
+    }
 
     s_server_unlock_synced_data(server);
 
-    if (!server->socket) {
+    if (!server->socket || listen_error) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
             "static: Failed creating new socket listener, error %d (%s). Cannot create server.",
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
+            listen_error,
+            aws_error_name(listen_error));
 
         goto socket_error;
     }
