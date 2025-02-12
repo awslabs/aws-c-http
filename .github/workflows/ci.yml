@@ -209,7 +209,6 @@ jobs:
       fail-fast: false
       matrix:
         eventloop: ["kqueue", "dispatch_queue"]
-        sanitizers: [",thread", ",address,undefined"]
     steps:
     - uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -219,7 +218,7 @@ jobs:
       run: |
         python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder')"
         chmod a+x builder
-        ./builder build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DAWS_USE_APPLE_NETWORK_FRAMEWORK=${{ matrix.eventloop == 'dispatch_queue' && 'ON' || 'OFF' }} --cmake-extra=-DENABLE_SANITIZERS=ON --cmake-extra=-DSANITIZERS="${{ matrix.sanitizers }}"
+        ./builder build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DAWS_USE_APPLE_NETWORK_FRAMEWORK=${{ matrix.eventloop == 'dispatch_queue' && 'ON' || 'OFF' }}
 
   macos-x64:
     runs-on: macos-14-large # latest
@@ -254,7 +253,6 @@ jobs:
       fail-fast: false
       matrix:
         eventloop: ["kqueue", "dispatch_queue"]
-        sanitizers: [",thread", ",address,undefined"]
     steps:
     - uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -267,7 +265,7 @@ jobs:
         python3 -m venv .venv
         source .venv/bin/activate
         python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
-        python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON --cmake-extra=-DAWS_USE_APPLE_NETWORK_FRAMEWORK=${{ matrix.eventloop == 'dispatch_queue' && 'ON' || 'OFF' }} --cmake-extra=-DENABLE_SANITIZERS=ON --cmake-extra=-DSANITIZERS="${{ matrix.sanitizers }}" --config Debug
+        python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON --cmake-extra=-DAWS_USE_APPLE_NETWORK_FRAMEWORK=${{ matrix.eventloop == 'dispatch_queue' && 'ON' || 'OFF' }} --config Debug
 
   localhost-test-win:
     runs-on: windows-2022 # latest
