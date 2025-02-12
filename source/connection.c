@@ -11,8 +11,6 @@
 
 #include <aws/http/private/proxy_impl.h>
 
-#include <aws/io/private/socket_impl.h>
-
 #include <aws/common/condition_variable.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/mutex.h>
@@ -731,9 +729,15 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     };
 
     int listen_error = AWS_OP_SUCCESS;
+#if (defined(AWS_ENABLE_DISPATCH_QUEUE) && !defined(AWS_ENABLE_KQUEUE)) || defined(AWS_USE_APPLE_NETWORK_FRAMEWORK)
+#    define AWS_NETWORK_FRAMEWORK_ENABLED 1
+#else
+#    define AWS_NETWORK_FRAMEWORK_ENABLED 0
+#endif
+
     if (bootstrap_options.socket_options->impl_type == AWS_SOCKET_IMPL_APPLE_NETWORK_FRAMEWORK ||
-        (bootstrap_options.socket_options->impl_type == AWS_SOCKET_IMPL_PLATFORM_DEFAULT &&
-         aws_socket_get_default_impl_type() == AWS_SOCKET_IMPL_APPLE_NETWORK_FRAMEWORK)) {
+        (AWS_NETWORK_FRAMEWORK_ENABLED &&
+         bootstrap_options.socket_options->impl_type == AWS_SOCKET_IMPL_PLATFORM_DEFAULT)) {
         /*
          * WARNING!!!!
          * For Apple Network Framework, socket listen is an async function, we would need block here waiting for
@@ -750,12 +754,14 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
         listen_error = server_user_data->setup_error_code;
     } else {
         server->socket = aws_server_bootstrap_new_socket_listener(&bootstrap_options);
-        listen_error = aws_last_error();
+        if (!server->socket) {
+            listen_error = aws_last_error();
+        }
     }
 
     s_server_unlock_synced_data(server);
 
-    if (!server->socket || listen_error) {
+    if (listen_error) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
             "static: Failed creating new socket listener, error %d (%s). Cannot create server.",
