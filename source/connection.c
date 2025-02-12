@@ -729,10 +729,15 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     };
 
     int listen_error = AWS_OP_SUCCESS;
-    // DEBUG
+#if (defined(AWS_ENABLE_DISPATCH_QUEUE) && !defined(AWS_ENABLE_KQUEUE)) || defined(AWS_USE_APPLE_NETWORK_FRAMEWORK)
+#    define AWS_NETWORK_FRAMEWORK_ENABLED 1
+#else
+#    define AWS_NETWORK_FRAMEWORK_ENABLED 0
+#endif
+
     if (bootstrap_options.socket_options->impl_type == AWS_SOCKET_IMPL_APPLE_NETWORK_FRAMEWORK ||
-        (bootstrap_options.socket_options->impl_type == AWS_SOCKET_IMPL_PLATFORM_DEFAULT &&
-         AWS_USE_APPLE_NETWORK_FRAMEWORK)) {
+        (AWS_NETWORK_FRAMEWORK_ENABLED &&
+         bootstrap_options.socket_options->impl_type == AWS_SOCKET_IMPL_PLATFORM_DEFAULT)) {
         /*
          * WARNING!!!!
          * For Apple Network Framework, socket listen is an async function, we would need block here waiting for
