@@ -98,6 +98,15 @@ static int s_state_getline(struct aws_h1_decoder *decoder, struct aws_byte_curso
     size_t line_length = 0;
     bool found_crlf = s_scan_for_crlf(decoder, *input, &line_length);
 
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_STREAM,
+        "id=%p: Found CRLF: %d, has_prev_data: %d, line_length: %zu, data is " PRInSTR,
+        decoder->logging_id,
+        found_crlf,
+        has_prev_data,
+        line_length,
+        AWS_BYTE_CURSOR_PRI(*input));
+
     /* Found end of line! Run the line processor on it */
     struct aws_byte_cursor line = aws_byte_cursor_advance(input, line_length);
 
@@ -254,7 +263,11 @@ static int s_linestate_chunk_terminator(struct aws_h1_decoder *decoder, struct a
     /* RFC-7230 section 4.1 Chunked Transfer Encoding */
     if (AWS_UNLIKELY(input.len != 0)) {
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM, "id=%p: Incoming chunk is invalid, does not end with CRLF.", decoder->logging_id);
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Incoming chunk is invalid, does not end with CRLF %zu: " PRInSTR,
+            decoder->logging_id,
+            input.len,
+            AWS_BYTE_CURSOR_PRI(input));
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
