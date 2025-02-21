@@ -1386,7 +1386,11 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
     }
 
     AWS_LOGF_TRACE(
-        AWS_LS_HTTP_STREAM, "id=%p: Incoming body: %zu bytes received.", (void *)&incoming_stream->base, data->len);
+        AWS_LS_HTTP_STREAM,
+        "id=%p: Incoming body: %zu bytes received: " PRInSTR,
+        (void *)&incoming_stream->base,
+        data->len,
+        AWS_BYTE_CURSOR_PRI(*data));
 
     if (connection->base.stream_manual_window_management) {
         /* Let stream window shrink by amount of body data received */
