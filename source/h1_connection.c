@@ -2022,6 +2022,14 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
      */
     message_cursor.len = (size_t)aws_min_u64(message_cursor.len, stream_window);
 
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Processing %zu bytes of message for stream %p, %zu bytes remain.",
+        (void *)&connection->base,
+        message_cursor.len,
+        (void *)&incoming_stream->base,
+        queued_msg->message_data.len - queued_msg->copy_mark);
+
     const size_t prev_cursor_len = message_cursor.len;
 
     /* Set some decoder state, based on current stream */
