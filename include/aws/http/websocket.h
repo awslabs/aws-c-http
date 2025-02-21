@@ -11,6 +11,7 @@ AWS_PUSH_SANE_WARNING_LEVEL
 
 struct aws_http_header;
 struct aws_http_message;
+struct aws_http_stream;
 
 /* TODO: Document lifetime stuff */
 /* TODO: Document CLOSE frame behavior (when auto-sent during close, when auto-closed) */
@@ -290,6 +291,59 @@ struct aws_websocket_client_connection_options {
     const struct aws_host_resolution_config *host_resolution_config;
 };
 
+struct aws_websocket_server_upgrade_options {
+    /**
+     * Initial size of the websocket's read window.
+     * Ignored unless `manual_window_management` is true.
+     * Set to 0 to prevent any incoming websocket frames until aws_websocket_increment_read_window() is called.
+     */
+    size_t initial_window_size;
+
+    /**
+     * User data for callbacks.
+     * Optional.
+     */
+    void *user_data;
+
+    /**
+     * Called when each new frame arrives.
+     * Optional.
+     * See `aws_websocket_on_incoming_frame_begin_fn`.
+     */
+    aws_websocket_on_incoming_frame_begin_fn *on_incoming_frame_begin;
+
+    /**
+     * Called repeatedly as payload data arrives.
+     * Optional.
+     * See `aws_websocket_on_incoming_frame_payload_fn`.
+     */
+    aws_websocket_on_incoming_frame_payload_fn *on_incoming_frame_payload;
+
+    /**
+     * Called when done processing an incoming frame.
+     * Optional.
+     * See `aws_websocket_on_incoming_frame_complete_fn`.
+     */
+    aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
+
+    /**
+     * Set to true to manually manage the read window size.
+     *
+     * If this is false, no backpressure is applied and frames will arrive as fast as possible.
+     *
+     * If this is true, then whenever the read window reaches 0 you will stop receiving anything.
+     * The websocket's `initial_window_size` determines the starting size of the read window.
+     * The read window shrinks as you receive the payload from "data" frames (TEXT, BINARY, and CONTINUATION).
+     * Use aws_websocket_increment_read_window() to increment the window again and keep frames flowing.
+     * Maintain a larger window to keep up high throughput.
+     * You only need to worry about the payload from "data" frames.
+     * The websocket automatically increments the window to account for any
+     * other incoming bytes, including other parts of a frame (opcode, payload-length, etc)
+     * and the payload of other frame types (PING, PONG, CLOSE).
+     */
+    bool manual_window_management;
+};
+
 /**
  * Called repeatedly as the websocket's payload is streamed out.
  * The user should write payload data to out_buf, up to available capacity.
@@ -485,6 +539,37 @@ struct aws_http_message *aws_http_message_new_websocket_handshake_request(
     struct aws_allocator *allocator,
     struct aws_byte_cursor path,
     struct aws_byte_cursor host);
+
+/**
+ * Return true if the request is a valid websocket upgrade request.
+ */
+AWS_HTTP_API
+bool aws_websocket_is_websocket_request(const struct aws_http_message *request);
+
+/**
+ * Create response with all required fields for a websocket upgrade response.
+ * The following headers are added:
+ *
+ * Upgrade: websocket
+ * Connection: Upgrade
+ * Sec-WebSocket-Accept: <base64 encoded accept key>
+ */
+AWS_HTTP_API
+struct aws_http_message *aws_http_message_new_websocket_handshake_response(
+    struct aws_allocator *allocator,
+    struct aws_byte_cursor accept_key);
+
+/**
+ * Upgrade an incoming HTTP connection to a websocket connection.
+ * This function should be called from the on_request_done callback of a request handler.
+ * It expects a fully constructed request and will handle sending the handshake response
+ * and install the websocket handler into the channel.
+ */
+AWS_HTTP_API
+struct aws_websocket *aws_websocket_upgrade(
+    struct aws_allocator *allocator,
+    struct aws_http_stream *stream,
+    const struct aws_websocket_server_upgrade_options *options);
 
 AWS_EXTERN_C_END
 AWS_POP_SANE_WARNING_LEVEL

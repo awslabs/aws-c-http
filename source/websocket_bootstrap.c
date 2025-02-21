@@ -89,10 +89,6 @@ struct aws_websocket_client_bootstrap {
 };
 
 static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_bootstrap);
-static int s_ws_bootstrap_calculate_sec_websocket_accept(
-    struct aws_byte_cursor sec_websocket_key,
-    struct aws_byte_buf *out_buf,
-    struct aws_allocator *alloc);
 static void s_ws_bootstrap_cancel_setup_due_to_err(
     struct aws_websocket_client_bootstrap *ws_bootstrap,
     struct aws_http_connection *http_connection,
@@ -181,7 +177,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     ws_bootstrap->response_headers = aws_http_headers_new(ws_bootstrap->alloc);
     aws_byte_buf_init(&ws_bootstrap->response_body, ws_bootstrap->alloc, 0);
 
-    if (s_ws_bootstrap_calculate_sec_websocket_accept(
+    if (aws_websocket_calculate_sec_websocket_accept(
             sec_websocket_key, &ws_bootstrap->expected_sec_websocket_accept, ws_bootstrap->alloc)) {
         goto error;
     }
@@ -270,7 +266,7 @@ static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_boo
  *      "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" but ignoring any leading and
  *      trailing whitespace
  */
-static int s_ws_bootstrap_calculate_sec_websocket_accept(
+int aws_websocket_calculate_sec_websocket_accept(
     struct aws_byte_cursor sec_websocket_key,
     struct aws_byte_buf *out_buf,
     struct aws_allocator *alloc) {

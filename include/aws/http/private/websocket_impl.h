@@ -111,5 +111,16 @@ AWS_HTTP_API
 void aws_websocket_client_bootstrap_set_system_vtable(
     const struct aws_websocket_client_bootstrap_system_vtable *system_vtable);
 
+/**
+ * Calculate the value for the Sec-WebSocket-Accept header.
+ * This value is the base64 encoding of a SHA-1 hash of the Sec-WebSocket-Key concatenated with a magic string.
+ * out_buf should be uninitialized.
+ */
+AWS_HTTP_API
+int aws_websocket_calculate_sec_websocket_accept(
+    struct aws_byte_cursor sec_websocket_key,
+    struct aws_byte_buf *out_buf,
+    struct aws_allocator *alloc);
+
 AWS_EXTERN_C_END
 #endif /* AWS_HTTP_WEBSOCKET_IMPL_H */

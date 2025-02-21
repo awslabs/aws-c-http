@@ -10,9 +10,11 @@
 #include <aws/common/encoding.h>
 #include <aws/common/mutex.h>
 #include <aws/common/ref_count.h>
+#include <aws/http/connection.h>
 #include <aws/http/private/websocket_decoder.h>
 #include <aws/http/private/websocket_encoder.h>
 #include <aws/http/request_response.h>
+#include <aws/http/status_code.h>
 #include <aws/io/channel.h>
 #include <aws/io/logging.h>
 
@@ -1789,4 +1791,138 @@ struct aws_http_message *aws_http_message_new_websocket_handshake_request(
 error:
     aws_http_message_destroy(request);
     return NULL;
+}
+
+bool aws_websocket_is_websocket_request(const struct aws_http_message *request) {
+    AWS_PRECONDITION(request);
+
+    const struct aws_http_headers *headers = aws_http_message_get_headers(request);
+    struct aws_byte_cursor upgrade_header_value;
+    if (aws_http_headers_get(headers, aws_byte_cursor_from_c_str("Upgrade"), &upgrade_header_value)) {
+        return false;
+    }
+
+    if (aws_byte_cursor_eq_c_str_ignore_case(&upgrade_header_value, "websocket") == false) {
+        return false;
+    }
+
+    struct aws_byte_cursor connection_header_value;
+    if (aws_http_headers_get(headers, aws_byte_cursor_from_c_str("Connection"), &connection_header_value)) {
+        return false;
+    }
+
+    if (aws_byte_cursor_eq_c_str_ignore_case(&connection_header_value, "Upgrade") == false) {
+        return false;
+    }
+
+    struct aws_byte_cursor sec_websocket_key_header_value;
+    if (aws_http_headers_get(
+            headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Key"), &sec_websocket_key_header_value)) {
+        return false;
+    }
+
+    struct aws_byte_cursor sec_websocket_version_header_value;
+    if (aws_http_headers_get(
+            headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Version"), &sec_websocket_version_header_value)) {
+        return false;
+    }
+
+    if (aws_byte_cursor_eq_c_str_ignore_case(&sec_websocket_version_header_value, "13") == false) {
+        return false;
+    }
+
+    return true;
+}
+
+struct aws_http_message *aws_http_message_new_websocket_handshake_response(
+    struct aws_allocator *allocator,
+    struct aws_byte_cursor sec_websocket_key) {
+
+    AWS_PRECONDITION(allocator);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&sec_websocket_key));
+
+    struct aws_http_message *response = aws_http_message_new_response(allocator);
+    if (!response) {
+        goto error;
+    }
+
+    int err = aws_http_message_set_response_status(response, AWS_HTTP_STATUS_CODE_101_SWITCHING_PROTOCOLS);
+    if (err) {
+        goto error;
+    }
+
+    struct aws_byte_buf expected_sec_websocket_accept = aws_byte_buf_from_array(
+        (uint8_t[]){0}, 0); /* This will be filled in by aws_websocket_calculate_sec_websocket_accept */
+    if (aws_websocket_calculate_sec_websocket_accept(sec_websocket_key, &expected_sec_websocket_accept, allocator)) {
+        goto error;
+    }
+
+    struct aws_http_header required_headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+            .value = aws_byte_cursor_from_buf(&expected_sec_websocket_accept),
+        },
+    };
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(required_headers); ++i) {
+        err = aws_http_message_add_header(response, required_headers[i]);
+        if (err) {
+            goto error;
+        }
+    }
+
+    return response;
+error:
+    aws_http_message_destroy(response);
+    return NULL;
+}
+
+struct aws_websocket *aws_websocket_upgrade(
+    struct aws_allocator *allocator,
+    struct aws_http_stream *stream,
+    const struct aws_websocket_server_upgrade_options *options) {
+
+    AWS_PRECONDITION(stream);
+    AWS_PRECONDITION(options);
+
+    /* Insert websocket handler into channel */
+    struct aws_http_connection *http_connection = aws_http_stream_get_connection(stream);
+    AWS_ASSERT(http_connection);
+
+    struct aws_channel *channel = aws_http_connection_get_channel(http_connection);
+    AWS_ASSERT(channel);
+
+    struct aws_websocket_handler_options ws_options = {
+        .allocator = allocator,
+        .channel = channel,
+        .initial_window_size = options->initial_window_size,
+        .user_data = options->user_data,
+        .on_incoming_frame_begin = options->on_incoming_frame_begin,
+        .on_incoming_frame_payload = options->on_incoming_frame_payload,
+        .on_incoming_frame_complete = options->on_incoming_frame_complete,
+        .is_server = true,
+        .manual_window_update = options->manual_window_management,
+    };
+
+    struct aws_websocket *websocket = aws_websocket_handler_new(&ws_options);
+    if (!websocket) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET, "Failed to create websocket handler.");
+        return NULL;
+    }
+
+    /* Success! Setup complete! */
+    AWS_LOGF_DEBUG(/* Debug log about creation of websocket. */
+                   AWS_LS_HTTP_WEBSOCKET,
+                   "id=%p: Websocket upgrade complete.",
+                   (void *)websocket);
+
+    return websocket;
 }
