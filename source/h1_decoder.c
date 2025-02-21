@@ -303,7 +303,7 @@ static int s_state_chunk(struct aws_h1_decoder *decoder, struct aws_byte_cursor 
     if (AWS_LIKELY(finished)) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_STREAM,
-            "id=%p: Finished reading chunk of size %d : " PRIu64,
+            "id=%p: Finished reading chunk of size %llu, set to s_linestate_chunk_terminator",
             decoder->logging_id,
             decoder->chunk_size);
         s_set_line_state(decoder, s_linestate_chunk_terminator);
