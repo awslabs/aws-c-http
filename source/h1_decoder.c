@@ -214,7 +214,7 @@ static void s_reset_state(struct aws_h1_decoder *decoder) {
         s_set_line_state(decoder, s_linestate_request);
     } else {
         AWS_LOGF_TRACE(
-            AWS_LS_HTTP_STREAM, "id=%p: s_set_line_state in s_reset_state, s_linestate_response." decoder->logging_id);
+            AWS_LS_HTTP_STREAM, "id=%p: s_set_line_state in s_reset_state, s_linestate_response.", decoder->logging_id);
         s_set_line_state(decoder, s_linestate_response);
     }
 
@@ -276,7 +276,8 @@ static int s_linestate_chunk_terminator(struct aws_h1_decoder *decoder, struct a
     }
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
-        "id=%p: s_set_line_state in s_linestate_chunk_terminator, s_linestate_chunk_size." decoder->logging_id);
+        "id=%p: s_set_line_state in s_linestate_chunk_terminator, s_linestate_chunk_size.",
+        decoder->logging_id);
 
     s_set_line_state(decoder, s_linestate_chunk_size);
 
