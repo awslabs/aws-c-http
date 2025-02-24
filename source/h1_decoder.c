@@ -210,13 +210,11 @@ static int s_mark_done(struct aws_h1_decoder *decoder) {
 static void s_reset_state(struct aws_h1_decoder *decoder) {
     if (decoder->is_decoding_requests) {
         AWS_LOGF_TRACE(
-            AWS_LS_HTTP_STREAM, "id=%p: Resetting decoder for new request, is_decoding_requests.", decoder->logging_id);
+            AWS_LS_HTTP_STREAM, "id=%p: s_set_line_state in s_reset_state, s_linestate_request.", decoder->logging_id);
         s_set_line_state(decoder, s_linestate_request);
     } else {
         AWS_LOGF_TRACE(
-            AWS_LS_HTTP_STREAM,
-            "id=%p: Resetting decoder for new request, not is_decoding_requests",
-            decoder->logging_id);
+            AWS_LS_HTTP_STREAM, "id=%p: s_set_line_state in s_reset_state, s_linestate_response." decoder->logging_id);
         s_set_line_state(decoder, s_linestate_response);
     }
 
@@ -276,6 +274,10 @@ static int s_linestate_chunk_terminator(struct aws_h1_decoder *decoder, struct a
             AWS_BYTE_CURSOR_PRI(input));
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_STREAM,
+        "id=%p: s_set_line_state in s_linestate_chunk_terminator, s_linestate_chunk_size." decoder->logging_id);
+
     s_set_line_state(decoder, s_linestate_chunk_size);
 
     return AWS_OP_SUCCESS;
@@ -364,6 +366,8 @@ static int s_linestate_chunk_size(struct aws_h1_decoder *decoder, struct aws_byt
     /* Skip all chunk extensions, as they are optional. */
     /* RFC-7230 section 4.1.1 Chunk Extensions */
 
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_STREAM, "id=%p: s_set_state in s_linestate_chunk_size, set to s_state_chunk", decoder->logging_id);
     s_set_state(decoder, s_state_chunk);
 
     return AWS_OP_SUCCESS;
@@ -383,8 +387,16 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                     return AWS_OP_ERR;
                 }
             } else if (decoder->transfer_encoding & AWS_HTTP_TRANSFER_ENCODING_CHUNKED) {
+                AWS_LOGF_TRACE(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: s_set_line_state in s_linestate_header, set to s_linestate_chunk_size",
+                    decoder->logging_id);
                 s_set_line_state(decoder, s_linestate_chunk_size);
             } else if (decoder->content_length > 0) {
+                AWS_LOGF_TRACE(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: s_set_state in s_linestate_header, set to s_state_unchunked_body",
+                    decoder->logging_id);
                 s_set_state(decoder, s_state_unchunked_body);
             } else {
                 err = s_mark_done(decoder);
@@ -564,6 +576,10 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
         return AWS_OP_ERR;
     }
 
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_STREAM,
+        "id=%p: s_set_line_state in s_linestate_header, set to s_linestate_header",
+        decoder->logging_id);
     s_set_line_state(decoder, s_linestate_header);
 
     return AWS_OP_SUCCESS;
@@ -636,6 +652,10 @@ static int s_linestate_request(struct aws_h1_decoder *decoder, struct aws_byte_c
         return AWS_OP_ERR;
     }
 
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_STREAM,
+        "id=%p: s_set_line_state in s_linestate_request, set to s_linestate_header",
+        decoder->logging_id);
     s_set_line_state(decoder, s_linestate_header);
 
     return AWS_OP_SUCCESS;
@@ -709,6 +729,10 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
         return AWS_OP_ERR;
     }
 
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_STREAM,
+        "id=%p: s_set_line_state in s_linestate_response, set to s_linestate_header",
+        decoder->logging_id);
     s_set_line_state(decoder, s_linestate_header);
     return AWS_OP_SUCCESS;
 }
