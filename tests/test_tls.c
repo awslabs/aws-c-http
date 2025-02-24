@@ -247,7 +247,7 @@ AWS_TEST_CASE(tls_download_medium_file_h1, s_test_tls_download_medium_file_h1);
 static int s_tls_download_medium_file_h2(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     /* The cloudfront domain for aws-crt-test-stuff */
-    struct aws_byte_cursor url = aws_byte_cursor_from_c_str("https://d1cz66xoahf9cl.cloudfront.net/http_test_doc.txt");
+    struct aws_byte_cursor url = aws_byte_cursor_from_c_str("http://d1cz66xoahf9cl.cloudfront.net/http_test_doc.txt");
     ASSERT_SUCCESS(s_test_tls_download_medium_file_general(allocator, url, true /*h2_required*/));
     return AWS_OP_SUCCESS;
 }
