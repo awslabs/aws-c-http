@@ -219,7 +219,7 @@ static int s_test_tls_download_medium_file_general(
     /* wait for the request to complete */
     s_test_wait(&test, s_stream_wait_pred);
 
-    ASSERT_INT_EQUALS(181251, test.body_size);
+    ASSERT_INT_EQUALS(14428801, test.body_size);
 
     aws_http_message_destroy(request);
     aws_http_stream_release(test.stream);
@@ -238,7 +238,7 @@ static int s_test_tls_download_medium_file_general(
 static int s_test_tls_download_medium_file_h1(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     struct aws_byte_cursor url =
-        aws_byte_cursor_from_c_str("stspn.com/");
+        aws_byte_cursor_from_c_str("http://aws-crt-test-stuff.s3.amazonaws.com/http_test_doc.txt");
     ASSERT_SUCCESS(s_test_tls_download_medium_file_general(allocator, url, false /*h2_required*/));
     return AWS_OP_SUCCESS;
 }
