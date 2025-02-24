@@ -258,7 +258,7 @@ static int s_test_tls_download_shutdown_with_window_size_0(struct aws_allocator 
 
     aws_http_library_init(allocator);
     struct aws_byte_cursor uri_str =
-        aws_byte_cursor_from_c_str("https://aws-crt-test-stuff.s3.amazonaws.com/http_test_doc.txt");
+        aws_byte_cursor_from_c_str("http://aws-crt-test-stuff.s3.amazonaws.com/http_test_doc.txt");
     struct aws_uri uri;
     AWS_ZERO_STRUCT(uri);
     aws_uri_init_parse(&uri, allocator, &uri_str);
