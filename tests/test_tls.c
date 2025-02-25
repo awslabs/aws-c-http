@@ -237,8 +237,8 @@ static int s_test_tls_download_medium_file_general(
 
 static int s_test_tls_download_medium_file_h1(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
-    struct aws_byte_cursor url =
-        aws_byte_cursor_from_c_str("http://aws-crt-test-stuff.s3.us-east-1.amazonaws.com/s3log.txt");
+    struct aws_byte_cursor url = aws_byte_cursor_from_c_str(
+        "http://aws-crt-test-stuff-us-west-2.s3.us-west-2.amazonaws.com/put_object_test_128MB.txt");
     ASSERT_SUCCESS(s_test_tls_download_medium_file_general(allocator, url, false /*h2_required*/));
     return AWS_OP_SUCCESS;
 }
