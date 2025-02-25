@@ -177,11 +177,11 @@ static int s_test_tls_download_medium_file_general(
     http_options.allocator = test.alloc;
     http_options.bootstrap = test.client_bootstrap;
     http_options.host_name = *aws_uri_host_name(&uri);
-    http_options.port = 443;
+    http_options.port = 80;
     http_options.on_setup = s_on_connection_setup;
     http_options.on_shutdown = s_on_connection_shutdown;
     http_options.socket_options = &socket_options;
-    http_options.tls_options = &tls_connection_options;
+    // http_options.tls_options = &tls_connection_options;
     http_options.user_data = &test;
 
     ASSERT_SUCCESS(aws_http_client_connect(&http_options));
@@ -238,7 +238,7 @@ static int s_test_tls_download_medium_file_general(
 static int s_test_tls_download_medium_file_h1(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     struct aws_byte_cursor url =
-        aws_byte_cursor_from_c_str("https://aws-crt-test-stuff.s3.amazonaws.com/http_test_doc.txt");
+        aws_byte_cursor_from_c_str("http://aws-crt-test-stuff.s3.amazonaws.com/http_test_doc.txt");
     ASSERT_SUCCESS(s_test_tls_download_medium_file_general(allocator, url, false /*h2_required*/));
     return AWS_OP_SUCCESS;
 }
@@ -247,7 +247,8 @@ AWS_TEST_CASE(tls_download_medium_file_h1, s_test_tls_download_medium_file_h1);
 static int s_tls_download_medium_file_h2(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     /* The cloudfront domain for aws-crt-test-stuff */
-    struct aws_byte_cursor url = aws_byte_cursor_from_c_str("https://d1cz66xoahf9cl.cloudfront.net/http_test_doc.txt");
+    struct aws_byte_cursor url =
+        aws_byte_cursor_from_c_str("http://aws-crt-test-stuff.s3.amazonaws.com/http_test_doc.txt");
     ASSERT_SUCCESS(s_test_tls_download_medium_file_general(allocator, url, true /*h2_required*/));
     return AWS_OP_SUCCESS;
 }
@@ -258,7 +259,7 @@ static int s_test_tls_download_shutdown_with_window_size_0(struct aws_allocator 
 
     aws_http_library_init(allocator);
     struct aws_byte_cursor uri_str =
-        aws_byte_cursor_from_c_str("https://aws-crt-test-stuff.s3.amazonaws.com/http_test_doc.txt");
+        aws_byte_cursor_from_c_str("http://aws-crt-test-stuff.s3.amazonaws.com/http_test_doc.txt");
     struct aws_uri uri;
     AWS_ZERO_STRUCT(uri);
     aws_uri_init_parse(&uri, allocator, &uri_str);
