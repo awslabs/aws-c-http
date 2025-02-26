@@ -1386,11 +1386,7 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
     }
 
     AWS_LOGF_TRACE(
-        AWS_LS_HTTP_STREAM,
-        "id=%p: Incoming body: %zu bytes received: " PRInSTR,
-        (void *)&incoming_stream->base,
-        data->len,
-        AWS_BYTE_CURSOR_PRI(*data));
+        AWS_LS_HTTP_STREAM, "id=%p: Incoming body: %zu bytes received.", (void *)&incoming_stream->base, data->len);
 
     if (connection->base.stream_manual_window_management) {
         /* Let stream window shrink by amount of body data received */
@@ -2021,14 +2017,6 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
      * to 0 as the body ends, and the connection can't proceed to the trailing headers.
      */
     message_cursor.len = (size_t)aws_min_u64(message_cursor.len, stream_window);
-
-    AWS_LOGF_TRACE(
-        AWS_LS_HTTP_CONNECTION,
-        "id=%p: Processing %zu bytes of message for stream %p, %zu bytes remain.",
-        (void *)&connection->base,
-        message_cursor.len,
-        (void *)&incoming_stream->base,
-        queued_msg->message_data.len - queued_msg->copy_mark);
 
     const size_t prev_cursor_len = message_cursor.len;
 
