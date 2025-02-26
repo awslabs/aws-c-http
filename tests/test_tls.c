@@ -181,7 +181,7 @@ static int s_test_tls_download_medium_file_general(
     http_options.on_setup = s_on_connection_setup;
     http_options.on_shutdown = s_on_connection_shutdown;
     http_options.socket_options = &socket_options;
-    // http_options.tls_options = &tls_connection_options;
+    http_options.tls_options = &tls_connection_options;
     http_options.user_data = &test;
 
     ASSERT_SUCCESS(aws_http_client_connect(&http_options));
