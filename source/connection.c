@@ -729,35 +729,21 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     };
 
     int listen_error = AWS_OP_SUCCESS;
-#if (defined(AWS_ENABLE_DISPATCH_QUEUE) && !defined(AWS_ENABLE_KQUEUE)) || defined(AWS_USE_APPLE_NETWORK_FRAMEWORK)
-#    define AWS_NETWORK_FRAMEWORK_ENABLED 1
-#else
-#    define AWS_NETWORK_FRAMEWORK_ENABLED 0
-#endif
 
-    if (bootstrap_options.socket_options->impl_type == AWS_SOCKET_IMPL_APPLE_NETWORK_FRAMEWORK ||
-        (AWS_NETWORK_FRAMEWORK_ENABLED &&
-         bootstrap_options.socket_options->impl_type == AWS_SOCKET_IMPL_PLATFORM_DEFAULT)) {
-        /*
-         * WARNING!!!!
-         * For Apple Network Framework, socket listen is an async function, we would need block here waiting for
-         * setup complete.
-         */
-        server->socket = aws_server_bootstrap_new_socket_listener_async(&bootstrap_options);
-        aws_mutex_lock(&server_user_data->mutex);
-        aws_condition_variable_wait_pred(
-            &server_user_data->condition_variable,
-            &server_user_data->mutex,
-            s_listener_connected_predicate,
-            server_user_data);
-        aws_mutex_unlock(&server_user_data->mutex);
-        listen_error = server_user_data->setup_error_code;
-    } else {
-        server->socket = aws_server_bootstrap_new_socket_listener(&bootstrap_options);
-        if (!server->socket) {
-            listen_error = aws_last_error();
-        }
-    }
+    /*
+     * WARNING!!!!
+     * aws_server_bootstrap_new_socket_listener has async callback, we would block here waiting for
+     * setup complete.
+     */
+    server->socket = aws_server_bootstrap_new_socket_listener(&bootstrap_options);
+    aws_mutex_lock(&server_user_data->mutex);
+    aws_condition_variable_wait_pred(
+        &server_user_data->condition_variable,
+        &server_user_data->mutex,
+        s_listener_connected_predicate,
+        server_user_data);
+    aws_mutex_unlock(&server_user_data->mutex);
+    listen_error = server_user_data->setup_error_code;
 
     s_server_unlock_synced_data(server);
 
