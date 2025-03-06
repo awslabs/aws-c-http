@@ -736,15 +736,20 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
      * setup complete.
      */
     server->socket = aws_server_bootstrap_new_socket_listener(&bootstrap_options);
-    aws_mutex_lock(&server_user_data->mutex);
-    aws_condition_variable_wait_pred(
-        &server_user_data->condition_variable,
-        &server_user_data->mutex,
-        s_listener_connected_predicate,
-        server_user_data);
-    aws_mutex_unlock(&server_user_data->mutex);
-    listen_error = server_user_data->setup_error_code;
-
+    // if server setup properly, waiting for setup callback
+    if (server->socket) {
+        aws_mutex_lock(&server_user_data->mutex);
+        aws_condition_variable_wait_pred(
+            &server_user_data->condition_variable,
+            &server_user_data->mutex,
+            s_listener_connected_predicate,
+            server_user_data);
+        aws_mutex_unlock(&server_user_data->mutex);
+        listen_error = server_user_data->setup_error_code;
+    }
+    else{
+        listen_error = aws_last_error();
+    }
     s_server_unlock_synced_data(server);
 
     if (listen_error) {
