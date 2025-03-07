@@ -28,7 +28,7 @@ static int s_random_access_set_sanitize_fn(struct aws_allocator *allocator, void
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(random_access_set_sanitize_test, s_random_access_set_sanitize_fn)
+AWS_TEST_CASE(random_access_set_sanitize, s_random_access_set_sanitize_fn)
 
 static int s_random_access_set_insert_fn(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -59,7 +59,7 @@ static int s_random_access_set_insert_fn(struct aws_allocator *allocator, void *
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(random_access_set_insert_test, s_random_access_set_insert_fn)
+AWS_TEST_CASE(random_access_set_insert, s_random_access_set_insert_fn)
 
 static int s_random_access_set_get_random_fn(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -86,7 +86,7 @@ static int s_random_access_set_get_random_fn(struct aws_allocator *allocator, vo
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(random_access_set_get_random_test, s_random_access_set_get_random_fn)
+AWS_TEST_CASE(random_access_set_get_random, s_random_access_set_get_random_fn)
 
 static int s_random_access_set_exist_fn(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -111,7 +111,7 @@ static int s_random_access_set_exist_fn(struct aws_allocator *allocator, void *c
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(random_access_set_exist_test, s_random_access_set_exist_fn)
+AWS_TEST_CASE(random_access_set_exist, s_random_access_set_exist_fn)
 
 static int s_random_access_set_remove_fn(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -159,7 +159,7 @@ static int s_random_access_set_remove_fn(struct aws_allocator *allocator, void *
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(random_access_set_remove_test, s_random_access_set_remove_fn)
+AWS_TEST_CASE(random_access_set_remove, s_random_access_set_remove_fn)
 
 static void s_aws_string_destroy_callback(void *key) {
     struct aws_string *str = *(struct aws_string **)key;
@@ -200,4 +200,4 @@ static int s_random_access_set_owns_element_fn(struct aws_allocator *allocator, 
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(random_access_set_owns_element_test, s_random_access_set_owns_element_fn)
+AWS_TEST_CASE(random_access_set_owns_element, s_random_access_set_owns_element_fn)

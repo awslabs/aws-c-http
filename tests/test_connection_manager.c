@@ -465,7 +465,7 @@ static int s_test_connection_manager_setup_shutdown(struct aws_allocator *alloca
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_setup_shutdown, s_test_connection_manager_setup_shutdown);
+AWS_TEST_CASE(connection_manager_setup_shutdown, s_test_connection_manager_setup_shutdown);
 
 static int s_test_connection_manager_single_connection(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -488,7 +488,7 @@ static int s_test_connection_manager_single_connection(struct aws_allocator *all
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_single_connection, s_test_connection_manager_single_connection);
+AWS_TEST_CASE(connection_manager_single_connection, s_test_connection_manager_single_connection);
 
 static int s_test_connection_manager_proxy_envrionment_empty_string(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -520,7 +520,7 @@ static int s_test_connection_manager_proxy_envrionment_empty_string(struct aws_a
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
-    test_connection_manager_proxy_envrionment_empty_string,
+    connection_manager_proxy_envrionment_empty_string,
     s_test_connection_manager_proxy_envrionment_empty_string);
 
 static int s_test_connection_manager_single_http2_connection(struct aws_allocator *allocator, void *ctx) {
@@ -545,7 +545,7 @@ static int s_test_connection_manager_single_http2_connection(struct aws_allocato
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_single_http2_connection, s_test_connection_manager_single_http2_connection);
+AWS_TEST_CASE(connection_manager_single_http2_connection, s_test_connection_manager_single_http2_connection);
 
 static int s_test_connection_manager_single_http2_connection_failed(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -571,7 +571,7 @@ static int s_test_connection_manager_single_http2_connection_failed(struct aws_a
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
-    test_connection_manager_single_http2_connection_failed,
+    connection_manager_single_http2_connection_failed,
     s_test_connection_manager_single_http2_connection_failed);
 
 static int s_test_connection_manager_single_http2_connection_with_settings(struct aws_allocator *allocator, void *ctx) {
@@ -602,7 +602,7 @@ static int s_test_connection_manager_single_http2_connection_with_settings(struc
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
-    test_connection_manager_single_http2_connection_with_settings,
+    connection_manager_single_http2_connection_with_settings,
     s_test_connection_manager_single_http2_connection_with_settings);
 
 static int s_test_connection_manager_many_connections(struct aws_allocator *allocator, void *ctx) {
@@ -626,7 +626,7 @@ static int s_test_connection_manager_many_connections(struct aws_allocator *allo
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_many_connections, s_test_connection_manager_many_connections);
+AWS_TEST_CASE(connection_manager_many_connections, s_test_connection_manager_many_connections);
 
 static int s_test_connection_manager_many_http2_connections(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -651,7 +651,7 @@ static int s_test_connection_manager_many_http2_connections(struct aws_allocator
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_many_http2_connections, s_test_connection_manager_many_http2_connections);
+AWS_TEST_CASE(connection_manager_many_http2_connections, s_test_connection_manager_many_http2_connections);
 
 static int s_test_connection_manager_acquire_release(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -678,7 +678,7 @@ static int s_test_connection_manager_acquire_release(struct aws_allocator *alloc
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_acquire_release, s_test_connection_manager_acquire_release);
+AWS_TEST_CASE(connection_manager_acquire_release, s_test_connection_manager_acquire_release);
 
 static int s_test_connection_manager_close_and_release(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -705,7 +705,7 @@ static int s_test_connection_manager_close_and_release(struct aws_allocator *all
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_close_and_release, s_test_connection_manager_close_and_release);
+AWS_TEST_CASE(connection_manager_close_and_release, s_test_connection_manager_close_and_release);
 
 static int s_test_connection_manager_acquire_release_mix(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -738,7 +738,7 @@ static int s_test_connection_manager_acquire_release_mix(struct aws_allocator *a
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_acquire_release_mix, s_test_connection_manager_acquire_release_mix);
+AWS_TEST_CASE(connection_manager_acquire_release_mix, s_test_connection_manager_acquire_release_mix);
 
 static int s_test_connection_manager_max_pending_acquisitions(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -773,7 +773,7 @@ static int s_test_connection_manager_max_pending_acquisitions(struct aws_allocat
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_max_pending_acquisitions, s_test_connection_manager_max_pending_acquisitions);
+AWS_TEST_CASE(connection_manager_max_pending_acquisitions, s_test_connection_manager_max_pending_acquisitions);
 
 static int s_test_connection_manager_max_pending_acquisitions_with_vended_connections(
     struct aws_allocator *allocator,
@@ -816,7 +816,7 @@ static int s_test_connection_manager_max_pending_acquisitions_with_vended_connec
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
-    test_connection_manager_max_pending_acquisitions_with_vended_connections,
+    connection_manager_max_pending_acquisitions_with_vended_connections,
     s_test_connection_manager_max_pending_acquisitions_with_vended_connections);
 
 static int s_aws_http_connection_manager_create_connection_sync_mock(
@@ -949,9 +949,7 @@ static int s_test_connection_manager_with_network_interface_list(struct aws_allo
     aws_mem_release(allocator, interface_names_array);
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(
-    test_connection_manager_with_network_interface_list,
-    s_test_connection_manager_with_network_interface_list);
+AWS_TEST_CASE(connection_manager_with_network_interface_list, s_test_connection_manager_with_network_interface_list);
 
 static int s_test_connection_manager_acquire_release_mix_synchronous(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -989,7 +987,7 @@ static int s_test_connection_manager_acquire_release_mix_synchronous(struct aws_
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
-    test_connection_manager_acquire_release_mix_synchronous,
+    connection_manager_acquire_release_mix_synchronous,
     s_test_connection_manager_acquire_release_mix_synchronous);
 
 static int s_test_connection_manager_acquisition_timeout(struct aws_allocator *allocator, void *ctx) {
@@ -1030,7 +1028,7 @@ static int s_test_connection_manager_acquisition_timeout(struct aws_allocator *a
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_acquisition_timeout, s_test_connection_manager_acquisition_timeout);
+AWS_TEST_CASE(connection_manager_acquisition_timeout, s_test_connection_manager_acquisition_timeout);
 
 static int s_test_connection_manager_connect_callback_failure(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -1055,7 +1053,7 @@ static int s_test_connection_manager_connect_callback_failure(struct aws_allocat
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_connect_callback_failure, s_test_connection_manager_connect_callback_failure);
+AWS_TEST_CASE(connection_manager_connect_callback_failure, s_test_connection_manager_connect_callback_failure);
 
 static int s_test_connection_manager_connect_immediate_failure(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -1080,7 +1078,7 @@ static int s_test_connection_manager_connect_immediate_failure(struct aws_alloca
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_connect_immediate_failure, s_test_connection_manager_connect_immediate_failure);
+AWS_TEST_CASE(connection_manager_connect_immediate_failure, s_test_connection_manager_connect_immediate_failure);
 
 static int s_test_connection_manager_proxy_setup_shutdown(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -1103,7 +1101,7 @@ static int s_test_connection_manager_proxy_setup_shutdown(struct aws_allocator *
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_proxy_setup_shutdown, s_test_connection_manager_proxy_setup_shutdown);
+AWS_TEST_CASE(connection_manager_proxy_setup_shutdown, s_test_connection_manager_proxy_setup_shutdown);
 
 static struct aws_http_connection_manager_system_vtable s_idle_mocks = {
     .aws_http_client_connect = s_aws_http_connection_manager_create_connection_sync_mock,
@@ -1212,7 +1210,7 @@ static int s_test_connection_manager_idle_culling_single(struct aws_allocator *a
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_idle_culling_single, s_test_connection_manager_idle_culling_single);
+AWS_TEST_CASE(connection_manager_idle_culling_single, s_test_connection_manager_idle_culling_single);
 
 static int s_test_connection_manager_idle_culling_many(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -1270,7 +1268,7 @@ static int s_test_connection_manager_idle_culling_many(struct aws_allocator *all
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_idle_culling_many, s_test_connection_manager_idle_culling_many);
+AWS_TEST_CASE(connection_manager_idle_culling_many, s_test_connection_manager_idle_culling_many);
 
 static int s_test_connection_manager_idle_culling_mixture(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -1336,7 +1334,7 @@ static int s_test_connection_manager_idle_culling_mixture(struct aws_allocator *
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_connection_manager_idle_culling_mixture, s_test_connection_manager_idle_culling_mixture);
+AWS_TEST_CASE(connection_manager_idle_culling_mixture, s_test_connection_manager_idle_culling_mixture);
 
 /**
  * Once upon time, if the culling test is running while the connection manager is shutting, the refcount will be messed
@@ -1368,7 +1366,7 @@ static int s_test_connection_manager_idle_culling_refcount(struct aws_allocator 
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(test_connection_manager_idle_culling_refcount, s_test_connection_manager_idle_culling_refcount);
+AWS_TEST_CASE(connection_manager_idle_culling_refcount, s_test_connection_manager_idle_culling_refcount);
 
 /**
  * Proxy integration tests. Maybe we should move this to another file. But let's do it later. Someday.

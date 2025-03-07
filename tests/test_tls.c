@@ -341,4 +341,4 @@ static int s_test_tls_download_shutdown_with_window_size_0(struct aws_allocator 
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(test_tls_download_shutdown_with_window_size_0, s_test_tls_download_shutdown_with_window_size_0);
+AWS_TEST_CASE(tls_download_shutdown_with_window_size_0, s_test_tls_download_shutdown_with_window_size_0);
