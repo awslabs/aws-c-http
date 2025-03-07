@@ -48,6 +48,7 @@ struct aws_h1_encoder_message {
     uint64_t content_length;
     bool has_connection_close_header;
     bool has_chunked_encoding_header;
+    bool is_switching_protocols;
 };
 
 enum aws_h1_encoder_state {
