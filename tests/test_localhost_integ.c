@@ -78,7 +78,6 @@ struct tester {
     size_t stream_completed_count;
     size_t stream_complete_errors;
     size_t stream_200_count;
-    size_t stream_4xx_count;
     size_t stream_status_not_200_count;
 
     uint64_t num_sen_received;
@@ -187,10 +186,9 @@ static void s_tester_on_stream_completed(struct aws_http_stream *stream, int err
             ++s_tester.stream_complete_errors;
             s_tester.stream_completed_error_code = aws_last_error();
         } else {
-            if (status == 200) {
+            if (status / 100 == 2) {
                 s_tester.stream_completed_with_200 = true;
                 ++s_tester.stream_200_count;
-            } else if (status / 100 == 4) {
             } else {
                 ++s_tester.stream_status_not_200_count;
             }

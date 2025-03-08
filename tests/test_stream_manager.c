@@ -500,7 +500,7 @@ static void s_sm_tester_on_stream_complete(struct aws_http_stream *stream, int e
             ++s_tester.stream_complete_errors;
             s_tester.stream_completed_error_code = aws_last_error();
         } else {
-            if (status == 200) {
+            if (status / 100 == 2) {
                 ++s_tester.stream_200_count;
             } else {
                 ++s_tester.stream_status_not_200_count;
