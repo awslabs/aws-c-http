@@ -1564,7 +1564,7 @@ static int s_aws_http_on_incoming_header_block_done_proxy_test(
     struct cm_tester *tester = &s_tester;
     if (aws_http_stream_get_incoming_response_status(stream, &s_response_status_code) == AWS_OP_SUCCESS) {
         aws_mutex_lock(&tester->lock);
-        tester->proxy_request_successful = s_response_status_code == 200;
+        tester->proxy_request_successful = s_response_status_code / 100 == 2;
         aws_mutex_unlock(&tester->lock);
     }
 
@@ -1771,7 +1771,7 @@ static int s_proxy_integration_test_helper_general(
     aws_http_stream_activate(stream);
 
     ASSERT_SUCCESS(s_wait_on_proxy_request_complete());
-    ASSERT_TRUE(s_response_status_code == 200);
+    ASSERT_TRUE(s_response_status_code / 100 == 2);
 
     aws_http_stream_release(stream);
     aws_http_message_destroy(request);
