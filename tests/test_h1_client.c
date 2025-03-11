@@ -1396,9 +1396,9 @@ static int s_check_chunked_streaming_request(
         /* check that chunk's data matches what's next in expected_body_data */
         ASSERT_TRUE(chunk_len <= actual_chunked_body.len);
         ASSERT_TRUE(chunk_len <= expected_body_data.len);
-        actual_next = aws_byte_cursor_advance(&actual_chunked_body, chunk_len);
-        ASSERT_BIN_ARRAYS_EQUALS(expected_body_data.ptr, chunk_len, actual_next.ptr, actual_next.len);
-        aws_byte_cursor_advance(&expected_body_data, chunk_len);
+        actual_next = aws_byte_cursor_advance(&actual_chunked_body, (size_t)chunk_len);
+        ASSERT_BIN_ARRAYS_EQUALS(expected_body_data.ptr, (size_t)chunk_len, actual_next.ptr, actual_next.len);
+        aws_byte_cursor_advance(&expected_body_data, (size_t)chunk_len);
 
         /* CRLF at end of each chunk */
         actual_next = aws_byte_cursor_advance(&actual_chunked_body, 2);
