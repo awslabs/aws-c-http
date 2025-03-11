@@ -734,7 +734,7 @@ static int s_state_fn_head(struct aws_h1_encoder *encoder, struct aws_byte_buf *
     }
 }
 
-/* Write out body (not using chunked encoding) with known Content-Length. */
+/* Write out body with known Content-Length (not using chunked encoding). */
 static int s_state_fn_unchunked_body_stream(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
     bool done;
     if (s_encode_stream(encoder, dst, encoder->message->body, encoder->message->content_length, &done)) {
@@ -754,12 +754,12 @@ static int s_state_fn_unchunked_body_stream(struct aws_h1_encoder *encoder, stru
  * Each pass through this state writes out 1 chunk of body data (or nothing at all). */
 static int s_state_fn_chunked_body_stream(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
 
-    /* Each chunk is prefixed with: CHUNK-LENGTH-IN-HEX CRLF
+    /* Each chunk is prefixed with: CHUNK-LENGTH-IN-ASCII-HEX CRLF
      * and suffixed with: CRLF
      *
-     * When reading from the stream, we don't know how much data we'll get.
-     * But the length needs to go in the prefix, before the data!
-     * Therefore, leave space at start of dst buffer for the prefix
+     * When reading from the stream, we don't know how much data we'll get,
+     * but the length needs to go in the prefix, before the data!
+     * Therefore, leave space at start of dst buffer for the prefix,
      * we'll go back and write it AFTER streaming the body data.
      * Leave space at the end for the suffix too.
      *
@@ -811,8 +811,8 @@ static int s_state_fn_chunked_body_stream(struct aws_h1_encoder *encoder, struct
 
     /* If ANY body data was streamed, then write in chunk prefix and suffix.
      *
-     * If no body data streamed, dst remains untouched: maybe we've reached end of stream,
-     * maybe user just doesn't have data yet to send */
+     * (else no body data streamed, so dst remains untouched. Maybe we've
+     * reached end of stream, maybe user just doesn't have data yet to send) */
     if (body_sub_buf.len > 0) {
         encoder->chunk_count++;
         ENCODER_LOGF(
@@ -858,6 +858,8 @@ static int s_state_fn_chunked_body_stream(struct aws_h1_encoder *encoder, struct
     return AWS_OP_SUCCESS;
 }
 
+/* Note: this state is ONLY used when streaming a body of unknown Content-Length.
+ * It is NOT used when the write_chunk() API is being used. */
 static int s_state_fn_chunked_body_stream_last_chunk(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
     struct aws_byte_cursor last_chunk = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("0\r\n");
 
