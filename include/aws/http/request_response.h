@@ -881,7 +881,8 @@ AWS_FUTURE_T_POINTER_WITH_RELEASE_DECLARATION(aws_future_http_message, struct aw
 
 /**
  * Submit a chunk of data to be sent on an HTTP/1.1 stream.
- * The stream must have specified "chunked" in a "transfer-encoding" header.
+ * The stream must have specified "chunked" in a "transfer-encoding" header,
+ * and the aws_http_message must NOT have any body stream set.
  * For client streams, activate() must be called before any chunks are submitted.
  * For server streams, the response must be submitted before any chunks.
  * A final chunk with size 0 must be submitted to successfully complete the HTTP-stream.

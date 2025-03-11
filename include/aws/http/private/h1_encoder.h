@@ -53,7 +53,12 @@ struct aws_h1_encoder_message {
 enum aws_h1_encoder_state {
     AWS_H1_ENCODER_STATE_INIT,
     AWS_H1_ENCODER_STATE_HEAD,
-    AWS_H1_ENCODER_STATE_UNCHUNKED_BODY,
+    /* Write streaming body, without chunked encoding, because Content-Length is known */
+    AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM,
+    /* Write streaming body, with chunked encoding, because Content-Length is unknown */
+    AWS_H1_ENCODER_STATE_CHUNKED_BODY_STREAM,
+    AWS_H1_ENCODER_STATE_CHUNKED_BODY_STREAM_LAST_CHUNK,
+    /* The rest of the _CHUNK_ states support the write_chunk() API (body stream not provided up front) */
     AWS_H1_ENCODER_STATE_CHUNK_NEXT,
     AWS_H1_ENCODER_STATE_CHUNK_LINE,
     AWS_H1_ENCODER_STATE_CHUNK_BODY,
@@ -73,7 +78,7 @@ struct aws_h1_encoder {
     /* Current chunk */
     struct aws_h1_chunk *current_chunk;
     /* Number of chunks sent, just used for logging */
-    size_t chunk_count;
+    uint64_t chunk_count;
     /* Encoder logs with this stream ptr as the ID, and passes this ptr to the chunk_complete callback */
     struct aws_http_stream *current_stream;
 };
@@ -90,8 +95,6 @@ void aws_h1_chunk_destroy(struct aws_h1_chunk *chunk);
 
 /* Destroy chunk and fire its completion callback */
 void aws_h1_chunk_complete_and_destroy(struct aws_h1_chunk *chunk, struct aws_http_stream *http_stream, int error_code);
-
-int aws_chunk_line_from_options(struct aws_http1_chunk_options *options, struct aws_byte_buf *chunk_line);
 
 AWS_EXTERN_C_BEGIN
 
