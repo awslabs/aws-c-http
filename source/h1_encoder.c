@@ -765,7 +765,7 @@ static int s_state_fn_chunked_body_stream(struct aws_h1_encoder *encoder, struct
      *
      * Use a predictable length for the prefix.
      * 8 hex chars (i.e. "000000F7") seems reasonable (4 is too small, 16 is ridiculous, dynamic is complicated). */
-    enum { padded_hex_len = 8 }; /* enum so we can use a length of stack-array */
+    enum { padded_hex_len = 8 }; /* enum, because it's used as size for stack array */
     const char *padded_hex_fmt = "%08zX";
     const size_t max_hex_value_given_padding = UINT32_MAX; /* fits in 8 chars */
     const size_t chunk_prefix_len = padded_hex_len + CRLF_SIZE;
