@@ -59,6 +59,14 @@ struct aws_http_connection_manager_options {
     struct aws_client_bootstrap *bootstrap;
     size_t initial_window_size;
     const struct aws_socket_options *socket_options;
+    /**
+     * Optional (ignored if 0).
+     * After a request is fully sent, if the server does not begin responding within N milliseconds,
+     * then fail with AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT.
+     * This can be overridden per-request by aws_http_make_request_options.response_first_byte_timeout_ms.
+     * TODO: Only supported in HTTP/1.1 now, support it in HTTP/2
+     */
+    uint64_t response_first_byte_timeout_ms;
 
     /**
      * Options to create secure (HTTPS) connections.

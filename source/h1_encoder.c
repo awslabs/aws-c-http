@@ -124,7 +124,7 @@ static int s_scan_outgoing_headers(
     if (encoder_message->has_chunked_encoding_header && has_content_length_header) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_STREAM, "id=static: Both Content-Length and Transfer-Encoding are set. Only one may be used");
-        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
     }
 
     if (encoder_message->has_chunked_encoding_header && has_body_stream) {

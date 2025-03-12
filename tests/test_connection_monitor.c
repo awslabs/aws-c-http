@@ -38,7 +38,7 @@ static int s_test_http_connection_monitor_options_is_valid(struct aws_allocator 
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_connection_monitor_options_is_valid, s_test_http_connection_monitor_options_is_valid);
+AWS_TEST_CASE(http_connection_monitor_options_is_valid, s_test_http_connection_monitor_options_is_valid);
 
 static void s_testing_channel_shutdown_callback(int error_code, void *user_data) {
     (void)error_code;
@@ -329,7 +329,7 @@ static int s_test_http_connection_monitor_rw_above(struct aws_allocator *allocat
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_connection_monitor_rw_above, s_test_http_connection_monitor_rw_above);
+AWS_TEST_CASE(http_connection_monitor_rw_above, s_test_http_connection_monitor_rw_above);
 
 /*
  * A test where the read throughput stays above the threshold
@@ -383,7 +383,7 @@ static int s_test_http_connection_monitor_r_above(struct aws_allocator *allocato
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_connection_monitor_r_above, s_test_http_connection_monitor_r_above);
+AWS_TEST_CASE(http_connection_monitor_r_above, s_test_http_connection_monitor_r_above);
 
 /*
  * A test where the write throughput stays above the threshold
@@ -437,7 +437,7 @@ static int s_test_http_connection_monitor_w_above(struct aws_allocator *allocato
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_connection_monitor_w_above, s_test_http_connection_monitor_w_above);
+AWS_TEST_CASE(http_connection_monitor_w_above, s_test_http_connection_monitor_w_above);
 
 /*
  * A more realistic test where the write throughput stays above and then the read throughput stays above
@@ -532,7 +532,7 @@ static int s_test_http_connection_monitor_write_then_read_above(struct aws_alloc
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_connection_monitor_write_then_read_above, s_test_http_connection_monitor_write_then_read_above);
+AWS_TEST_CASE(http_connection_monitor_write_then_read_above, s_test_http_connection_monitor_write_then_read_above);
 
 /*
  * A test where the throughput is below the threshold but the requests do not last long enough to register the
@@ -607,9 +607,7 @@ static int s_test_http_connection_monitor_below_but_undetectable(struct aws_allo
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(
-    test_http_connection_monitor_below_but_undetectable,
-    s_test_http_connection_monitor_below_but_undetectable);
+AWS_TEST_CASE(http_connection_monitor_below_but_undetectable, s_test_http_connection_monitor_below_but_undetectable);
 
 /*
  * A test where we drop below the threshold with a combination of read and write io
@@ -665,7 +663,7 @@ static int s_test_http_connection_monitor_rw_below(struct aws_allocator *allocat
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_connection_monitor_rw_below, s_test_http_connection_monitor_rw_below);
+AWS_TEST_CASE(http_connection_monitor_rw_below, s_test_http_connection_monitor_rw_below);
 
 /*
  * A test where we drop below the threshold then recover
@@ -737,7 +735,7 @@ static int s_test_http_connection_monitor_below_then_above(struct aws_allocator 
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_connection_monitor_below_then_above, s_test_http_connection_monitor_below_then_above);
+AWS_TEST_CASE(http_connection_monitor_below_then_above, s_test_http_connection_monitor_below_then_above);
 
 /*
  * Test that verifies that the failure time is reset when there's no streams
@@ -811,7 +809,7 @@ static int s_test_http_connection_monitor_failure_reset_when_empty(struct aws_al
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
-    test_http_connection_monitor_failure_reset_when_empty,
+    http_connection_monitor_failure_reset_when_empty,
     s_test_http_connection_monitor_failure_reset_when_empty);
 
 /*
@@ -846,7 +844,7 @@ static int s_test_http_connection_monitor_bytes_overflow(struct aws_allocator *a
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_connection_monitor_bytes_overflow, s_test_http_connection_monitor_bytes_overflow);
+AWS_TEST_CASE(http_connection_monitor_bytes_overflow, s_test_http_connection_monitor_bytes_overflow);
 
 /*
  * Another edge case test when throughput calculations overflow due to time scaling
@@ -880,7 +878,7 @@ static int s_test_http_connection_monitor_time_overflow(struct aws_allocator *al
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_connection_monitor_time_overflow, s_test_http_connection_monitor_time_overflow);
+AWS_TEST_CASE(http_connection_monitor_time_overflow, s_test_http_connection_monitor_time_overflow);
 
 /*
  * Test that verifies the channel shuts down when we exceed the failure time threshold
@@ -952,7 +950,7 @@ static int s_test_http_connection_monitor_shutdown(struct aws_allocator *allocat
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_connection_monitor_shutdown, s_test_http_connection_monitor_shutdown);
+AWS_TEST_CASE(http_connection_monitor_shutdown, s_test_http_connection_monitor_shutdown);
 
 /*
 
@@ -1228,7 +1226,7 @@ static int s_test_http_stats_trivial(struct aws_allocator *allocator, void *ctx)
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_stats_trivial, s_test_http_stats_trivial);
+AWS_TEST_CASE(http_stats_trivial, s_test_http_stats_trivial);
 
 static struct test_http_stats_event s_http_stats_test_basic_request[] = {
     {
@@ -1283,7 +1281,7 @@ static int s_test_http_stats_basic_request(struct aws_allocator *allocator, void
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_stats_basic_request, s_test_http_stats_basic_request);
+AWS_TEST_CASE(http_stats_basic_request, s_test_http_stats_basic_request);
 
 static struct test_http_stats_event s_http_stats_test_split_across_gather_boundary[] = {
     {
@@ -1355,7 +1353,7 @@ static int s_test_http_stats_split_across_gather_boundary(struct aws_allocator *
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_stats_split_across_gather_boundary, s_test_http_stats_split_across_gather_boundary);
+AWS_TEST_CASE(http_stats_split_across_gather_boundary, s_test_http_stats_split_across_gather_boundary);
 
 /*
  * Pipeline 3 requests before beginning response data.
@@ -1441,7 +1439,7 @@ static int s_test_http_stats_pipelined(struct aws_allocator *allocator, void *ct
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_stats_pipelined, s_test_http_stats_pipelined);
+AWS_TEST_CASE(http_stats_pipelined, s_test_http_stats_pipelined);
 
 static struct test_http_stats_event s_http_stats_test_multiple_requests_with_gap[] = {
     {
@@ -1521,4 +1519,4 @@ static int s_test_http_stats_multiple_requests_with_gap(struct aws_allocator *al
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_stats_multiple_requests_with_gap, s_test_http_stats_multiple_requests_with_gap);
+AWS_TEST_CASE(http_stats_multiple_requests_with_gap, s_test_http_stats_multiple_requests_with_gap);

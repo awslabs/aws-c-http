@@ -137,8 +137,8 @@ static void s_common_decoder_setup(
     params->vtable.on_done = s_on_done;
 }
 
-AWS_TEST_CASE(h1_test_get_request, s_h1_test_get_request);
-static int s_h1_test_get_request(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_get_request, s_test_h1_decoder_get_request);
+static int s_test_h1_decoder_get_request(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
 
@@ -163,8 +163,8 @@ static int s_h1_test_get_request(struct aws_allocator *allocator, void *ctx) {
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_test_request_bad_version, s_h1_test_request_bad_version);
-static int s_h1_test_request_bad_version(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_request_bad_version, s_test_h1_decoder_request_bad_version);
+static int s_test_h1_decoder_request_bad_version(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     struct aws_byte_cursor msg =
@@ -181,8 +181,8 @@ static int s_h1_test_request_bad_version(struct aws_allocator *allocator, void *
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_test_response_1_0, s_h1_test_response_1_0);
-static int s_h1_test_response_1_0(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_response_1_0, s_test_h1_decoder_response_1_0);
+static int s_test_h1_decoder_response_1_0(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     int code = 0;
@@ -203,8 +203,8 @@ static int s_h1_test_response_1_0(struct aws_allocator *allocator, void *ctx) {
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_test_response_unsupported_version, s_h1_test_response_unsupported_version);
-static int s_h1_test_response_unsupported_version(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_response_unsupported_version, s_test_h1_decoder_response_unsupported_version);
+static int s_test_h1_decoder_response_unsupported_version(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     struct aws_byte_cursor msg =
@@ -221,8 +221,8 @@ static int s_h1_test_response_unsupported_version(struct aws_allocator *allocato
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_test_get_status_code, s_h1_test_get_status_code);
-static int s_h1_test_get_status_code(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_get_status_code, s_test_h1_decoder_get_status_code);
+static int s_test_h1_decoder_get_status_code(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     int code;
@@ -241,8 +241,8 @@ static int s_h1_test_get_status_code(struct aws_allocator *allocator, void *ctx)
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_test_overflow_scratch_space, s_h1_test_overflow_scratch_space);
-static int s_h1_test_overflow_scratch_space(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_overflow_scratch_space, s_test_h1_decoder_overflow_scratch_space);
+static int s_test_h1_decoder_overflow_scratch_space(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
 
@@ -281,8 +281,8 @@ static int s_got_header(const struct aws_h1_decoded_header *header, void *user_d
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_test_receive_request_headers, s_h1_test_receive_request_headers);
-static int s_h1_test_receive_request_headers(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_receive_request_headers, s_test_h1_decoder_receive_request_headers);
+static int s_test_h1_decoder_receive_request_headers(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     struct aws_byte_cursor msg = s_typical_request;
@@ -307,8 +307,8 @@ static int s_h1_test_receive_request_headers(struct aws_allocator *allocator, vo
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_test_receive_response_headers, s_h1_test_receive_response_headers);
-static int s_h1_test_receive_response_headers(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_receive_response_headers, s_test_h1_decoder_receive_response_headers);
+static int s_test_h1_decoder_receive_response_headers(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     struct aws_byte_cursor msg = s_typical_response;
@@ -333,8 +333,8 @@ static int s_h1_test_receive_response_headers(struct aws_allocator *allocator, v
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_test_get_transfer_encoding_flags, s_h1_test_get_transfer_encoding_flags);
-static int s_h1_test_get_transfer_encoding_flags(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_get_transfer_encoding_flags, s_test_h1_decoder_get_transfer_encoding_flags);
+static int s_test_h1_decoder_get_transfer_encoding_flags(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     struct aws_byte_cursor msg = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.1 200 OK\r\n"
@@ -379,8 +379,8 @@ static int s_on_body(const struct aws_byte_cursor *data, bool finished, void *us
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_test_body_unchunked, s_h1_test_body_unchunked);
-static int s_h1_test_body_unchunked(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_body_unchunked, s_test_h1_decoder_body_unchunked);
+static int s_test_h1_decoder_body_unchunked(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     struct aws_byte_cursor msg = s_typical_response;
@@ -407,8 +407,8 @@ static int s_h1_test_body_unchunked(struct aws_allocator *allocator, void *ctx) 
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_test_body_chunked, s_h1_test_body_chunked);
-static int s_h1_test_body_chunked(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_body_chunked, s_test_h1_decoder_body_chunked);
+static int s_test_h1_decoder_body_chunked(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     struct aws_byte_cursor msg = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
@@ -445,8 +445,8 @@ static int s_h1_test_body_chunked(struct aws_allocator *allocator, void *ctx) {
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_decode_trailers, s_h1_decode_trailers);
-static int s_h1_decode_trailers(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_trailers, s_h1_decoder_trailers);
+static int s_h1_decoder_trailers(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     struct aws_byte_cursor msg = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
@@ -476,8 +476,8 @@ static int s_h1_decode_trailers(struct aws_allocator *allocator, void *ctx) {
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_decode_one_byte_at_a_time, s_h1_decode_one_byte_at_a_time);
-static int s_h1_decode_one_byte_at_a_time(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_one_byte_at_a_time, s_h1_decoder_one_byte_at_a_time);
+static int s_h1_decoder_one_byte_at_a_time(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     struct aws_byte_cursor msg = s_typical_request;
@@ -500,8 +500,8 @@ static int s_rand(int lo, int hi) {
     return rand() % (hi + 1 - lo) + lo;
 }
 
-AWS_TEST_CASE(h1_decode_messages_at_random_intervals, s_h1_decode_messages_at_random_intervals);
-static int s_h1_decode_messages_at_random_intervals(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_messages_at_random_intervals, s_h1_decoder_messages_at_random_intervals);
+static int s_h1_decoder_messages_at_random_intervals(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     const struct aws_byte_cursor requests[] = {
@@ -585,8 +585,8 @@ static int s_h1_decode_messages_at_random_intervals(struct aws_allocator *alloca
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_decode_bad_requests_and_assert_failure, s_h1_decode_bad_requests_and_assert_failure);
-static int s_h1_decode_bad_requests_and_assert_failure(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_bad_requests_and_assert_failure, s_h1_decoder_bad_requests_and_assert_failure);
+static int s_h1_decoder_bad_requests_and_assert_failure(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     const struct aws_byte_cursor requests[] = {
@@ -757,8 +757,8 @@ static int s_h1_decode_bad_requests_and_assert_failure(struct aws_allocator *all
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_decode_bad_responses_and_assert_failure, s_h1_decode_bad_responses_and_assert_failure);
-static int s_h1_decode_bad_responses_and_assert_failure(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_bad_responses_and_assert_failure, s_h1_decoder_bad_responses_and_assert_failure);
+static int s_h1_decoder_bad_responses_and_assert_failure(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     const struct aws_byte_cursor responses[] = {
@@ -797,9 +797,9 @@ static int s_h1_decode_bad_responses_and_assert_failure(struct aws_allocator *al
 }
 
 AWS_TEST_CASE(
-    h1_test_extraneous_buffer_data_ensure_not_processed,
-    s_h1_test_extraneous_buffer_data_ensure_not_processed);
-static int s_h1_test_extraneous_buffer_data_ensure_not_processed(struct aws_allocator *allocator, void *ctx) {
+    h1_decoder_extraneous_buffer_data_ensure_not_processed,
+    s_test_h1_decoder_extraneous_buffer_data_ensure_not_processed);
+static int s_test_h1_decoder_extraneous_buffer_data_ensure_not_processed(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     struct aws_byte_cursor msg =
@@ -818,8 +818,8 @@ static int s_h1_test_extraneous_buffer_data_ensure_not_processed(struct aws_allo
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_test_ignore_chunk_extensions, s_h1_test_ignore_chunk_extensions);
-static int s_h1_test_ignore_chunk_extensions(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_decoder_ignore_chunk_extensions, s_test_h1_decoder_ignore_chunk_extensions);
+static int s_test_h1_decoder_ignore_chunk_extensions(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     struct aws_byte_cursor msg =

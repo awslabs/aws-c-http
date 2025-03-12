@@ -240,6 +240,8 @@ struct aws_http_connection_manager {
     struct proxy_env_var_settings proxy_ev_settings;
     struct aws_tls_connection_options *proxy_ev_tls_options;
     uint32_t port;
+    uint64_t response_first_byte_timeout_ms;
+
     /*
      * HTTP/2 specific.
      */
@@ -958,6 +960,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->max_connection_idle_in_milliseconds = options->max_connection_idle_in_milliseconds;
     manager->connection_acquisition_timeout_ms = options->connection_acquisition_timeout_ms;
     manager->max_pending_connection_acquisitions = options->max_pending_connection_acquisitions;
+    manager->response_first_byte_timeout_ms = options->response_first_byte_timeout_ms;
 
     if (options->proxy_ev_settings) {
         manager->proxy_ev_settings = *options->proxy_ev_settings;
@@ -1090,6 +1093,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.host_name = aws_byte_cursor_from_string(manager->host);
     options.port = manager->port;
     options.initial_window_size = manager->initial_window_size;
+    options.response_first_byte_timeout_ms = manager->response_first_byte_timeout_ms;
     struct aws_socket_options socket_options = manager->socket_options;
     if (aws_array_list_length(&manager->network_interface_names)) {
         struct aws_string *interface_name = NULL;
