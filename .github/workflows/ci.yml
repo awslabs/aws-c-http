@@ -204,7 +204,11 @@ jobs:
         python .\aws-c-http\build\deps\aws-c-common\scripts\appverifier_ctest.py --build_directory .\aws-c-http\build\aws-c-http
 
   macos:
-    runs-on: macos-14 # latest
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        eventloop: ["kqueue", "dispatch_queue"]
     steps:
     - uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -214,10 +218,10 @@ jobs:
       run: |
         python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder')"
         chmod a+x builder
-        ./builder build -p ${{ env.PACKAGE_NAME }}
+        ./builder build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DAWS_USE_APPLE_NETWORK_FRAMEWORK=${{ matrix.eventloop == 'dispatch_queue' && 'ON' || 'OFF' }}
 
   macos-x64:
-    runs-on: macos-14-large # latest
+    runs-on: macos-14-large
     steps:
     - uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -244,7 +248,11 @@ jobs:
         python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON --config Debug
 
   localhost-test-macos:
-    runs-on: macos-14 # latest
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        eventloop: ["kqueue", "dispatch_queue"]
     steps:
     - uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -257,7 +265,7 @@ jobs:
         python3 -m venv .venv
         source .venv/bin/activate
         python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
-        python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON --config Debug
+        python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON --cmake-extra=-DAWS_USE_APPLE_NETWORK_FRAMEWORK=${{ matrix.eventloop == 'dispatch_queue' && 'ON' || 'OFF' }} --config Debug
 
   localhost-test-win:
     runs-on: windows-2022 # latest
