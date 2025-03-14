@@ -774,7 +774,7 @@ static int s_state_fn_chunked_body_stream(struct aws_h1_encoder *encoder, struct
     /* If dst buffer nearly full, don't bother reading from stream.
      * Remain in this state and we'll get a fresh buffer next tick. */
     const size_t dont_bother_if_space_less_than = 128; /* magic number, seems reasonable */
-    AWS_ASSERT(chunk_prefix_len + chunk_suffix_len < dont_bother_if_space_less_than);
+    AWS_ASSERT(dont_bother_if_space_less_than > chunk_prefix_len + chunk_suffix_len);
     if (dst->capacity - dst->len < dont_bother_if_space_less_than) {
         /* If this buffer is empty, and still not big enough, just give up.
          * Probably never happens, but g_aws_channel_max_fragment_size can theoretically be tweaked by user. */
@@ -817,20 +817,25 @@ static int s_state_fn_chunked_body_stream(struct aws_h1_encoder *encoder, struct
         encoder->chunk_count++;
         ENCODER_LOGF(
             TRACE, encoder, "Sending chunk #%" PRIu64 " with size %zu", encoder->chunk_count, body_sub_buf.len);
+        bool wrote_all = true;
 
         /* Write chunk-prefix: LENGTH-IN-HEX CRLF */
         char hexbuf[padded_hex_len + 1] = {0};
+        AWS_ASSERT(body_sub_buf.len <= max_hex_value_given_padding); /* guaranteed, b/c we clamped .capacity earlier */
         snprintf(hexbuf, sizeof(hexbuf), padded_hex_fmt, body_sub_buf.len);
-        aws_byte_buf_write_from_whole_cursor(dst, aws_byte_cursor_from_c_str(hexbuf));
-        s_write_crlf(dst);
+
+        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, aws_byte_cursor_from_c_str(hexbuf));
+        wrote_all &= s_write_crlf(dst);
 
         /* Increment dst->len, since we already copied body in there via sub-buffer */
-
-        dst->len += body_sub_buf.len;
-        AWS_ASSERT(dst->len <= dst->capacity);
+        AWS_ASSERT(dst->buffer + dst->len == body_sub_buf_start); /* written chunk-prefix should end at body start */
+        dst->len += body_sub_buf.len; /* safe b/c we clamped body_sub_buf.capacity earlier */
 
         /* Write chunk-suffix: CRLF */
-        s_write_crlf(dst);
+        wrote_all &= s_write_crlf(dst);
+
+        AWS_ASSERT(wrote_all); /* everything should have fit, we did a lot of math and clamping to guarantee it */
+        (void)wrote_all;
     }
 
     /* If body stream has ended: switch states.
@@ -861,14 +866,8 @@ static int s_state_fn_chunked_body_stream(struct aws_h1_encoder *encoder, struct
 /* Note: this state is ONLY used when streaming a body of unknown Content-Length.
  * It is NOT used when the write_chunk() API is being used. */
 static int s_state_fn_chunked_body_stream_last_chunk(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
+
     struct aws_byte_cursor last_chunk = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("0\r\n");
-
-    const size_t space_available = dst->capacity - dst->len;
-    if (space_available < last_chunk.len) {
-        /* Remain in state until there's enough space to write */
-        return AWS_OP_SUCCESS;
-    }
-
     if (aws_byte_buf_write_from_whole_cursor(dst, last_chunk) == true) {
         ENCODER_LOG(TRACE, encoder, "Last chunk complete");
         return s_switch_state(encoder, AWS_H1_ENCODER_STATE_CHUNK_TRAILER);
