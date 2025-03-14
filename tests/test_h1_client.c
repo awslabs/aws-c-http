@@ -534,8 +534,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_stalled_body_chunked_and_streaming) {
     ASSERT_NOT_NULL(stream);
     aws_http_stream_activate(stream);
 
-    /* Stream is currently stalled, only the request head should have be written.
-     * The client should be stuck, repeatedly polling the input-stream once per event-loop tick */
+    /* Stream is currently stalled. After 1 event-loop tick, only the request head should have be written. */
     testing_channel_run_currently_queued_tasks(&tester.testing_channel);
     ASSERT_SUCCESS(testing_channel_check_written_messages_str(
         &tester.testing_channel,
@@ -546,7 +545,13 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_stalled_body_chunked_and_streaming) {
         "Transfer-Encoding: chunked\r\n"
         "\r\n"));
 
-    /* now stream a bit of data.. */
+    /* Execute a few event-loop ticks. No more data should be written */
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+    ASSERT_TRUE(aws_linked_list_empty(testing_channel_get_written_message_queue(&tester.testing_channel)));
+
+    /* Now stream a bit of data... */
     s_stalling_input_stream_add_data(stalling_stream, "baby's first chunk");
     testing_channel_run_currently_queued_tasks(&tester.testing_channel);
     ASSERT_SUCCESS(testing_channel_check_written_messages_str(
@@ -557,18 +562,24 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_stalled_body_chunked_and_streaming) {
         "baby's first chunk"
         "\r\n"));
 
-    /* now stream a bit more.. */
-    s_stalling_input_stream_add_data(stalling_stream, "the second chunk");
+    /* Execute a few event-loop ticks. No more data should be written */
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+    ASSERT_TRUE(aws_linked_list_empty(testing_channel_get_written_message_queue(&tester.testing_channel)));
+
+    /* Now stream exactly 1 byte more... */
+    s_stalling_input_stream_add_data(stalling_stream, "z");
     testing_channel_run_currently_queued_tasks(&tester.testing_channel);
     ASSERT_SUCCESS(testing_channel_check_written_messages_str(
         &tester.testing_channel,
         allocator,
         /*expected*/
-        "00000010\r\n"
-        "the second chunk"
+        "00000001\r\n"
+        "z"
         "\r\n"));
 
-    /* and now end the stream, the request should finish sending... */
+    /* Finally, end the stream, the request should finish sending... */
     s_stalling_input_stream_set_eof(stalling_stream);
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     ASSERT_SUCCESS(testing_channel_check_written_messages_str(
