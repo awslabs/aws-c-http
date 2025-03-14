@@ -441,6 +441,152 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_empty_body_chunked_and_streaming) {
     return AWS_OP_SUCCESS;
 }
 
+/**
+ * An input stream that can stall (provide 0 bytes from read()) for a while.
+ * Not thread safe. Set current_cursor to un-stall it. Set is_eof to end it.
+ */
+struct stalling_input_stream {
+    struct aws_input_stream base;
+    struct aws_allocator *allocator;
+    struct aws_byte_cursor current_cursor;
+    bool is_eof;
+};
+
+static int s_stalling_input_stream_read(struct aws_input_stream *stream, struct aws_byte_buf *dest) {
+    struct stalling_input_stream *impl = AWS_CONTAINER_OF(stream, struct stalling_input_stream, base);
+
+    aws_byte_buf_write_to_capacity(dest, &impl->current_cursor);
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_stalling_input_stream_get_status(struct aws_input_stream *stream, struct aws_stream_status *status) {
+    struct stalling_input_stream *impl = AWS_CONTAINER_OF(stream, struct stalling_input_stream, base);
+
+    status->is_end_of_stream = impl->is_eof && impl->current_cursor.len == 0;
+    status->is_valid = true;
+
+    return AWS_OP_SUCCESS;
+}
+
+static void s_stalling_input_stream_add_data(struct aws_input_stream *stream, const char *data) {
+    struct stalling_input_stream *impl = AWS_CONTAINER_OF(stream, struct stalling_input_stream, base);
+    AWS_FATAL_ASSERT(impl->current_cursor.len == 0);
+    impl->current_cursor = aws_byte_cursor_from_c_str(data);
+}
+
+static void s_stalling_input_stream_set_eof(struct aws_input_stream *stream) {
+    struct stalling_input_stream *impl = AWS_CONTAINER_OF(stream, struct stalling_input_stream, base);
+    impl->is_eof = true;
+}
+
+static struct aws_input_stream_vtable s_stalling_input_stream_vtable = {
+    .read = s_stalling_input_stream_read,
+    .get_status = s_stalling_input_stream_get_status,
+};
+
+static void s_stalling_input_stream_destroy(struct stalling_input_stream *impl) {
+    aws_mem_release(impl->allocator, impl);
+}
+
+static struct aws_input_stream *s_stalling_input_stream_new(struct aws_allocator *allocator) {
+    struct stalling_input_stream *impl = aws_mem_calloc(allocator, 1, sizeof(struct stalling_input_stream));
+    impl->allocator = allocator;
+    impl->base.impl = impl;
+    impl->base.vtable = &s_stalling_input_stream_vtable;
+    aws_ref_count_init(&impl->base.ref_count, impl, (aws_simple_completion_callback *)s_stalling_input_stream_destroy);
+    return &impl->base;
+}
+
+/* Send request, with chunked and streaming body, where the body stream "stalls"
+ * and doesn't fill the available space */
+H1_CLIENT_TEST_CASE(h1_client_request_send_stalled_body_chunked_and_streaming) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_input_stream *stalling_stream = s_stalling_input_stream_new(allocator);
+
+    struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("amazon.com"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked"),
+        },
+    };
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+    aws_http_message_set_body_stream(request, stalling_stream);
+
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
+
+    /* Stream is currently stalled, only the request head should have be written.
+     * The client should be stuck, repeatedly polling the input-stream once per event-loop tick */
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(
+        &tester.testing_channel,
+        allocator,
+        /*expected*/
+        "PUT /plan.txt HTTP/1.1\r\n"
+        "Host: amazon.com\r\n"
+        "Transfer-Encoding: chunked\r\n"
+        "\r\n"));
+
+    /* now stream a bit of data.. */
+    s_stalling_input_stream_add_data(stalling_stream, "baby's first chunk");
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(
+        &tester.testing_channel,
+        allocator,
+        /*expected*/
+        "00000012\r\n"
+        "baby's first chunk"
+        "\r\n"));
+
+    /* now stream a bit more.. */
+    s_stalling_input_stream_add_data(stalling_stream, "the second chunk");
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(
+        &tester.testing_channel,
+        allocator,
+        /*expected*/
+        "00000010\r\n"
+        "the second chunk"
+        "\r\n"));
+
+    /* and now end the stream, the request should finish sending... */
+    s_stalling_input_stream_set_eof(stalling_stream);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(
+        &tester.testing_channel,
+        allocator,
+        /*expected*/
+        "0\r\n"
+        "\r\n"));
+
+    /* clean up */
+    aws_input_stream_release(stalling_stream);
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 int chunked_test_helper(
     const struct aws_byte_cursor *body,
     struct aws_http_headers *trailers,
