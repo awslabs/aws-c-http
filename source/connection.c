@@ -59,6 +59,7 @@ struct aws_http_server {
     aws_http_server_on_incoming_connection_fn *on_incoming_connection;
     aws_http_server_on_destroy_fn *on_destroy_complete;
     struct aws_socket *socket;
+    struct aws_future_void *setup_future;
 
     /* Any thread may touch this data, but the lock must be held */
     struct {
@@ -432,12 +433,6 @@ void aws_http_connection_release(struct aws_http_connection *connection) {
     }
 }
 
-struct aws_server_user_data {
-    struct aws_allocator *alloc;
-    struct aws_http_server *server;
-    struct aws_future_void *setup_future;
-};
-
 /* At this point, the server bootstrapper has accepted an incoming connection from a client and set up a channel.
  * Now we need to create an aws_http_connection and insert it into the channel as a channel-handler.
  * Note: Be careful not to access server->socket until lock is acquired to avoid race conditions */
@@ -449,8 +444,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
 
     (void)bootstrap;
     AWS_ASSERT(user_data);
-    struct aws_server_user_data *server_user_data = user_data;
-    struct aws_http_server *server = server_user_data->server;
+    struct aws_http_server *server = user_data;
     bool user_cb_invoked = false;
     struct aws_http_connection *connection = NULL;
     if (error_code) {
@@ -571,26 +565,32 @@ error:
 }
 
 /* clean the server memory up */
-static void s_http_server_clean_up(struct aws_http_server *server) {
+static void s_http_server_clean_up(struct aws_http_server *server, bool cleanup_mutex) {
     if (!server) {
         return;
     }
 
-    aws_server_bootstrap_release(server->bootstrap);
+    if (server->bootstrap) {
+        aws_server_bootstrap_release(server->bootstrap);
+    }
 
     /* invoke the user callback */
     if (server->on_destroy_complete) {
         server->on_destroy_complete(server->user_data);
     }
-    aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
-    aws_mutex_clean_up(&server->synced_data.lock);
-    aws_mem_release(server->alloc, server);
-}
 
-static void s_http_server_user_data_clean_up(struct aws_server_user_data *server_user_data) {
-    s_http_server_clean_up(server_user_data->server);
-    aws_future_void_release(server_user_data->setup_future);
-    aws_mem_release(server_user_data->alloc, server_user_data);
+    if (aws_hash_table_is_valid(&server->synced_data.channel_to_connection_map)) {
+        aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
+    }
+
+    if (cleanup_mutex) {
+        aws_mutex_clean_up(&server->synced_data.lock);
+    }
+
+    if (server->setup_future) {
+        aws_future_void_release(server->setup_future);
+    }
+    aws_mem_release(server->alloc, server);
 }
 
 /* At this point, the channel for a server connection has completed shutdown, but hasn't been destroyed yet. */
@@ -602,8 +602,7 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
 
     (void)bootstrap;
     AWS_ASSERT(user_data);
-    struct aws_server_user_data *server_user_data = user_data;
-    struct aws_http_server *server = server_user_data->server;
+    struct aws_http_server *server = user_data;
 
     /* Figure out which connection this was, and remove that entry from the map.
      * It won't be in the map if something went wrong while setting up the connection. */
@@ -632,8 +631,8 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
 static void s_server_bootstrap_on_server_listener_destroy(struct aws_server_bootstrap *bootstrap, void *user_data) {
     (void)bootstrap;
     AWS_ASSERT(user_data);
-    struct aws_server_user_data *server_user_data = user_data;
-    s_http_server_user_data_clean_up(server_user_data);
+    struct aws_http_server *server_user_data = user_data;
+    s_http_server_clean_up(server_user_data, true /*cleanup_mutex*/);
 }
 
 /* the server listener has finished setup. We released the socket if error_code is not 0. */
@@ -642,11 +641,11 @@ static void s_server_bootstrap_on_server_listener_setup(
     int error_code,
     void *user_data) {
     (void)bootstrap;
-    struct aws_server_user_data *server_user_data = user_data;
+    struct aws_http_server *server = user_data;
     if (error_code) {
-        aws_future_void_set_error(server_user_data->setup_future, error_code);
+        aws_future_void_set_error(server->setup_future, error_code);
     } else {
-        aws_future_void_set_result(server_user_data->setup_future);
+        aws_future_void_set_result(server->setup_future);
     }
 }
 
@@ -654,6 +653,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     aws_http_fatal_assert_library_initialized();
 
     struct aws_http_server *server = NULL;
+    bool cleanup_mutex = false;
 
     if (!options || options->self_size == 0 || !options->allocator || !options->bootstrap || !options->socket_options ||
         !options->on_incoming_connection || !options->endpoint) {
@@ -683,8 +683,9 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     if (err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
-        goto mutex_error;
+        goto server_error;
     }
+    cleanup_mutex = true;
     err = aws_hash_table_init(
         &server->synced_data.channel_to_connection_map, server->alloc, 16, aws_hash_ptr, aws_ptr_eq, NULL, NULL);
     if (err) {
@@ -693,7 +694,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             "static: Cannot create server, error %d (%s).",
             aws_last_error(),
             aws_error_name(aws_last_error()));
-        goto hash_table_error;
+        goto server_error;
     }
     /* Protect against callbacks firing before server->socket is set */
     s_server_lock_synced_data(server);
@@ -701,11 +702,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
         server->is_using_tls = true;
     }
 
-    struct aws_server_user_data *server_user_data =
-        aws_mem_calloc(options->allocator, 1, sizeof(struct aws_server_user_data));
-    server_user_data->server = server;
-    server_user_data->alloc = options->allocator;
-    server_user_data->setup_future = aws_future_void_new(options->allocator);
+    server->setup_future = aws_future_void_new(options->allocator);
 
     struct aws_server_socket_channel_bootstrap_options bootstrap_options = {
         .enable_read_back_pressure = options->manual_window_management,
@@ -718,7 +715,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
         .setup_callback = s_server_bootstrap_on_server_listener_setup,
         .host_name = options->endpoint->address,
         .port = options->endpoint->port,
-        .user_data = server_user_data,
+        .user_data = server,
     };
 
     int listen_error = AWS_OP_SUCCESS;
@@ -731,8 +728,8 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     server->socket = aws_server_bootstrap_new_socket_listener(&bootstrap_options);
     // if server setup properly, waiting for setup callback
     if (server->socket) {
-        aws_future_void_wait(server_user_data->setup_future, UINT64_MAX /*timeout*/);
-        listen_error = aws_future_void_get_error(server_user_data->setup_future);
+        aws_future_void_wait(server->setup_future, UINT64_MAX /*timeout*/);
+        listen_error = aws_future_void_get_error(server->setup_future);
     } else {
         listen_error = aws_last_error();
     }
@@ -745,7 +742,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             listen_error,
             aws_error_name(listen_error));
 
-        goto socket_error;
+        goto server_error;
     }
 
     AWS_LOGF_INFO(
@@ -757,14 +754,8 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
 
     return server;
 
-socket_error:
-    aws_future_void_release(server_user_data->setup_future);
-    aws_mem_release(server_user_data->alloc, server_user_data);
-    aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
-hash_table_error:
-    aws_mutex_clean_up(&server->synced_data.lock);
-mutex_error:
-    aws_mem_release(server->alloc, server);
+server_error:
+    s_http_server_clean_up(server, cleanup_mutex);
     return NULL;
 }
 
