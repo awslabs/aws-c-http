@@ -631,8 +631,8 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
 static void s_server_bootstrap_on_server_listener_destroy(struct aws_server_bootstrap *bootstrap, void *user_data) {
     (void)bootstrap;
     AWS_ASSERT(user_data);
-    struct aws_http_server *server_user_data = user_data;
-    s_http_server_clean_up(server_user_data, true /*cleanup_mutex*/);
+    struct aws_http_server *server = user_data;
+    s_http_server_clean_up(server, true /*cleanup_mutex*/);
 }
 
 /* the server listener has finished setup. We released the socket if error_code is not 0. */
