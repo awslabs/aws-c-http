@@ -11,12 +11,12 @@
 
 #include <aws/http/private/proxy_impl.h>
 
-#include <aws/common/condition_variable.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
 #include <aws/http/request_response.h>
 #include <aws/io/channel_bootstrap.h>
+#include <aws/io/future.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
 #include <aws/io/socket_channel_handler.h>
@@ -435,10 +435,7 @@ void aws_http_connection_release(struct aws_http_connection *connection) {
 struct aws_server_user_data {
     struct aws_allocator *alloc;
     struct aws_http_server *server;
-    struct aws_mutex mutex;
-    struct aws_condition_variable condition_variable;
-    int setup_error_code;
-    bool setup_complete;
+    struct aws_future_void *setup_future;
 };
 
 /* At this point, the server bootstrapper has accepted an incoming connection from a client and set up a channel.
@@ -590,6 +587,12 @@ static void s_http_server_clean_up(struct aws_http_server *server) {
     aws_mem_release(server->alloc, server);
 }
 
+static void s_http_server_user_data_clean_up(struct aws_server_user_data *server_user_data) {
+    s_http_server_clean_up(server_user_data->server);
+    aws_future_void_release(server_user_data->setup_future);
+    aws_mem_release(server_user_data->alloc, server_user_data);
+}
+
 /* At this point, the channel for a server connection has completed shutdown, but hasn't been destroyed yet. */
 static void s_server_bootstrap_on_accept_channel_shutdown(
     struct aws_server_bootstrap *bootstrap,
@@ -630,15 +633,7 @@ static void s_server_bootstrap_on_server_listener_destroy(struct aws_server_boot
     (void)bootstrap;
     AWS_ASSERT(user_data);
     struct aws_server_user_data *server_user_data = user_data;
-    struct aws_http_server *server = server_user_data->server;
-    s_http_server_clean_up(server);
-    aws_mem_release(server_user_data->alloc, server_user_data);
-}
-
-static bool s_listener_connected_predicate(void *user_data) {
-    struct aws_server_user_data *setup_test_args = (struct aws_server_user_data *)user_data;
-    bool finished = setup_test_args->setup_complete;
-    return finished;
+    s_http_server_user_data_clean_up(server_user_data);
 }
 
 /* the server listener has finished setup. We released the socket if error_code is not 0. */
@@ -648,11 +643,11 @@ static void s_server_bootstrap_on_server_listener_setup(
     void *user_data) {
     (void)bootstrap;
     struct aws_server_user_data *server_user_data = user_data;
-    aws_mutex_lock(&server_user_data->mutex);
-    server_user_data->setup_error_code = error_code;
-    server_user_data->setup_complete = true;
-    aws_condition_variable_notify_one(&server_user_data->condition_variable);
-    aws_mutex_unlock(&server_user_data->mutex);
+    if (error_code) {
+        aws_future_void_set_error(server_user_data->setup_future, error_code);
+    } else {
+        aws_future_void_set_result(server_user_data->setup_future);
+    }
 }
 
 struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options) {
@@ -710,9 +705,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
         aws_mem_calloc(options->allocator, 1, sizeof(struct aws_server_user_data));
     server_user_data->server = server;
     server_user_data->alloc = options->allocator;
-    aws_mutex_init(&server_user_data->mutex);
-    aws_condition_variable_init(&server_user_data->condition_variable);
-    server_user_data->setup_complete = false;
+    server_user_data->setup_future = aws_future_void_new(options->allocator);
 
     struct aws_server_socket_channel_bootstrap_options bootstrap_options = {
         .enable_read_back_pressure = options->manual_window_management,
@@ -731,21 +724,15 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     int listen_error = AWS_OP_SUCCESS;
 
     /*
-     * WARNING!!!!
+     * WARNING & TODO!!!!
      * aws_server_bootstrap_new_socket_listener has async callback, we would block here waiting for
-     * setup complete.
+     * setup complete. aws-c-http library need to be updated with a proper async API.
      */
     server->socket = aws_server_bootstrap_new_socket_listener(&bootstrap_options);
     // if server setup properly, waiting for setup callback
     if (server->socket) {
-        aws_mutex_lock(&server_user_data->mutex);
-        aws_condition_variable_wait_pred(
-            &server_user_data->condition_variable,
-            &server_user_data->mutex,
-            s_listener_connected_predicate,
-            server_user_data);
-        aws_mutex_unlock(&server_user_data->mutex);
-        listen_error = server_user_data->setup_error_code;
+        aws_future_void_wait(server_user_data->setup_future, UINT64_MAX /*timeout*/);
+        listen_error = aws_future_void_get_error(server_user_data->setup_future);
     } else {
         listen_error = aws_last_error();
     }
@@ -771,6 +758,8 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     return server;
 
 socket_error:
+    aws_future_void_release(server_user_data->setup_future);
+    aws_mem_release(server_user_data->alloc, server_user_data);
     aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
 hash_table_error:
     aws_mutex_clean_up(&server->synced_data.lock);

@@ -329,7 +329,6 @@ static int s_linestate_chunk_size(struct aws_h1_decoder *decoder, struct aws_byt
 
         /* Expected empty newline and end of message. */
         decoder->doing_trailers = true;
-
         s_set_line_state(decoder, s_linestate_header);
         return AWS_OP_SUCCESS;
     }
