@@ -570,26 +570,16 @@ static void s_http_server_clean_up(struct aws_http_server *server, bool cleanup_
         return;
     }
 
-    if (server->bootstrap) {
-        aws_server_bootstrap_release(server->bootstrap);
-    }
+    aws_server_bootstrap_release(server->bootstrap);
 
     /* invoke the user callback */
     if (server->on_destroy_complete) {
         server->on_destroy_complete(server->user_data);
     }
 
-    if (aws_hash_table_is_valid(&server->synced_data.channel_to_connection_map)) {
-        aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
-    }
-
-    if (cleanup_mutex) {
-        aws_mutex_clean_up(&server->synced_data.lock);
-    }
-
-    if (server->setup_future) {
-        aws_future_void_release(server->setup_future);
-    }
+    aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
+    aws_mutex_clean_up(&server->synced_data.lock);
+    aws_future_void_release(server->setup_future);
     aws_mem_release(server->alloc, server);
 }
 
