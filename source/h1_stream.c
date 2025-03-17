@@ -23,8 +23,9 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
         aws_linked_list_empty(&stream->synced_data.pending_chunk_list) &&
         "Chunks should be marked complete before stream destroyed");
 
-    aws_h1_encoder_message_clean_up(&stream->encoder_message);
-    aws_byte_buf_clean_up(&stream->incoming_storage_buf);
+    aws_h1_encoder_message_clean_up(&stream->thread_data.encoder_message);
+    aws_h1_encoder_message_clean_up(&stream->synced_data.pending_outgoing_response);
+    aws_byte_buf_clean_up(&stream->thread_data.incoming_storage_buf);
     aws_mem_release(stream->base.alloc, stream);
 }
 
@@ -58,28 +59,32 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
 
     int api_state = stream->synced_data.api_state;
 
-    bool found_chunks = !aws_linked_list_empty(&stream->synced_data.pending_chunk_list);
+    /* If we have any new outgoing data, prompt the connection to try and send it. */
+    bool new_outgoing_data = !aws_linked_list_empty(&stream->synced_data.pending_chunk_list);
     aws_linked_list_move_all_back(&stream->thread_data.pending_chunk_list, &stream->synced_data.pending_chunk_list);
 
-    stream->encoder_message.trailer = stream->synced_data.pending_trailer;
-    stream->synced_data.pending_trailer = NULL;
+    /* If we JUST learned about having an outgoing response, that's a reason to try sending data */
+    if (stream->synced_data.has_outgoing_response && !stream->thread_data.has_outgoing_response) {
+        stream->thread_data.has_outgoing_response = true;
+        new_outgoing_data = true;
 
-    bool has_outgoing_response = stream->synced_data.has_outgoing_response;
+        stream->thread_data.encoder_message = stream->synced_data.pending_outgoing_response;
+        AWS_ZERO_STRUCT(stream->synced_data.pending_outgoing_response);
+
+        if (stream->thread_data.encoder_message.has_connection_close_header) {
+            /* This will be the last stream connection will process */
+            stream->thread_data.is_final_stream = true;
+        }
+    }
+
+    stream->thread_data.encoder_message.trailer = stream->synced_data.pending_trailer;
+    stream->synced_data.pending_trailer = NULL;
 
     uint64_t pending_window_update = stream->synced_data.pending_window_update;
     stream->synced_data.pending_window_update = 0;
 
     s_stream_unlock_synced_data(stream);
     /* END CRITICAL SECTION */
-
-    /* If we have any new outgoing data, prompt the connection to try and send it. */
-    bool new_outgoing_data = found_chunks;
-
-    /* If we JUST learned about having an outgoing response, that's a reason to try sending data */
-    if (has_outgoing_response && !stream->thread_data.has_outgoing_response) {
-        stream->thread_data.has_outgoing_response = true;
-        new_outgoing_data = true;
-    }
 
     if (new_outgoing_data && (api_state == AWS_H1_STREAM_API_STATE_ACTIVE)) {
         aws_h1_connection_try_write_outgoing_stream(connection);
@@ -413,7 +418,7 @@ struct aws_h1_stream *aws_h1_stream_new_request(
 
     /* Validate request and cache info that the encoder will eventually need */
     if (aws_h1_encoder_message_init_from_request(
-            &stream->encoder_message,
+            &stream->thread_data.encoder_message,
             client_connection->alloc,
             options->request,
             &stream->thread_data.pending_chunk_list)) {
@@ -422,11 +427,11 @@ struct aws_h1_stream *aws_h1_stream_new_request(
 
     /* RFC-7230 Section 6.3: The "close" connection option is used to signal
      * that a connection will not persist after the current request/response*/
-    if (stream->encoder_message.has_connection_close_header) {
-        stream->is_final_stream = true;
+    if (stream->thread_data.encoder_message.has_connection_close_header) {
+        stream->thread_data.is_final_stream = true;
     }
 
-    stream->synced_data.using_chunked_encoding = stream->encoder_message.has_chunked_encoding_header;
+    stream->synced_data.using_chunked_encoding = stream->thread_data.encoder_message.has_chunked_encoding_header;
 
     return stream;
 
@@ -493,16 +498,15 @@ int aws_h1_stream_send_response(struct aws_h1_stream *stream, struct aws_http_me
             error_code = AWS_ERROR_INVALID_STATE;
         } else {
             stream->synced_data.has_outgoing_response = true;
-            stream->encoder_message = encoder_message;
+            stream->synced_data.pending_outgoing_response = encoder_message;
             if (encoder_message.has_connection_close_header) {
                 /* This will be the last stream connection will process, new streams will be rejected */
-                stream->is_final_stream = true;
 
                 /* Note: We're touching the connection's synced_data, which is OK
                  * because an h1_connection and all its h1_streams share a single lock. */
                 connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
             }
-            stream->synced_data.using_chunked_encoding = stream->encoder_message.has_chunked_encoding_header;
+            stream->synced_data.using_chunked_encoding = encoder_message.has_chunked_encoding_header;
 
             should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
             stream->synced_data.is_cross_thread_work_task_scheduled = true;

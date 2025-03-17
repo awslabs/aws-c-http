@@ -637,7 +637,7 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     }
 
     if (error_code != AWS_ERROR_SUCCESS) {
-        if (stream->base.client_data && stream->is_incoming_message_done) {
+        if (stream->base.client_data && stream->thread_data.is_incoming_message_done) {
             /* As a request that finished receiving the response, we ignore error and
              * consider it finished successfully */
             AWS_LOGF_DEBUG(
@@ -649,7 +649,7 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
                 aws_error_name(error_code));
             error_code = AWS_ERROR_SUCCESS;
         }
-        if (stream->base.server_data && stream->is_outgoing_message_done) {
+        if (stream->base.server_data && stream->thread_data.is_outgoing_message_done) {
             /* As a server finished sending the response, but still failed with the request was not finished receiving.
              * We ignore error and consider it finished successfully */
             AWS_LOGF_DEBUG(
@@ -693,7 +693,7 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
 
     /* If connection must shut down, do it BEFORE invoking stream-complete callback.
      * That way, if aws_http_connection_is_open() is called from stream-complete callback, it returns false. */
-    if (stream->is_final_stream) {
+    if (stream->thread_data.is_final_stream) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Closing connection due to completion of final stream.",
@@ -845,12 +845,12 @@ static void s_set_outgoing_message_done(struct aws_h1_stream *stream) {
     struct aws_channel *channel = aws_http_connection_get_channel(connection);
     AWS_ASSERT(aws_channel_thread_is_callers_thread(channel));
 
-    if (stream->is_outgoing_message_done) {
+    if (stream->thread_data.is_outgoing_message_done) {
         /* Already did the job */
         return;
     }
 
-    stream->is_outgoing_message_done = true;
+    stream->thread_data.is_outgoing_message_done = true;
     AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == -1);
     aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_end_timestamp_ns);
     AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns != -1);
@@ -904,7 +904,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
 
         /* RFC-7230 section 6.6: Tear-down.
          * If this was the final stream, don't allows any further streams to be sent */
-        if (current->is_final_stream) {
+        if (current->thread_data.is_final_stream) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION,
                 "id=%p: Done sending final stream, no further streams will be sent.",
@@ -919,7 +919,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
         }
 
         /* If it's also done receiving data, then it's complete! */
-        if (current->is_incoming_message_done) {
+        if (current->thread_data.is_incoming_message_done) {
             /* Only 1st stream in list could finish receiving before it finished sending */
             AWS_ASSERT(&current->node == aws_linked_list_begin(&connection->thread_data.stream_list));
 
@@ -942,7 +942,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
             struct aws_h1_stream *stream = AWS_CONTAINER_OF(node, struct aws_h1_stream, node);
 
             /* If we already sent this stream's data, keep looking... */
-            if (stream->is_outgoing_message_done) {
+            if (stream->thread_data.is_outgoing_message_done) {
                 continue;
             }
 
@@ -975,7 +975,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
             aws_high_res_clock_get_ticks((uint64_t *)&current->base.metrics.send_start_timestamp_ns);
 
             err = aws_h1_encoder_start_message(
-                &connection->thread_data.encoder, &current->encoder_message, &current->base);
+                &connection->thread_data.encoder, &current->thread_data.encoder_message, &current->base);
             (void)err;
             AWS_ASSERT(connection->thread_data.encoder.state == AWS_H1_ENCODER_STATE_INIT);
             AWS_ASSERT(!err);
@@ -1177,7 +1177,7 @@ static int s_decoder_on_request(
         AWS_BYTE_CURSOR_PRI(*uri));
 
     /* Copy strings to internal buffer */
-    struct aws_byte_buf *storage_buf = &incoming_stream->incoming_storage_buf;
+    struct aws_byte_buf *storage_buf = &incoming_stream->thread_data.incoming_storage_buf;
     AWS_ASSERT(storage_buf->capacity == 0);
 
     size_t storage_size = 0;
@@ -1261,7 +1261,7 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
                 "id=%p: Received 'Connection: close' header. This will be the final stream on this connection.",
                 (void *)&incoming_stream->base);
 
-            incoming_stream->is_final_stream = true;
+            incoming_stream->thread_data.is_final_stream = true;
             { /* BEGIN CRITICAL SECTION */
                 aws_h1_connection_lock_synced_data(connection);
                 connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
@@ -1278,7 +1278,7 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
                  * Mark the stream's outgoing message as complete,
                  * so that we stop sending, and stop waiting for it to finish sending.
                  **/
-                if (!incoming_stream->is_outgoing_message_done) {
+                if (!incoming_stream->thread_data.is_outgoing_message_done) {
                     AWS_LOGF_DEBUG(
                         AWS_LS_HTTP_STREAM,
                         "id=%p: Received 'Connection: close' header, no more request data will be sent.",
@@ -1323,7 +1323,7 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
 
 static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
     /* Bail out if we've already done this */
-    if (incoming_stream->is_incoming_head_done) {
+    if (incoming_stream->thread_data.is_incoming_head_done) {
         return AWS_OP_SUCCESS;
     }
 
@@ -1335,7 +1335,7 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
 
     if (header_block == AWS_HTTP_HEADER_BLOCK_MAIN) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Main header block done.", (void *)&incoming_stream->base);
-        incoming_stream->is_incoming_head_done = true;
+        incoming_stream->thread_data.is_incoming_head_done = true;
 
     } else if (header_block == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Informational header block done.", (void *)&incoming_stream->base);
@@ -1443,7 +1443,7 @@ static int s_decoder_on_done(void *user_data) {
     }
 
     /* Otherwise the incoming stream is finished decoding and we will update it if needed */
-    incoming_stream->is_incoming_message_done = true;
+    incoming_stream->thread_data.is_incoming_message_done = true;
     aws_high_res_clock_get_ticks((uint64_t *)&incoming_stream->base.metrics.receive_end_timestamp_ns);
     AWS_ASSERT(incoming_stream->base.metrics.receive_start_timestamp_ns != -1);
     AWS_ASSERT(
@@ -1454,7 +1454,7 @@ static int s_decoder_on_done(void *user_data) {
 
     /* RFC-7230 section 6.6
      * After reading the final message, the connection must not read any more */
-    if (incoming_stream->is_final_stream) {
+    if (incoming_stream->thread_data.is_final_stream) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Done reading final stream, no further streams will be read.",
@@ -1479,13 +1479,13 @@ static int s_decoder_on_done(void *user_data) {
                 return AWS_OP_ERR;
             }
         }
-        if (incoming_stream->is_outgoing_message_done) {
+        if (incoming_stream->thread_data.is_outgoing_message_done) {
             AWS_ASSERT(&incoming_stream->node == aws_linked_list_begin(&connection->thread_data.stream_list));
             s_stream_complete(incoming_stream, AWS_ERROR_SUCCESS);
         }
         s_set_incoming_stream_ptr(connection, NULL);
 
-    } else if (incoming_stream->is_outgoing_message_done) {
+    } else if (incoming_stream->thread_data.is_outgoing_message_done) {
         /* Client side */
         AWS_ASSERT(&incoming_stream->node == aws_linked_list_begin(&connection->thread_data.stream_list));
 
