@@ -565,7 +565,7 @@ error:
 }
 
 /* clean the server memory up */
-static void s_http_server_clean_up(struct aws_http_server *server, bool cleanup_mutex) {
+static void s_http_server_clean_up(struct aws_http_server *server) {
     if (!server) {
         return;
     }
@@ -622,7 +622,7 @@ static void s_server_bootstrap_on_server_listener_destroy(struct aws_server_boot
     (void)bootstrap;
     AWS_ASSERT(user_data);
     struct aws_http_server *server = user_data;
-    s_http_server_clean_up(server, true /*cleanup_mutex*/);
+    s_http_server_clean_up(server);
 }
 
 /* the server listener has finished setup. We released the socket if error_code is not 0. */
@@ -643,7 +643,6 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     aws_http_fatal_assert_library_initialized();
 
     struct aws_http_server *server = NULL;
-    bool cleanup_mutex = false;
 
     if (!options || options->self_size == 0 || !options->allocator || !options->bootstrap || !options->socket_options ||
         !options->on_incoming_connection || !options->endpoint) {
@@ -675,7 +674,6 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             AWS_LS_HTTP_SERVER, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
         goto server_error;
     }
-    cleanup_mutex = true;
     err = aws_hash_table_init(
         &server->synced_data.channel_to_connection_map, server->alloc, 16, aws_hash_ptr, aws_ptr_eq, NULL, NULL);
     if (err) {
@@ -745,7 +743,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     return server;
 
 server_error:
-    s_http_server_clean_up(server, cleanup_mutex);
+    s_http_server_clean_up(server);
     return NULL;
 }
 
