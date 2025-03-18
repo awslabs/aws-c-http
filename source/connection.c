@@ -729,6 +729,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             listen_error,
             aws_error_name(listen_error));
 
+        aws_raise_error(listen_error);
         goto server_error;
     }
 
