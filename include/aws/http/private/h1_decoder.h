@@ -56,7 +56,6 @@ struct aws_h1_decoder_vtable {
  */
 struct aws_h1_decoder_params {
     struct aws_allocator *alloc;
-    size_t scratch_space_initial_size;
     /* Set false if decoding responses */
     bool is_decoding_requests;
     void *user_data;
@@ -64,6 +63,8 @@ struct aws_h1_decoder_params {
 };
 
 struct aws_h1_decoder;
+
+enum { AWS_H1_DECODER_INITIAL_SCRATCH_SIZE = 256 };
 
 AWS_EXTERN_C_BEGIN
 
@@ -84,6 +85,9 @@ AWS_HTTP_API int aws_h1_decoder_get_encoding_flags(const struct aws_h1_decoder *
 AWS_HTTP_API uint64_t aws_h1_decoder_get_content_length(const struct aws_h1_decoder *decoder);
 AWS_HTTP_API bool aws_h1_decoder_get_body_headers_ignored(const struct aws_h1_decoder *decoder);
 AWS_HTTP_API enum aws_http_header_block aws_h1_decoder_get_header_block(const struct aws_h1_decoder *decoder);
+
+/* testing-only: get current capacity of scratch space */
+AWS_HTTP_API size_t aws_h1_decoder_get_scratch_capacity(const struct aws_h1_decoder *decoder);
 
 AWS_EXTERN_C_END
 

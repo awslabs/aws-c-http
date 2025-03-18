@@ -1582,7 +1582,6 @@ static struct aws_h1_connection *s_connection_new(
         .is_decoding_requests = server,
         .user_data = connection,
         .vtable = s_h1_decoder_vtable,
-        .scratch_space_initial_size = DECODER_INITIAL_SCRATCH_SIZE,
     };
     connection->thread_data.incoming_stream_decoder = aws_h1_decoder_new(&options);
     if (!connection->thread_data.incoming_stream_decoder) {

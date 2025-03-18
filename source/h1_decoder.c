@@ -699,7 +699,7 @@ struct aws_h1_decoder *aws_h1_decoder_new(struct aws_h1_decoder_params *params) 
     decoder->vtable = params->vtable;
     decoder->is_decoding_requests = params->is_decoding_requests;
 
-    aws_byte_buf_init(&decoder->scratch_space, params->alloc, params->scratch_space_initial_size);
+    aws_byte_buf_init(&decoder->scratch_space, params->alloc, AWS_H1_DECODER_INITIAL_SCRATCH_SIZE);
 
     s_reset_state(decoder);
 
@@ -758,4 +758,8 @@ void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, const void *i
 
 void aws_h1_decoder_set_body_headers_ignored(struct aws_h1_decoder *decoder, bool body_headers_ignored) {
     decoder->body_headers_ignored = body_headers_ignored;
+}
+
+size_t aws_h1_decoder_get_scratch_capacity(const struct aws_h1_decoder *decoder) {
+    return decoder->scratch_space.capacity;
 }

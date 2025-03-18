@@ -121,13 +121,11 @@ static void s_test_clean_up(void) {
 
 static void s_common_decoder_setup(
     struct aws_allocator *allocator,
-    size_t scratch_space_size,
     struct aws_h1_decoder_params *params,
     bool type,
     void *user_data) {
 
     params->alloc = allocator;
-    params->scratch_space_initial_size = scratch_space_size;
     params->is_decoding_requests = type;
     params->user_data = user_data;
     params->vtable.on_header = s_on_header_stub;
@@ -147,7 +145,7 @@ static int s_test_h1_decoder_get_request(struct aws_allocator *allocator, void *
     struct aws_byte_cursor msg = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HEAD / HTTP/1.1\r\n\r\n");
 
     struct aws_h1_decoder_params params;
-    s_common_decoder_setup(allocator, 1024, &params, s_request, &request_data);
+    s_common_decoder_setup(allocator, &params, s_request, &request_data);
     params.vtable.on_request = s_on_request;
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
@@ -171,7 +169,7 @@ static int s_test_h1_decoder_request_bad_version(struct aws_allocator *allocator
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.0\r\n\r\n"); /* Note version is 1.0 */
 
     struct aws_h1_decoder_params params;
-    s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
+    s_common_decoder_setup(allocator, &params, s_request, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
     ASSERT_FAILS(aws_h1_decode(decoder, &msg));
@@ -191,7 +189,7 @@ static int s_test_h1_decoder_response_1_0(struct aws_allocator *allocator, void 
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.0 200 OK\r\n\r\n"); /* Note version is "1.0" */
 
     struct aws_h1_decoder_params params;
-    s_common_decoder_setup(allocator, 1024, &params, s_response, &code);
+    s_common_decoder_setup(allocator, &params, s_response, &code);
     params.vtable.on_response = s_on_response;
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
@@ -211,7 +209,7 @@ static int s_test_h1_decoder_response_unsupported_version(struct aws_allocator *
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.2 200 OK\r\n\r\n"); /* Note version is "1.0" */
 
     struct aws_h1_decoder_params params;
-    s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
+    s_common_decoder_setup(allocator, &params, s_response, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
     ASSERT_FAILS(aws_h1_decode(decoder, &msg));
@@ -229,7 +227,7 @@ static int s_test_h1_decoder_get_status_code(struct aws_allocator *allocator, vo
 
     struct aws_byte_cursor msg = s_typical_response;
     struct aws_h1_decoder_params params;
-    s_common_decoder_setup(allocator, 1024, &params, s_response, &code);
+    s_common_decoder_setup(allocator, &params, s_response, &code);
     params.vtable.on_response = s_on_response;
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
@@ -246,13 +244,49 @@ static int s_test_h1_decoder_overflow_scratch_space(struct aws_allocator *alloca
     (void)ctx;
     s_test_init(allocator);
 
-    struct aws_byte_cursor msg = s_typical_response;
     struct aws_h1_decoder_params params;
-    s_common_decoder_setup(allocator, 4, &params, s_response, NULL);
+    s_common_decoder_setup(allocator, &params, s_response, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
+    /*
+     * Create message with a header longer than scratch space
+     */
+    struct aws_byte_buf msg;
+    aws_byte_buf_init(&msg, allocator, AWS_H1_DECODER_INITIAL_SCRATCH_SIZE * 4);
 
+    struct aws_byte_cursor msg_start = aws_byte_cursor_from_c_str("HTTP/1.1 200 OK\r\n"
+                                                                  "Server: some-server\r\n"
+                                                                  "Content-Length: 11\r\n"
+                                                                  "Big-Header: ");
+    aws_byte_buf_append_dynamic(&msg, &msg_start);
+
+    for (size_t i = 0; i < (size_t)(AWS_H1_DECODER_INITIAL_SCRATCH_SIZE * 2.5); ++i) {
+        aws_byte_buf_append_byte_dynamic(&msg, 'a');
+    }
+
+    struct aws_byte_cursor msg_end = aws_byte_cursor_from_c_str("\r\n" /* end of Big-Header */
+                                                                "Normal-Header-After-Big: just regular stuff\r\n"
+                                                                "\r\n"
+                                                                "Hello noob.");
+    aws_byte_buf_append_dynamic(&msg, &msg_end);
+
+    /*
+     * Run decoder on buffer in small slices, so that scratch space must be used.
+     */
+    size_t slice_size = 10;
+    struct aws_byte_cursor msg_cursor = aws_byte_cursor_from_buf(&msg);
+    while (msg_cursor.len > 0) {
+        struct aws_byte_cursor msg_slice =
+            aws_byte_cursor_advance(&msg_cursor, aws_min_size(msg_cursor.len, slice_size));
+
+        ASSERT_SUCCESS(aws_h1_decode(decoder, &msg_slice));
+    }
+
+    ASSERT_TRUE(
+        aws_h1_decoder_get_scratch_capacity(decoder) > AWS_H1_DECODER_INITIAL_SCRATCH_SIZE,
+        "assert scratch space actually resized in this test");
+
+    aws_byte_buf_clean_up(&msg);
     aws_h1_decoder_destroy(decoder);
     s_test_clean_up();
     return AWS_OP_SUCCESS;
@@ -288,7 +322,7 @@ static int s_test_h1_decoder_receive_request_headers(struct aws_allocator *alloc
     struct aws_byte_cursor msg = s_typical_request;
     struct aws_h1_decoder_params params;
     struct s_header_params header_params;
-    s_common_decoder_setup(allocator, 1024, &params, s_request, &header_params);
+    s_common_decoder_setup(allocator, &params, s_request, &header_params);
 
     const char *header_names[] = {"Host", "Accept-Language"};
     header_params.index = 0;
@@ -314,7 +348,7 @@ static int s_test_h1_decoder_receive_response_headers(struct aws_allocator *allo
     struct aws_byte_cursor msg = s_typical_response;
     struct aws_h1_decoder_params params;
     struct s_header_params header_params;
-    s_common_decoder_setup(allocator, 1024, &params, s_response, &header_params);
+    s_common_decoder_setup(allocator, &params, s_response, &header_params);
 
     const char *header_names[] = {"Server", "Content-Length"};
     header_params.index = 0;
@@ -346,7 +380,7 @@ static int s_test_h1_decoder_get_transfer_encoding_flags(struct aws_allocator *a
                                                                        "\r\n"
                                                                        "Hello noob.");
     struct aws_h1_decoder_params params;
-    s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
+    s_common_decoder_setup(allocator, &params, s_response, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
     /* Not a valid HTTP1.1 message, but not the job of decoder to return error here. */
@@ -386,12 +420,11 @@ static int s_test_h1_decoder_body_unchunked(struct aws_allocator *allocator, voi
     struct aws_byte_cursor msg = s_typical_response;
     struct aws_h1_decoder_params params;
     struct s_body_params body_params;
-    s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
+    s_common_decoder_setup(allocator, &params, s_response, NULL);
 
     aws_array_list_init_dynamic(&body_params.body_data, allocator, 256, sizeof(uint8_t));
 
     params.alloc = allocator;
-    params.scratch_space_initial_size = 1024;
     params.vtable.on_header = s_on_header_stub;
     params.vtable.on_body = s_on_body;
     params.is_decoding_requests = false;
@@ -426,7 +459,7 @@ static int s_test_h1_decoder_body_chunked(struct aws_allocator *allocator, void 
 
     struct aws_h1_decoder_params params;
     struct s_body_params body_params;
-    s_common_decoder_setup(allocator, 1024, &params, s_request, &body_params);
+    s_common_decoder_setup(allocator, &params, s_request, &body_params);
 
     aws_array_list_init_dynamic(&body_params.body_data, allocator, 256, sizeof(uint8_t));
 
@@ -466,7 +499,7 @@ static int s_h1_decoder_trailers(struct aws_allocator *allocator, void *ctx) {
                                                                        "\r\n");
 
     struct aws_h1_decoder_params params;
-    s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
+    s_common_decoder_setup(allocator, &params, s_request, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
     ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
@@ -476,17 +509,14 @@ static int s_h1_decoder_trailers(struct aws_allocator *allocator, void *ctx) {
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_decoder_one_byte_at_a_time, s_h1_decoder_one_byte_at_a_time);
-static int s_h1_decoder_one_byte_at_a_time(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+static int s_test_one_byte_at_a_time(struct aws_allocator *allocator, struct aws_byte_cursor msg, bool is_request) {
     s_test_init(allocator);
-    struct aws_byte_cursor msg = s_typical_request;
 
     struct aws_h1_decoder_params params;
-    s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
+    s_common_decoder_setup(allocator, &params, is_request, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    for (size_t i = 0; i < msg.len; ++i) {
+    while (msg.len > 0) {
         struct aws_byte_cursor chunk = aws_byte_cursor_advance(&msg, 1);
         ASSERT_SUCCESS(aws_h1_decode(decoder, &chunk));
     }
@@ -494,6 +524,18 @@ static int s_h1_decoder_one_byte_at_a_time(struct aws_allocator *allocator, void
     aws_h1_decoder_destroy(decoder);
     s_test_clean_up();
     return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(h1_decoder_request_one_byte_at_a_time, s_h1_decoder_request_one_byte_at_a_time);
+static int s_h1_decoder_request_one_byte_at_a_time(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    return s_test_one_byte_at_a_time(allocator, s_typical_request, s_request);
+}
+
+AWS_TEST_CASE(h1_decoder_response_one_byte_at_a_time, s_h1_decoder_response_one_byte_at_a_time);
+static int s_h1_decoder_response_one_byte_at_a_time(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    return s_test_one_byte_at_a_time(allocator, s_typical_response, s_response);
 }
 
 static int s_rand(int lo, int hi) {
@@ -563,7 +605,7 @@ static int s_h1_decoder_messages_at_random_intervals(struct aws_allocator *alloc
         struct aws_byte_cursor request = requests[iter];
 
         struct aws_h1_decoder_params params;
-        s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
+        s_common_decoder_setup(allocator, &params, s_request, NULL);
         struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
         /* Decode message at randomized input buffer sizes from 0 to 10 bytes. */
@@ -741,7 +783,7 @@ static int s_h1_decoder_bad_requests_and_assert_failure(struct aws_allocator *al
         struct aws_byte_cursor request = requests[iter];
 
         struct aws_h1_decoder_params params;
-        s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
+        s_common_decoder_setup(allocator, &params, s_request, NULL);
         struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
         ASSERT_FAILS(
@@ -784,7 +826,7 @@ static int s_h1_decoder_bad_responses_and_assert_failure(struct aws_allocator *a
         struct aws_byte_cursor response = responses[iter];
 
         struct aws_h1_decoder_params params;
-        s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
+        s_common_decoder_setup(allocator, &params, s_response, NULL);
         struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
         ASSERT_FAILS(aws_h1_decode(decoder, &response));
@@ -807,7 +849,7 @@ static int s_test_h1_decoder_extraneous_buffer_data_ensure_not_processed(struct 
                                               "Wow look here. That's a lot of extra random stuff!");
 
     struct aws_h1_decoder_params params;
-    s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
+    s_common_decoder_setup(allocator, &params, s_request, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
     ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
@@ -840,7 +882,7 @@ static int s_test_h1_decoder_ignore_chunk_extensions(struct aws_allocator *alloc
                                               "\r\n");
 
     struct aws_h1_decoder_params params;
-    s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
+    s_common_decoder_setup(allocator, &params, s_request, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
     ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
