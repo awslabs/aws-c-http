@@ -1164,7 +1164,6 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
 
     struct aws_http_connection_manager *manager = work->manager;
 
-    int representative_error = 0;
     size_t new_connection_failures = 0;
 
     /*
@@ -1218,9 +1217,9 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
     for (size_t i = 0; i < work->new_connections; ++i) {
         if (s_aws_http_connection_manager_new_connection(manager)) {
             ++new_connection_failures;
-            representative_error = aws_last_error();
+            int error = aws_last_error();
             if (push_errors) {
-                AWS_FATAL_ASSERT(aws_array_list_push_back(&errors, &representative_error) == AWS_OP_SUCCESS);
+                AWS_FATAL_ASSERT(aws_array_list_push_back(&errors, &error) == AWS_OP_SUCCESS);
             }
         }
     }
@@ -1235,28 +1234,15 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
         AWS_FATAL_ASSERT(manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] >= new_connection_failures);
         s_connection_manager_internal_ref_decrease(manager, AWS_HCMCT_PENDING_CONNECTIONS, new_connection_failures);
 
-        /*
-         * Rather than failing one acquisition for each connection failure, if there's at least one
-         * connection failure, we instead fail all excess acquisitions, since there's no pending
-         * connect that will necessarily resolve them.
-         *
-         * Try to correspond an error with the acquisition failure, but as a fallback just use the
-         * representative error.
-         */
-        size_t i = 0;
-        while (manager->pending_acquisition_count > manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS]) {
-            int error = representative_error;
-            if (i < aws_array_list_length(&errors)) {
-                aws_array_list_get_at(&errors, &error, i);
-            }
-
+        for (size_t i = 0; i < new_connection_failures; i++) {
+            int error;
+            aws_array_list_get_at(&errors, &error, i);
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: Failing excess connection acquisition with error code %d",
+                "id=%p: Failing connection acquisition with error code %d",
                 (void *)manager,
                 (int)error);
             s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error, &work->completions);
-            ++i;
         }
 
         aws_mutex_unlock(&manager->lock);
@@ -1270,7 +1256,19 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
     aws_array_list_clean_up(&errors);
 
     /*
-     * Step 5 - Clean up work.  Do this here rather than at the end of every caller. Destroy the manager if necessary
+     * Step 5 - If some connection requests fail, execute transaction again in case there are pending acquisitions
+     */
+    if (new_connection_failures) {
+        struct aws_connection_management_transaction work2;
+        s_aws_connection_management_transaction_init(&work2, manager);
+        aws_mutex_lock(&manager->lock);
+        s_aws_http_connection_manager_build_transaction(&work2);
+        aws_mutex_unlock(&manager->lock);
+        s_aws_http_connection_manager_execute_transaction(&work2);
+    }
+
+    /*
+     * Step 6 - Clean up work.  Do this here rather than at the end of every caller. Destroy the manager if necessary
      */
     s_aws_connection_management_transaction_clean_up(work);
 }
@@ -1479,16 +1477,13 @@ static void s_cm_on_connection_ready_or_failed(
             work->connection_to_release = connection;
         }
     } else {
-        /* fail acquisition as one connection cannot be used any more */
-        while (manager->pending_acquisition_count >
-               manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] + manager->pending_settings_count) {
-            AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: Failing excess connection acquisition with error code %d",
-                (void *)manager,
-                (int)error_code);
-            s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &work->completions);
-        }
+        /* fail acquisition as connection acquire failed */
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "id=%p: Failing connection acquisition with error code %d",
+            (void *)manager,
+            (int)error_code);
+        s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &work->completions);
         /* Since the connection never being idle, we need to release the connection here. */
         if (connection) {
             work->connection_to_release = connection;
