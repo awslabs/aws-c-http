@@ -884,6 +884,7 @@ static void s_aws_http_connection_manager_connect_task(
     struct aws_task *task,
     void *user_data,
     enum aws_task_status status) {
+    (void)status;
     struct cm_tester *tester = &s_tester;
 
     struct connect_task_args *task_args = user_data;
