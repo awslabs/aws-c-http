@@ -1474,13 +1474,15 @@ static void s_cm_on_connection_ready_or_failed(
             work->connection_to_release = connection;
         }
     } else {
-        /* fail acquisition as connection acquire failed */
-        AWS_LOGF_DEBUG(
-            AWS_LS_HTTP_CONNECTION_MANAGER,
-            "id=%p: Failing connection acquisition with error code %d",
-            (void *)manager,
-            (int)error_code);
-        s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &work->completions);
+        if (manager->pending_acquisition_count > manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS]) {
+            /* fail acquisition as connection acquire failed */
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_CONNECTION_MANAGER,
+                "id=%p: Failing connection acquisition with error code %d",
+                (void *)manager,
+                (int)error_code);
+            s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &work->completions);
+        }
         /* Since the connection never being idle, we need to release the connection here. */
         if (connection) {
             work->connection_to_release = connection;
