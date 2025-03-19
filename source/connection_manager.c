@@ -1225,6 +1225,10 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
     }
 
     if (new_connection_failures > 0) {
+        /* If there are pending acquisitions, schedule work again to try acquiring them */
+        struct aws_connection_management_transaction updated_work;
+        s_aws_connection_management_transaction_init(&updated_work, manager);
+        bool has_pending_acquires = false;
         /*
          * We failed and aren't going to receive a callback, but the current state assumes we will receive
          * a callback.  So we need to re-lock and update the state ourselves.
@@ -1233,7 +1237,8 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
 
         AWS_FATAL_ASSERT(manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] >= new_connection_failures);
         s_connection_manager_internal_ref_decrease(manager, AWS_HCMCT_PENDING_CONNECTIONS, new_connection_failures);
-
+        has_pending_acquires =
+            manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] < manager->pending_acquisition_count;
         for (size_t i = 0; i < new_connection_failures; i++) {
             int error;
             aws_array_list_get_at(&errors, &error, i);
@@ -1244,8 +1249,13 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
                 (int)error);
             s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error, &work->completions);
         }
-
+        if (has_pending_acquires) {
+            s_aws_http_connection_manager_build_transaction(&updated_work);
+        }
         aws_mutex_unlock(&manager->lock);
+        if (has_pending_acquires) {
+            s_aws_http_connection_manager_execute_transaction(&updated_work);
+        }
     }
 
     /*
@@ -1254,21 +1264,8 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
     s_aws_http_connection_manager_complete_acquisitions(&work->completions, work->allocator);
 
     aws_array_list_clean_up(&errors);
-
     /*
-     * Step 5 - If some connection requests fail, execute transaction again in case there are pending acquisitions
-     */
-    if (new_connection_failures) {
-        struct aws_connection_management_transaction work2;
-        s_aws_connection_management_transaction_init(&work2, manager);
-        aws_mutex_lock(&manager->lock);
-        s_aws_http_connection_manager_build_transaction(&work2);
-        aws_mutex_unlock(&manager->lock);
-        s_aws_http_connection_manager_execute_transaction(&work2);
-    }
-
-    /*
-     * Step 6 - Clean up work.  Do this here rather than at the end of every caller. Destroy the manager if necessary
+     * Step 5 - Clean up work.  Do this here rather than at the end of every caller. Destroy the manager if necessary
      */
     s_aws_connection_management_transaction_clean_up(work);
 }
