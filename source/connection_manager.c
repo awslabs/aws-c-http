@@ -1237,8 +1237,7 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
 
         AWS_FATAL_ASSERT(manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] >= new_connection_failures);
         s_connection_manager_internal_ref_decrease(manager, AWS_HCMCT_PENDING_CONNECTIONS, new_connection_failures);
-        has_pending_acquires =
-            manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] < manager->pending_acquisition_count;
+
         for (size_t i = 0; i < new_connection_failures &&
                            manager->pending_acquisition_count > manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS];
              i++) {
@@ -1251,6 +1250,8 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
                 (int)error);
             s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error, &work->completions);
         }
+        has_pending_acquires =
+            manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] < manager->pending_acquisition_count;
         if (has_pending_acquires) {
             s_aws_http_connection_manager_build_transaction(&updated_work);
         }
