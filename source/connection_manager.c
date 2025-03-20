@@ -1258,6 +1258,8 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
         aws_mutex_unlock(&manager->lock);
         if (has_pending_acquires) {
             s_aws_http_connection_manager_execute_transaction(&updated_work);
+        } else {
+            s_aws_connection_management_transaction_clean_up(&updated_work);
         }
     }
 
