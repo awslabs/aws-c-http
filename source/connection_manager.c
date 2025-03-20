@@ -1228,7 +1228,7 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
         /* If there are pending acquisitions, schedule work again to try acquiring them */
         struct aws_connection_management_transaction updated_work;
         s_aws_connection_management_transaction_init(&updated_work, manager);
-        bool has_pending_acquires = false;
+        bool has_pending_acquisitions = false;
         /*
          * We failed and aren't going to receive a callback, but the current state assumes we will receive
          * a callback.  So we need to re-lock and update the state ourselves.
@@ -1250,13 +1250,13 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
                 (int)error);
             s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error, &work->completions);
         }
-        has_pending_acquires =
+        has_pending_acquisitions =
             manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] < manager->pending_acquisition_count;
-        if (has_pending_acquires) {
+        if (has_pending_acquisitions) {
             s_aws_http_connection_manager_build_transaction(&updated_work);
         }
         aws_mutex_unlock(&manager->lock);
-        if (has_pending_acquires) {
+        if (has_pending_acquisitions) {
             s_aws_http_connection_manager_execute_transaction(&updated_work);
         } else {
             s_aws_connection_management_transaction_clean_up(&updated_work);
