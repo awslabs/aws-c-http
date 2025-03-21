@@ -744,7 +744,7 @@ static int s_h1_decoder_bad_requests_and_assert_failure(struct aws_allocator *al
         s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
         struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-        ASSERT_FAILS(
+        ASSERTF_FAILS(
             aws_h1_decode(decoder, &request),
             "Entry [%zu] should have failed, but it passed:\n------\n" PRInSTR "\n------\n",
             iter,

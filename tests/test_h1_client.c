@@ -1115,7 +1115,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_waits_for_chunks) {
     /* write and pause, in a loop. This exercises the rescheduling path. */
     for (size_t i = 0; i < chunk_data.num_chunks; ++i) {
         testing_channel_drain_queued_tasks(&tester.testing_channel);
-        ASSERT_FALSE(
+        ASSERTF_FALSE(
             aws_task_scheduler_has_tasks(&tester.testing_channel.loop_impl->scheduler, NULL),
             "Everything should be paused when no chunks are pending");
 
@@ -1125,7 +1125,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_waits_for_chunks) {
         ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
 
         testing_channel_drain_queued_tasks(&tester.testing_channel);
-        ASSERT_FALSE(
+        ASSERTF_FALSE(
             aws_task_scheduler_has_tasks(&tester.testing_channel.loop_impl->scheduler, NULL),
             "Everything should be paused when no chunks are pending");
     }
