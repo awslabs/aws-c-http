@@ -734,6 +734,13 @@ static int s_h1_decoder_bad_requests_and_assert_failure(struct aws_allocator *al
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("G@T /\rindex.html HTTP/1.1\r\n"),
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("G@T /\tindex.html HTTP/1.1\r\n"),
 
+        /* Multiple Content-Length headers */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "Content-Length: 10\r\n"
+                                              "Content-Length: 20\r\n"
+                                              "\r\n"
+                                              "Body content here."),
+
         /* Go ahead and add more cases here. */
     };
 

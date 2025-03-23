@@ -161,11 +161,13 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         clock_fn = options->mock_table->aws_high_res_clock_get_ticks;
     }
 
-    struct aws_event_loop_group_options elg_options = {
-        .loop_count = 1,
-        .clock_override = clock_fn,
-    };
-    tester->event_loop_group = aws_event_loop_group_new(tester->allocator, &elg_options);
+    tester->event_loop_group = aws_event_loop_group_new(
+        tester->allocator,
+        clock_fn,
+        1,
+        NULL,  // new_loop_fn
+        NULL,  // new_loop_user_data
+        NULL); // shutdown_options
 
     struct aws_host_resolver_default_options resolver_options = {
         .el_group = tester->event_loop_group,

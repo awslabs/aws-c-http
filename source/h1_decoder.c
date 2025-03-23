@@ -411,6 +411,14 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
 
     switch (header.name) {
         case AWS_HTTP_HEADER_CONTENT_LENGTH:
+            // illegal to send multiple content-length headers
+            if (decoder->content_length) {
+                AWS_LOGF_ERROR(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Multiple incoming headers for content-length received. This is illegal.",
+                    decoder->logging_id);
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+            }
             if (decoder->transfer_encoding) {
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,
