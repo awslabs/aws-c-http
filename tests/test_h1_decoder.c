@@ -665,10 +665,27 @@ static int s_h1_decoder_bad_requests_and_assert_failure(struct aws_allocator *al
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
                                               "Content-Length:\r\n"),
 
-        /* Has both content-Length and transfer-encoding */
+        /* Has both content-length and transfer-encoding */
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
                                               "Content-Length: 999\r\n"
                                               "Transfer-Encoding: chunked\r\n"),
+
+        /* Has both transfer-encoding and content-length (but with transfer-encoding first this time) */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: chunked\r\n"
+                                              "Content-Length: 999\r\n"),
+
+        /* Multiple content-length headers */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "Content-Length: 10\r\n"
+                                              "Content-Length: 20\r\n"
+                                              "\r\n"),
+
+        /* Multiple content-length headers (with value 0, which is harder to detect) */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "Content-Length: 0\r\n"
+                                              "Content-Length: 0\r\n"
+                                              "\r\n"),
 
         /* Header is missing colon */
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
@@ -734,13 +751,6 @@ static int s_h1_decoder_bad_requests_and_assert_failure(struct aws_allocator *al
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("G@T /\rindex.html HTTP/1.1\r\n"),
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("G@T /\tindex.html HTTP/1.1\r\n"),
 
-        /* Multiple Content-Length headers */
-        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
-                                              "Content-Length: 10\r\n"
-                                              "Content-Length: 20\r\n"
-                                              "\r\n"
-                                              "Body content here."),
-
         /* Go ahead and add more cases here. */
     };
 
@@ -756,6 +766,7 @@ static int s_h1_decoder_bad_requests_and_assert_failure(struct aws_allocator *al
             "Entry [%zu] should have failed, but it passed:\n------\n" PRInSTR "\n------\n",
             iter,
             AWS_BYTE_CURSOR_PRI(requests[iter]));
+        ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, aws_last_error());
 
         aws_h1_decoder_destroy(decoder);
     }
