@@ -340,18 +340,13 @@ static int s_test_h1_decoder_get_transfer_encoding_flags(struct aws_allocator *a
     struct aws_byte_cursor msg = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.1 200 OK\r\n"
                                                                        "Server: some-server\r\n"
                                                                        "Transfer-Encoding: compress\r\n"
-                                                                       "Transfer-Encoding: gzip, ,deflate\r\n"
+                                                                       "Transfer-Encoding: gzip,deflate\r\n"
                                                                        "Transfer-Encoding: chunked\r\n"
-                                                                       "Transfer-Encoding:\r\n"
-                                                                       "\r\n"
-                                                                       "Hello noob.");
+                                                                       "\r\n");
     struct aws_h1_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    /* Not a valid HTTP1.1 message, but not the job of decoder to return error here. */
-    /* Instead, the user should know their buffer has been processed without returning any body data, and
-     * report the error in user-space. */
     ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
     int flags = aws_h1_decoder_get_encoding_flags(decoder);
     ASSERT_INT_EQUALS(
@@ -614,6 +609,17 @@ static int s_h1_decoder_bad_requests_and_assert_failure(struct aws_allocator *al
                                               "Transfer-Encoding: gzip\r\n"
                                               "\r\n"),
 
+        /* A sender MUST NOT apply chunked more than once to a message body */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: chunked, chunked\r\n"
+                                              "\r\n"),
+
+        /* A sender MUST NOT apply chunked more than once to a message body, p2 */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: chunked,\r\n"
+                                              "Transfer-Encoding: chunked\r\n"
+                                              "\r\n"),
+
         /* Invalid hex-int as chunk size. */
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
                                               "Transfer-Encoding: chunked\r\n"
@@ -651,6 +657,28 @@ static int s_h1_decoder_bad_requests_and_assert_failure(struct aws_allocator *al
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
                                               "Transfer-Encoding: shrinkydinky, chunked\r\n"),
 
+        /* Transfer coding cannot be blank (empty header value) */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: \r\n"
+                                              "Transfer-Encoding: chunked\r\n"),
+
+        /* Transfer coding cannot be blank (empty item in list) */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: gzip, ,chunked\r\n"),
+
+        /* Transfer coding cannot be blank (empty item at start of list) */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: ,chunked\r\n"),
+
+        /* Transfer coding cannot be blank (empty item at end of list) */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: chunked,\r\n"),
+
+        /* Transfer coding cannot be blank (empty header value) */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: \r\n"
+                                              "Transfer-Encoding: chunked\r\n"),
+
         /* My chunk size is too big */
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
                                               "Transfer-Encoding: chunked\r\n"
@@ -667,26 +695,19 @@ static int s_h1_decoder_bad_requests_and_assert_failure(struct aws_allocator *al
 
         /* Has both content-length and transfer-encoding */
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
-                                              "Content-Length: 999\r\n"
+                                              "Content-Length: 0\r\n"
                                               "Transfer-Encoding: chunked\r\n"),
 
         /* Has both transfer-encoding and content-length (but with transfer-encoding first this time) */
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
                                               "Transfer-Encoding: chunked\r\n"
-                                              "Content-Length: 999\r\n"),
+                                              "Content-Length: 0\r\n"),
 
         /* Multiple content-length headers */
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
-                                              "Content-Length: 10\r\n"
-                                              "Content-Length: 20\r\n"
-                                              "\r\n"),
-
-        /* Multiple content-length headers (with value 0, which is harder to detect) */
-        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
                                               "Content-Length: 0\r\n"
                                               "Content-Length: 0\r\n"
                                               "\r\n"),
-
         /* Header is missing colon */
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
                                               "Header-Missing-Colon yes it is\r\n"
