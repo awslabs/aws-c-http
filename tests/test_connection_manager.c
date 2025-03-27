@@ -819,7 +819,7 @@ AWS_TEST_CASE(
     connection_manager_max_pending_acquisitions_with_vended_connections,
     s_test_connection_manager_max_pending_acquisitions_with_vended_connections);
 
-static int s_aws_http_connection_manager_create_connection_sync_mock(
+static int s_aws_http_connection_manager_create_connection_validate(
     const struct aws_http_client_connection_options *options) {
     struct cm_tester *tester = &s_tester;
 
@@ -829,8 +829,6 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
                 [aws_atomic_load_int(&tester->next_connection_id) % tester->num_network_interface_names];
         ASSERT_TRUE(aws_byte_cursor_eq_c_str(&interface_name, options->socket_options->network_interface_name));
     }
-
-    size_t next_connection_id = aws_atomic_fetch_add(&tester->next_connection_id, 1);
 
     ASSERT_SUCCESS(aws_mutex_lock(&tester->lock));
     tester->release_connection_fn = options->on_shutdown;
@@ -847,7 +845,15 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
         ASSERT_UINT_EQUALS(options->proxy_options->connection_type, tester->verify_proxy_options->connection_type);
     }
 
+    return AWS_OP_SUCCESS;
+}
+static int s_aws_http_connection_manager_create_connection_sync_mock(
+    const struct aws_http_client_connection_options *options) {
+    s_aws_http_connection_manager_create_connection_validate(options);
+    struct cm_tester *tester = &s_tester;
+
     struct mock_connection *connection = NULL;
+    size_t next_connection_id = aws_atomic_fetch_add(&tester->next_connection_id, 1);
 
     if (next_connection_id < aws_array_list_length(&tester->mock_connections)) {
         aws_array_list_get_at(&tester->mock_connections, &connection, next_connection_id);
@@ -866,6 +872,63 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
     }
 
     return aws_raise_error(AWS_ERROR_HTTP_UNKNOWN);
+}
+
+struct connect_task_args {
+    void *user_data;
+    struct mock_connection *connection;
+    aws_http_on_client_connection_setup_fn *on_setup;
+};
+
+static void s_aws_http_connection_manager_connect_task(
+    struct aws_task *task,
+    void *user_data,
+    enum aws_task_status status) {
+    (void)status;
+    struct cm_tester *tester = &s_tester;
+
+    struct connect_task_args *task_args = user_data;
+    struct mock_connection *connection = task_args->connection;
+    if (connection) {
+        if (connection->result == AWS_NCRT_SUCCESS) {
+            task_args->on_setup((struct aws_http_connection *)connection, AWS_ERROR_SUCCESS, task_args->user_data);
+        } else if (connection->result == AWS_NCRT_ERROR_VIA_CALLBACK) {
+            task_args->on_setup(NULL, AWS_ERROR_HTTP_UNKNOWN, task_args->user_data);
+        } else {
+            AWS_FATAL_ASSERT(0 && "Unexpected connection->result");
+        }
+    }
+
+    aws_mem_release(tester->allocator, task);
+    aws_mem_release(tester->allocator, task_args);
+}
+
+static int s_aws_http_connection_manager_connect_async_mock(const struct aws_http_client_connection_options *options) {
+    s_aws_http_connection_manager_create_connection_validate(options);
+    struct cm_tester *tester = &s_tester;
+
+    struct mock_connection *connection = NULL;
+    size_t next_connection_id = aws_atomic_fetch_add(&tester->next_connection_id, 1);
+    if (next_connection_id < aws_array_list_length(&tester->mock_connections)) {
+        aws_array_list_get_at(&tester->mock_connections, &connection, next_connection_id);
+    }
+
+    if (connection->result == AWS_NCRT_ERROR_FROM_CREATE) {
+        return aws_raise_error(AWS_ERROR_HTTP_UNKNOWN);
+    }
+
+    struct aws_task *task = aws_mem_calloc(options->allocator, 1, sizeof(struct aws_task));
+    struct connect_task_args *task_args = aws_mem_calloc(options->allocator, 1, sizeof(struct connect_task_args));
+    task_args->connection = connection;
+    task_args->user_data = options->user_data;
+    task_args->on_setup = options->on_setup;
+    aws_task_init(task, s_aws_http_connection_manager_connect_task, task_args, "create_connection_task");
+
+    struct aws_event_loop *event_loop = aws_event_loop_group_get_next_loop(tester->event_loop_group);
+    uint64_t now;
+    ASSERT_SUCCESS(aws_event_loop_current_clock_time(event_loop, &now));
+    aws_event_loop_schedule_task_future(event_loop, task, now + 1000000000);
+    return AWS_OP_SUCCESS;
 }
 
 static void s_aws_http_connection_manager_release_connection_sync_mock(struct aws_http_connection *connection) {
@@ -911,6 +974,17 @@ static enum aws_http_version s_aws_http_connection_manager_connection_get_versio
 
 static struct aws_http_connection_manager_system_vtable s_synchronous_mocks = {
     .aws_http_client_connect = s_aws_http_connection_manager_create_connection_sync_mock,
+    .aws_http_connection_release = s_aws_http_connection_manager_release_connection_sync_mock,
+    .aws_http_connection_close = s_aws_http_connection_manager_close_connection_sync_mock,
+    .aws_http_connection_new_requests_allowed = s_aws_http_connection_manager_is_connection_available_sync_mock,
+    .aws_high_res_clock_get_ticks = aws_high_res_clock_get_ticks,
+    .aws_http_connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
+    .aws_channel_thread_is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
+    .aws_http_connection_get_version = s_aws_http_connection_manager_connection_get_version_sync_mock,
+};
+
+static struct aws_http_connection_manager_system_vtable s_async_connect_mock = {
+    .aws_http_client_connect = s_aws_http_connection_manager_connect_async_mock,
     .aws_http_connection_release = s_aws_http_connection_manager_release_connection_sync_mock,
     .aws_http_connection_close = s_aws_http_connection_manager_close_connection_sync_mock,
     .aws_http_connection_new_requests_allowed = s_aws_http_connection_manager_is_connection_available_sync_mock,
@@ -1054,6 +1128,68 @@ static int s_test_connection_manager_connect_callback_failure(struct aws_allocat
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(connection_manager_connect_callback_failure, s_test_connection_manager_connect_callback_failure);
+
+static int s_test_connection_manager_connect_callback_async_failure(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    int error_connections = 5;
+    int success_connections = 5;
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = error_connections,
+        .mock_table = &s_async_connect_mock,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_add_mock_connections(error_connections, AWS_NCRT_ERROR_VIA_CALLBACK, false);
+    s_add_mock_connections(success_connections, AWS_NCRT_SUCCESS, true);
+
+    s_acquire_connections(error_connections + success_connections);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(error_connections + success_connections));
+
+    ASSERT_UINT_EQUALS(s_tester.connection_errors, error_connections);
+    ASSERT_SUCCESS(s_release_connections(success_connections, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_connection_manager_connect_callback_async_failure,
+    s_test_connection_manager_connect_callback_async_failure);
+
+static int s_test_connection_manager_connect_callback_async_with_immediate_failure(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    int error_connections = 5;
+    int success_connections = 5;
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = error_connections + success_connections,
+        .mock_table = &s_async_connect_mock,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_add_mock_connections(success_connections, AWS_NCRT_SUCCESS, true);
+    s_add_mock_connections(error_connections, AWS_NCRT_ERROR_VIA_CALLBACK, false);
+
+    s_acquire_connections(error_connections + success_connections);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(error_connections + success_connections));
+
+    ASSERT_UINT_EQUALS(s_tester.connection_errors, error_connections);
+    ASSERT_SUCCESS(s_release_connections(success_connections, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_connection_manager_connect_callback_async_with_immediate_failure,
+    s_test_connection_manager_connect_callback_async_with_immediate_failure);
 
 static int s_test_connection_manager_connect_immediate_failure(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
