@@ -1238,9 +1238,7 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
         AWS_FATAL_ASSERT(manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] >= new_connection_failures);
         s_connection_manager_internal_ref_decrease(manager, AWS_HCMCT_PENDING_CONNECTIONS, new_connection_failures);
 
-        for (size_t i = 0; i < new_connection_failures &&
-                           manager->pending_acquisition_count > manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS];
-             i++) {
+        for (size_t i = 0; i < new_connection_failures && manager->pending_acquisition_count > 0; i++) {
             int error;
             aws_array_list_get_at(&errors, &error, i);
             AWS_LOGF_DEBUG(
@@ -1479,7 +1477,7 @@ static void s_cm_on_connection_ready_or_failed(
             work->connection_to_release = connection;
         }
     } else {
-        if (manager->pending_acquisition_count > manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS]) {
+        if (manager->pending_acquisition_count > 0) {
             /* fail acquisition as connection acquire failed */
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
