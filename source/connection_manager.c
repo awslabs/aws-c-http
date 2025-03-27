@@ -1208,7 +1208,9 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
             "id=%p: Requesting %zu new connections from http",
             (void *)manager,
             work->new_connections);
-        AWS_FATAL_ASSERT(aws_array_list_init_dynamic(&errors, work->allocator, work->new_connections, sizeof(int)) == AWS_OP_SUCCESS);
+        AWS_FATAL_ASSERT(
+            aws_array_list_init_dynamic(&errors, work->allocator, work->new_connections, sizeof(int)) ==
+            AWS_OP_SUCCESS);
     }
 
     for (size_t i = 0; i < work->new_connections; ++i) {
