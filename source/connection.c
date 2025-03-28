@@ -16,6 +16,7 @@
 #include <aws/common/string.h>
 #include <aws/http/request_response.h>
 #include <aws/io/channel_bootstrap.h>
+#include <aws/io/future.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
 #include <aws/io/socket_channel_handler.h>
@@ -58,6 +59,7 @@ struct aws_http_server {
     aws_http_server_on_incoming_connection_fn *on_incoming_connection;
     aws_http_server_on_destroy_fn *on_destroy_complete;
     struct aws_socket *socket;
+    struct aws_future_void *setup_future;
 
     /* Any thread may touch this data, but the lock must be held */
     struct {
@@ -576,6 +578,7 @@ static void s_http_server_clean_up(struct aws_http_server *server) {
     }
     aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
     aws_mutex_clean_up(&server->synced_data.lock);
+    aws_future_void_release(server->setup_future);
     aws_mem_release(server->alloc, server);
 }
 
@@ -621,6 +624,20 @@ static void s_server_bootstrap_on_server_listener_destroy(struct aws_server_boot
     s_http_server_clean_up(server);
 }
 
+/* the server listener has finished setup. We released the socket if error_code is not 0. */
+static void s_server_bootstrap_on_server_listener_setup(
+    struct aws_server_bootstrap *bootstrap,
+    int error_code,
+    void *user_data) {
+    (void)bootstrap;
+    struct aws_http_server *server = user_data;
+    if (error_code) {
+        aws_future_void_set_error(server->setup_future, error_code);
+    } else {
+        aws_future_void_set_result(server->setup_future);
+    }
+}
+
 struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options) {
     aws_http_fatal_assert_library_initialized();
 
@@ -654,7 +671,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     if (err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
-        goto mutex_error;
+        goto server_error;
     }
     err = aws_hash_table_init(
         &server->synced_data.channel_to_connection_map, server->alloc, 16, aws_hash_ptr, aws_ptr_eq, NULL, NULL);
@@ -664,13 +681,15 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             "static: Cannot create server, error %d (%s).",
             aws_last_error(),
             aws_error_name(aws_last_error()));
-        goto hash_table_error;
+        goto server_error;
     }
     /* Protect against callbacks firing before server->socket is set */
     s_server_lock_synced_data(server);
     if (options->tls_options) {
         server->is_using_tls = true;
     }
+
+    server->setup_future = aws_future_void_new(options->allocator);
 
     struct aws_server_socket_channel_bootstrap_options bootstrap_options = {
         .enable_read_back_pressure = options->manual_window_management,
@@ -680,23 +699,38 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
         .incoming_callback = s_server_bootstrap_on_accept_channel_setup,
         .shutdown_callback = s_server_bootstrap_on_accept_channel_shutdown,
         .destroy_callback = s_server_bootstrap_on_server_listener_destroy,
+        .setup_callback = s_server_bootstrap_on_server_listener_setup,
         .host_name = options->endpoint->address,
         .port = options->endpoint->port,
         .user_data = server,
     };
 
-    server->socket = aws_server_bootstrap_new_socket_listener(&bootstrap_options);
+    int listen_error = AWS_OP_SUCCESS;
 
+    /*
+     * WARNING & TODO!!!!
+     * aws_server_bootstrap_new_socket_listener has async callback, we would block here waiting for
+     * setup complete. aws-c-http library need to be updated with a proper async API.
+     */
+    server->socket = aws_server_bootstrap_new_socket_listener(&bootstrap_options);
+    // if server setup properly, waiting for setup callback
+    if (server->socket) {
+        aws_future_void_wait(server->setup_future, UINT64_MAX /*timeout*/);
+        listen_error = aws_future_void_get_error(server->setup_future);
+    } else {
+        listen_error = aws_last_error();
+    }
     s_server_unlock_synced_data(server);
 
-    if (!server->socket) {
+    if (listen_error) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
             "static: Failed creating new socket listener, error %d (%s). Cannot create server.",
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
+            listen_error,
+            aws_error_name(listen_error));
 
-        goto socket_error;
+        aws_raise_error(listen_error);
+        goto server_error;
     }
 
     AWS_LOGF_INFO(
@@ -708,12 +742,8 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
 
     return server;
 
-socket_error:
-    aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
-hash_table_error:
-    aws_mutex_clean_up(&server->synced_data.lock);
-mutex_error:
-    aws_mem_release(server->alloc, server);
+server_error:
+    s_http_server_clean_up(server);
     return NULL;
 }
 
