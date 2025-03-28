@@ -201,6 +201,7 @@ int client_stream_tester_init(
         .on_metrics = s_on_metrics,
         .on_complete = s_on_complete,
         .on_destroy = s_on_destroy,
+        .http2_use_manual_data_writes = options->http2_manual_write,
     };
     tester->stream = aws_http_connection_make_request(options->connection, &request_options);
     ASSERT_NOT_NULL(tester->stream);
