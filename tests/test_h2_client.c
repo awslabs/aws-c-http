@@ -5422,6 +5422,69 @@ TEST_CASE(h2_client_manual_data_write) {
     return s_tester_clean_up();
 }
 
+static void s_http_stream_write_complete_fn(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)stream;
+    int *ctx = (int *)user_data;
+    *ctx = error_code;
+}
+
+TEST_CASE(h2_client_manual_data_write_read_broken) {
+
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "POST"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct client_stream_tester stream_tester;
+
+    struct client_stream_tester_options options = {
+        .request = request,
+        .connection = s_tester.connection,
+        .http2_manual_write = true,
+    };
+    ASSERT_SUCCESS(client_stream_tester_init(&stream_tester, s_tester.alloc, &options));
+    struct aws_http_stream *stream = stream_tester.stream;
+    ASSERT_NOT_NULL(stream);
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    struct aws_input_stream *data_stream = aws_input_stream_new_tester(allocator, aws_byte_cursor_from_c_str("abcd"));
+    aws_input_stream_tester_set_reading_broken(data_stream, true);
+    int error_code = 0;
+    struct aws_http2_stream_write_data_options write = {
+        .data = data_stream,
+        .on_complete = s_http_stream_write_complete_fn,
+        .user_data = &error_code,
+    };
+    /* The write triggers the stream to complete with error, so the write failed as the stream completes. */
+    ASSERT_UINT_EQUALS(error_code, AWS_ERROR_HTTP_STREAM_HAS_COMPLETED);
+    ASSERT_SUCCESS(aws_http2_stream_write_data(stream, &write));
+    aws_input_stream_release(data_stream);
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(stream_tester.complete);
+    /* The stream complete will get the error code from the input stream read. */
+    ASSERT_UINT_EQUALS(stream_tester.on_complete_error_code, AWS_IO_STREAM_READ_FAILED);
+
+    aws_http_message_release(request);
+
+    /* close the connection */
+    aws_http_connection_close(s_tester.connection);
+    client_stream_tester_clean_up(&stream_tester);
+
+    /* clean up */
+    return s_tester_clean_up();
+}
+
 TEST_CASE(h2_client_manual_data_write_not_enabled) {
 
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
