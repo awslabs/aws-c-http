@@ -12,7 +12,7 @@
 
 #include <ctype.h>
 
-#define AWS_DEFINE_ERROR_INFO_HTTP(CODE, STR) [(CODE)-0x0800] = AWS_DEFINE_ERROR_INFO(CODE, STR, "aws-c-http")
+#define AWS_DEFINE_ERROR_INFO_HTTP(CODE, STR) [(CODE) - 0x0800] = AWS_DEFINE_ERROR_INFO(CODE, STR, "aws-c-http")
 
 /* clang-format off */
 static struct aws_error_info s_errors[] = {
@@ -148,6 +148,15 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED,
         "Manual write failed because manual writes are already completed."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT,
+        "Timed out waiting for first byte of HTTP response, after sending the full request."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUISITION_TIMEOUT,
+        "Connection Manager failed to acquire a connection within the defined timeout."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED,
+        "Max pending acquisitions reached"),
 };
 /* clang-format on */
 
@@ -537,7 +546,7 @@ void aws_http_library_clean_up(void) {
     aws_io_library_clean_up();
 }
 
-void aws_http_fatal_assert_library_initialized() {
+void aws_http_fatal_assert_library_initialized(void) {
     if (!s_library_initialized) {
         AWS_LOGF_FATAL(
             AWS_LS_HTTP_GENERAL,

@@ -514,15 +514,6 @@ static void s_on_signing_complete(struct aws_http_message *request, int error_co
         exit(1);
     }
 
-    size_t final_header_count = aws_http_message_get_header_count(app_ctx->request);
-
-    struct aws_http_header headers[20];
-    AWS_ASSERT(final_header_count <= AWS_ARRAY_SIZE(headers));
-    AWS_ZERO_ARRAY(headers);
-    for (size_t i = 0; i < final_header_count; ++i) {
-        aws_http_message_get_header(app_ctx->request, &headers[i], i);
-    }
-
     struct aws_http_make_request_options final_request = {
         .self_size = sizeof(final_request),
         .user_data = app_ctx,
@@ -611,7 +602,7 @@ int main(int argc, char **argv) {
     }
 
     bool use_tls = true;
-    uint16_t port = 443;
+    uint32_t port = 443;
 
     if (!app_ctx.uri.scheme.len && (app_ctx.uri.port == 80 || app_ctx.uri.port == 8080)) {
         use_tls = false;

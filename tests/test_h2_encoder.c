@@ -28,7 +28,8 @@ static int s_fixture_clean_up(struct aws_allocator *allocator, int setup_res, vo
 
 #define DEFINE_STATIC_HEADER(_key, _value, _behavior)                                                                  \
     {                                                                                                                  \
-        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_key), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_value),   \
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_key),                                                           \
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_value),                                                        \
         .compression = AWS_HTTP_HEADER_COMPRESSION_##_behavior,                                                        \
     }
 

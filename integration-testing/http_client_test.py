@@ -7,7 +7,7 @@ import urllib.request
 import unittest
 import os.path
 
-TIMEOUT = 100
+TIMEOUT = 300
 
 # Accepting multiple args so we can pass something like: python elasticurl.py
 elasticurl_cmd_prefix = sys.argv[1:]
@@ -82,12 +82,12 @@ class SimpleTests(unittest.TestCase):
         run_command(simple_get_args)
     def test_simple_get_h1(self):
         """make a simple GET request via HTTP/1.1 and make sure it succeeds"""
-        simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http1_1', 'http://httpbin.org/get']
+        simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http1_1', 'http://postman-echo.com/get']
         run_command(simple_get_args)
 
     def test_simple_post_h1(self):
         """make a simple POST request via HTTP/1.1 to make sure sending data succeeds"""
-        simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http1_1', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'http://httpbin.org/post']
+        simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http1_1', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'http://postman-echo.com/post']
         run_command(simple_post_args)
 
     def test_simple_download_h1(self):
@@ -100,12 +100,12 @@ class SimpleTests(unittest.TestCase):
 
     def test_simple_get_h2(self):
         """make a simple GET request via HTTP2 and make sure it succeeds"""
-        simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http2', 'https://httpbin.org/get']
+        simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http2', 'https://postman-echo.com/get']
         run_command(simple_get_args)
 
     def test_simple_post_h2(self):
         """make a simple POST request via HTTP2 to make sure sending data succeeds"""
-        simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http2', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'https://httpbin.org/post']
+        simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http2', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'https://postman-echo.com/post']
         run_command(simple_post_args)
 
     def test_simple_download_h2(self):

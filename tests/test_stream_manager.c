@@ -34,7 +34,10 @@
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
 #define DEFINE_HEADER(NAME, VALUE)                                                                                     \
-    { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
+    {                                                                                                                  \
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME),                                                           \
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE),                                                         \
+    }
 
 struct sm_tester_options {
     struct aws_allocator *alloc;
@@ -241,7 +244,7 @@ static int s_tester_init(struct sm_tester_options *options) {
     }
 
     bool use_tls = true;
-    uint16_t port = 443;
+    uint32_t port = 443;
     if (!s_tester.endpoint.scheme.len && (s_tester.endpoint.port == 80 || s_tester.endpoint.port == 3280)) {
         use_tls = false;
     } else {
@@ -497,7 +500,7 @@ static void s_sm_tester_on_stream_complete(struct aws_http_stream *stream, int e
             ++s_tester.stream_complete_errors;
             s_tester.stream_completed_error_code = aws_last_error();
         } else {
-            if (status == 200) {
+            if (status / 100 == 2) {
                 ++s_tester.stream_200_count;
             } else {
                 ++s_tester.stream_status_not_200_count;
@@ -692,9 +695,9 @@ static int s_sm_tester_offer_waiting_connections(void) {
 
 static struct aws_http_connection_manager_system_vtable s_mocks;
 
-static void s_override_cm_connect_function(aws_http_connection_manager_create_connection_fn *fn) {
+static void s_override_cm_connect_function(int (*fn)(const struct aws_http_client_connection_options *options)) {
     s_mocks = *g_aws_http_connection_manager_default_system_vtable_ptr;
-    s_mocks.create_connection = fn;
+    s_mocks.aws_http_client_connect = fn;
     s_tester.connection_manager = s_tester.stream_manager->connection_manager;
     aws_http_connection_manager_set_system_vtable(s_tester.connection_manager, &s_mocks);
 }
@@ -1229,7 +1232,7 @@ TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
 TEST_CASE(h2_sm_close_connection_on_server_error) {
     (void)ctx;
     /* server that will return 500 status code all the time. */
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://httpbin.org/status/500");
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://postman-echo.com/status/500");
     struct sm_tester_options options = {
         .max_connections = 1,
         .max_concurrent_streams_per_connection = 10,
@@ -1399,12 +1402,14 @@ static int s_sm_stream_acquiring_with_body(int num_streams) {
 TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
     (void)ctx;
     struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:3443/upload_test");
+    enum aws_log_level log_level = AWS_LOG_LEVEL_DEBUG;
     struct sm_tester_options options = {
         .max_connections = 100,
         .max_concurrent_streams_per_connection = 100,
         .connection_ping_period_ms = 100 * AWS_TIMESTAMP_MILLIS,
         .alloc = allocator,
         .uri_cursor = &uri_cursor,
+        .log_level = &log_level,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
     s_tester.length_sent = 2000;

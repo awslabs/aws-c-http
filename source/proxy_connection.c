@@ -39,7 +39,7 @@ AWS_STATIC_STRING_FROM_LITERAL(s_proxy_no_verify_peer_env_var, "AWS_PROXY_NO_VER
 #endif
 
 static struct aws_http_proxy_system_vtable s_default_vtable = {
-    .setup_client_tls = &aws_channel_setup_client_tls,
+    .aws_channel_setup_client_tls = &aws_channel_setup_client_tls,
 };
 
 static struct aws_http_proxy_system_vtable *s_vtable = &s_default_vtable;
@@ -466,7 +466,7 @@ static struct aws_http_message *s_build_h1_proxy_connect_request(struct aws_http
     }
 
     char port_str[20] = "\0";
-    snprintf(port_str, sizeof(port_str), "%d", (int)user_data->original_port);
+    snprintf(port_str, sizeof(port_str), "%u", user_data->original_port);
     struct aws_byte_cursor port_cursor = aws_byte_cursor_from_c_str(port_str);
     if (aws_byte_buf_append(&path_buffer, &port_cursor)) {
         goto on_error;
@@ -772,7 +772,7 @@ static void s_aws_http_on_stream_complete_tunnel_proxy(
             last_slot = last_slot->adj_right;
         }
 
-        if (s_vtable->setup_client_tls(last_slot, context->original_tls_options)) {
+        if (s_vtable->aws_channel_setup_client_tls(last_slot, context->original_tls_options)) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
                 "(%p) Proxy connection failed to start TLS negotiation with error %d(%s)",
@@ -1140,6 +1140,23 @@ static enum aws_http_proxy_connection_type s_determine_proxy_connection_type(
     }
 }
 
+static struct aws_string *s_get_proxy_environment_value(
+    struct aws_allocator *allocator,
+    const struct aws_string *env_name) {
+    struct aws_string *out_string = NULL;
+    if (aws_get_environment_value(allocator, env_name, &out_string) == AWS_OP_SUCCESS && out_string != NULL &&
+        out_string->len > 0) {
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_CONNECTION,
+            "%s environment found, %s",
+            aws_string_c_str(env_name),
+            aws_string_c_str(out_string));
+        return out_string;
+    }
+    aws_string_destroy(out_string);
+    return NULL;
+}
+
 static int s_proxy_uri_init_from_env_variable(
     struct aws_allocator *allocator,
     const struct aws_http_client_connection_options *options,
@@ -1148,25 +1165,19 @@ static int s_proxy_uri_init_from_env_variable(
     struct aws_string *proxy_uri_string = NULL;
     *found = false;
     if (options->tls_options) {
-        if (aws_get_environment_value(allocator, s_https_proxy_env_var_low, &proxy_uri_string) == AWS_OP_SUCCESS &&
-            proxy_uri_string != NULL) {
-            AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION, "https_proxy environment found");
-        } else if (
-            aws_get_environment_value(allocator, s_https_proxy_env_var, &proxy_uri_string) == AWS_OP_SUCCESS &&
-            proxy_uri_string != NULL) {
-            AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION, "HTTPS_PROXY environment found");
-        } else {
+        proxy_uri_string = s_get_proxy_environment_value(allocator, s_https_proxy_env_var_low);
+        if (proxy_uri_string == NULL) {
+            proxy_uri_string = s_get_proxy_environment_value(allocator, s_https_proxy_env_var);
+        }
+        if (proxy_uri_string == NULL) {
             return AWS_OP_SUCCESS;
         }
     } else {
-        if (aws_get_environment_value(allocator, s_http_proxy_env_var_low, &proxy_uri_string) == AWS_OP_SUCCESS &&
-            proxy_uri_string != NULL) {
-            AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION, "http_proxy environment found");
-        } else if (
-            aws_get_environment_value(allocator, s_http_proxy_env_var, &proxy_uri_string) == AWS_OP_SUCCESS &&
-            proxy_uri_string != NULL) {
-            AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION, "HTTP_PROXY environment found");
-        } else {
+        proxy_uri_string = s_get_proxy_environment_value(allocator, s_http_proxy_env_var_low);
+        if (proxy_uri_string == NULL) {
+            proxy_uri_string = s_get_proxy_environment_value(allocator, s_http_proxy_env_var);
+        }
+        if (proxy_uri_string == NULL) {
             return AWS_OP_SUCCESS;
         }
     }
@@ -1216,7 +1227,7 @@ static int s_setup_proxy_tls_env_variable(
             AWS_LS_HTTP_CONNECTION,
             "Failed making default TLS context because of BYO_CRYPTO, set up the tls_options for proxy_env_settings to "
             "make it work.");
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
 #else
         struct aws_tls_ctx *tls_ctx = NULL;
         struct aws_tls_ctx_options tls_ctx_options;

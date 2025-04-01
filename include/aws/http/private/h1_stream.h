@@ -40,23 +40,21 @@ struct aws_h1_stream {
      */
     struct aws_channel_task cross_thread_work_task;
 
-    /* Message (derived from outgoing request or response) to be submitted to encoder */
-    struct aws_h1_encoder_message encoder_message;
-
-    bool is_outgoing_message_done;
-
-    bool is_incoming_message_done;
-    bool is_incoming_head_done;
-
-    /* If true, this is the last stream the connection should process.
-     * See RFC-7230 Section 6: Connection Management. */
-    bool is_final_stream;
-
-    /* Buffer for incoming data that needs to stick around. */
-    struct aws_byte_buf incoming_storage_buf;
-
     struct {
-        /* TODO: move most other members in here */
+        /* Message (derived from outgoing request or response) to be submitted to encoder */
+        struct aws_h1_encoder_message encoder_message;
+
+        bool is_outgoing_message_done;
+
+        bool is_incoming_message_done;
+        bool is_incoming_head_done;
+
+        /* If true, this is the last stream the connection should process.
+         * See RFC-7230 Section 6: Connection Management. */
+        bool is_final_stream;
+
+        /* Buffer for incoming data that needs to stick around. */
+        struct aws_byte_buf incoming_storage_buf;
 
         /* List of `struct aws_h1_chunk`, used for chunked encoding.
          * Encoder completes/frees/pops front chunk when it's done sending. */
@@ -77,12 +75,16 @@ struct aws_h1_stream {
      * Sharing a lock is fine because it's rare for an HTTP/1 connection
      * to have more than one stream at a time. */
     struct {
+        /* Outgoing response on "request handler" stream which has been submitted by user,
+         * but hasn't yet moved to thread_data.encoder_message. */
+        struct aws_h1_encoder_message pending_outgoing_response;
+
         /* List of `struct aws_h1_chunk` which have been submitted by user,
-         * but haven't yet moved to encoder_message.pending_chunk_list where the encoder will find them. */
+         * but haven't yet moved to thread_data.encoder_message.pending_chunk_list where the encoder will find them. */
         struct aws_linked_list pending_chunk_list;
 
         /* trailing headers which have been submitted by user,
-         * but haven't yet moved to encoder_message where the encoder will find them. */
+         * but haven't yet moved to thread_data.encoder_message where the encoder will find them. */
         struct aws_h1_trailer *pending_trailer;
 
         enum aws_h1_stream_api_state api_state;
@@ -117,6 +119,7 @@ struct aws_h1_stream *aws_h1_stream_new_request(
 struct aws_h1_stream *aws_h1_stream_new_request_handler(const struct aws_http_request_handler_options *options);
 
 int aws_h1_stream_activate(struct aws_http_stream *stream);
+void aws_h1_stream_cancel(struct aws_http_stream *stream, int error_code);
 
 int aws_h1_stream_send_response(struct aws_h1_stream *stream, struct aws_http_message *response);
 

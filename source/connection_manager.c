@@ -43,22 +43,22 @@ struct aws_idle_connection {
  * System vtable to use under normal circumstances
  */
 static struct aws_http_connection_manager_system_vtable s_default_system_vtable = {
-    .create_connection = aws_http_client_connect,
-    .release_connection = aws_http_connection_release,
-    .close_connection = aws_http_connection_close,
-    .is_connection_available = aws_http_connection_new_requests_allowed,
-    .get_monotonic_time = aws_high_res_clock_get_ticks,
-    .is_callers_thread = aws_channel_thread_is_callers_thread,
-    .connection_get_channel = aws_http_connection_get_channel,
-    .connection_get_version = aws_http_connection_get_version,
+    .aws_http_client_connect = aws_http_client_connect,
+    .aws_http_connection_release = aws_http_connection_release,
+    .aws_http_connection_close = aws_http_connection_close,
+    .aws_http_connection_new_requests_allowed = aws_http_connection_new_requests_allowed,
+    .aws_high_res_clock_get_ticks = aws_high_res_clock_get_ticks,
+    .aws_channel_thread_is_callers_thread = aws_channel_thread_is_callers_thread,
+    .aws_http_connection_get_channel = aws_http_connection_get_channel,
+    .aws_http_connection_get_version = aws_http_connection_get_version,
 };
 
 const struct aws_http_connection_manager_system_vtable *g_aws_http_connection_manager_default_system_vtable_ptr =
     &s_default_system_vtable;
 
 bool aws_http_connection_manager_system_vtable_is_valid(const struct aws_http_connection_manager_system_vtable *table) {
-    return table->create_connection && table->close_connection && table->release_connection &&
-           table->is_connection_available;
+    return table->aws_http_client_connect && table->aws_http_connection_close && table->aws_http_connection_release &&
+           table->aws_http_connection_new_requests_allowed;
 }
 
 enum aws_http_connection_manager_state_type { AWS_HCMST_UNINITIALIZED, AWS_HCMST_READY, AWS_HCMST_SHUTTING_DOWN };
@@ -193,7 +193,10 @@ struct aws_http_connection_manager {
     struct aws_linked_list idle_connections;
 
     /*
-     * The set of all incomplete connection acquisition requests
+     * The set of all incomplete connection acquisition requests.
+     * This must be a FIFO list. When connections are requested by the user, they are added to the back. When we need to
+     * complete the acquisition, we pop from the front. In this way, the list is always sorted from the oldest (in terms
+     * of timeout timestamp) to the newest and we can cull it similar to idle_connections.
      */
     struct aws_linked_list pending_acquisitions;
 
@@ -236,7 +239,9 @@ struct aws_http_connection_manager {
     struct aws_string *host;
     struct proxy_env_var_settings proxy_ev_settings;
     struct aws_tls_connection_options *proxy_ev_tls_options;
-    uint16_t port;
+    uint32_t port;
+    uint64_t response_first_byte_timeout_ms;
+
     /*
      * HTTP/2 specific.
      */
@@ -286,12 +291,27 @@ struct aws_http_connection_manager {
      */
     uint64_t max_connection_idle_in_milliseconds;
 
+    uint64_t connection_acquisition_timeout_ms;
+
+    uint64_t max_pending_connection_acquisitions;
+
     /*
      * Task to cull idle connections.  This task is run periodically on the cull_event_loop if a non-zero
      * culling time interval is specified.
      */
     struct aws_task *cull_task;
     struct aws_event_loop *cull_event_loop;
+
+    /*
+     * An aws_array_list<struct aws_string *> of network interface names to distribute the connections using the
+     * round-robin algorithm. We picked round-robin because it is trivial to implement and good enough. We can later
+     * update to a more complex distribution algorithm if required.
+     */
+    struct aws_array_list network_interface_names;
+    /*
+     * Current index in the network_interface_names array_list.
+     */
+    size_t network_interface_names_index;
 };
 
 struct aws_http_connection_manager_snapshot {
@@ -381,6 +401,7 @@ struct aws_http_connection_acquisition {
     struct aws_http_connection *connection;
     int error_code;
     struct aws_channel_task acquisition_task;
+    uint64_t timeout_timestamp;
 };
 
 static void s_connection_acquisition_task(
@@ -433,13 +454,13 @@ static void s_aws_http_connection_manager_complete_acquisitions(
 
         if (pending_acquisition->error_code == AWS_OP_SUCCESS) {
 
-            struct aws_channel *channel =
-                pending_acquisition->manager->system_vtable->connection_get_channel(pending_acquisition->connection);
+            struct aws_channel *channel = pending_acquisition->manager->system_vtable->aws_http_connection_get_channel(
+                pending_acquisition->connection);
             AWS_PRECONDITION(channel);
 
             /* For some workloads, going ahead and moving the connection callback to the connection's thread is a
              * substantial performance improvement so let's do that */
-            if (!pending_acquisition->manager->system_vtable->is_callers_thread(channel)) {
+            if (!pending_acquisition->manager->system_vtable->aws_channel_thread_is_callers_thread(channel)) {
                 aws_channel_task_init(
                     &pending_acquisition->acquisition_task,
                     s_connection_acquisition_task,
@@ -703,6 +724,13 @@ static void s_aws_http_connection_manager_finish_destroy(struct aws_http_connect
         aws_http_proxy_config_destroy(manager->proxy_config);
     }
 
+    for (size_t i = 0; i < aws_array_list_length(&manager->network_interface_names); i++) {
+        struct aws_string *interface_name = NULL;
+        aws_array_list_get_at(&manager->network_interface_names, &interface_name, i);
+        aws_string_destroy(interface_name);
+    }
+    aws_array_list_clean_up(&manager->network_interface_names);
+
     /*
      * If this task exists then we are actually in the corresponding event loop running the final destruction task.
      * In that case, we've already cancelled this task and when you cancel, it runs synchronously.  So in that
@@ -740,26 +768,17 @@ static void s_final_destruction_task(struct aws_task *task, void *arg, enum aws_
 }
 
 static void s_cull_task(struct aws_task *task, void *arg, enum aws_task_status status);
-static void s_schedule_connection_culling(struct aws_http_connection_manager *manager) {
+
+/*
+ * Calculates the next timestamp the idle connections should be culled. Manager lock must be held somewhere in the call
+ * stack. Returns UINT64_MAX if max_connection_idle_in_milliseconds is not set.
+ */
+static uint64_t s_calculate_idle_connection_cull_task_time_synced(struct aws_http_connection_manager *manager) {
     if (manager->max_connection_idle_in_milliseconds == 0) {
-        return;
+        return UINT64_MAX;
     }
-
-    if (manager->cull_task == NULL) {
-        manager->cull_task = aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_task));
-        aws_task_init(manager->cull_task, s_cull_task, manager, "cull_idle_connections");
-        /* For the task to properly run and cancel, we need to keep manager alive */
-        aws_ref_count_acquire(&manager->internal_ref_count);
-    }
-
-    if (manager->cull_event_loop == NULL) {
-        manager->cull_event_loop = aws_event_loop_group_get_next_loop(manager->bootstrap->event_loop_group);
-    }
-    AWS_FATAL_ASSERT(manager->cull_event_loop != NULL);
-
     uint64_t cull_task_time = 0;
 
-    aws_mutex_lock(&manager->lock);
     const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections);
     struct aws_linked_list_node *oldest_node = aws_linked_list_begin(&manager->idle_connections);
     if (oldest_node != end) {
@@ -776,16 +795,73 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
          * culling interval from now.
          */
         uint64_t now = 0;
-        manager->system_vtable->get_monotonic_time(&now);
+        manager->system_vtable->aws_high_res_clock_get_ticks(&now);
         cull_task_time =
             now + aws_timestamp_convert(
                       manager->max_connection_idle_in_milliseconds, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
     }
+
+    return cull_task_time;
+}
+
+/*
+ * Calculates the next timestamp the pending acquisitions should be culled. Manager lock must be held somewhere in the
+ * call stack. Returns UINT64_MAX if connection_acquisition_timeout_ms is not set.
+ */
+static uint64_t s_calculate_pending_acquisition_cull_task_time_synced(struct aws_http_connection_manager *manager) {
+    if (manager->connection_acquisition_timeout_ms == 0) {
+        return UINT64_MAX;
+    }
+
+    uint64_t cull_task_time = 0;
+
+    const struct aws_linked_list_node *end = aws_linked_list_end(&manager->pending_acquisitions);
+    struct aws_linked_list_node *oldest_node = aws_linked_list_begin(&manager->pending_acquisitions);
+    if (oldest_node != end) {
+        /*
+         * front of the list has the closest cull time
+         */
+        struct aws_http_connection_acquisition *oldest_pending_acquire =
+            AWS_CONTAINER_OF(oldest_node, struct aws_http_connection_acquisition, node);
+        cull_task_time = oldest_pending_acquire->timeout_timestamp;
+    } else {
+        /*
+         * There are no acquisition in the list, so the absolute minimum anything could be culled is the full
+         * culling interval from now.
+         */
+        uint64_t now = 0;
+        manager->system_vtable->aws_high_res_clock_get_ticks(&now);
+        cull_task_time =
+            now + aws_timestamp_convert(
+                      manager->connection_acquisition_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
+    }
+    return cull_task_time;
+}
+
+static void s_schedule_culling(struct aws_http_connection_manager *manager) {
+    if (manager->max_connection_idle_in_milliseconds == 0 && manager->connection_acquisition_timeout_ms == 0) {
+        return;
+    }
+
+    if (manager->cull_task == NULL) {
+        manager->cull_task = aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_task));
+        aws_task_init(manager->cull_task, s_cull_task, manager, "cull_idle_connections");
+        /* For the task to properly run and cancel, we need to keep manager alive */
+        aws_ref_count_acquire(&manager->internal_ref_count);
+    }
+
+    if (manager->cull_event_loop == NULL) {
+        manager->cull_event_loop = aws_event_loop_group_get_next_loop(manager->bootstrap->event_loop_group);
+    }
+    AWS_FATAL_ASSERT(manager->cull_event_loop != NULL);
+
+    aws_mutex_lock(&manager->lock);
+    uint64_t idle_cull_time = s_calculate_idle_connection_cull_task_time_synced(manager);
+    uint64_t acquisition_cull_time = s_calculate_pending_acquisition_cull_task_time_synced(manager);
     aws_mutex_unlock(&manager->lock);
 
-    aws_event_loop_schedule_task_future(manager->cull_event_loop, manager->cull_task, cull_task_time);
-
-    return;
+    aws_event_loop_schedule_task_future(
+        manager->cull_event_loop, manager->cull_task, aws_min_u64(idle_cull_time, acquisition_cull_time));
 }
 
 struct aws_http_connection_manager *aws_http_connection_manager_new(
@@ -815,6 +891,15 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     if (options->tls_connection_options && options->http2_prior_knowledge) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - HTTP/2 prior knowledge cannot be set when TLS is used");
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    if (options->socket_options->network_interface_name[0] != '\0' && options->num_network_interface_names > 0) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "Invalid options - socket_options.network_interface_name and network_interface_names_array cannot be both "
+            "set.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }
@@ -873,6 +958,10 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->shutdown_complete_user_data = options->shutdown_complete_user_data;
     manager->enable_read_back_pressure = options->enable_read_back_pressure;
     manager->max_connection_idle_in_milliseconds = options->max_connection_idle_in_milliseconds;
+    manager->connection_acquisition_timeout_ms = options->connection_acquisition_timeout_ms;
+    manager->max_pending_connection_acquisitions = options->max_pending_connection_acquisitions;
+    manager->response_first_byte_timeout_ms = options->response_first_byte_timeout_ms;
+
     if (options->proxy_ev_settings) {
         manager->proxy_ev_settings = *options->proxy_ev_settings;
     }
@@ -896,8 +985,22 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->max_closed_streams = options->max_closed_streams;
     manager->http2_conn_manual_window_management = options->http2_conn_manual_window_management;
 
+    manager->network_interface_names_index = 0;
+    if (options->num_network_interface_names > 0) {
+        aws_array_list_init_dynamic(
+            &manager->network_interface_names,
+            allocator,
+            options->num_network_interface_names,
+            sizeof(struct aws_string *));
+        for (size_t i = 0; i < options->num_network_interface_names; i++) {
+            struct aws_byte_cursor interface_name = options->network_interface_names_array[i];
+            struct aws_string *interface_name_str = aws_string_new_from_cursor(allocator, &interface_name);
+            aws_array_list_push_back(&manager->network_interface_names, &interface_name_str);
+        }
+    }
+
     /* NOTHING can fail after here */
-    s_schedule_connection_culling(manager);
+    s_schedule_culling(manager);
 
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Successfully created", (void *)manager);
 
@@ -990,7 +1093,27 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.host_name = aws_byte_cursor_from_string(manager->host);
     options.port = manager->port;
     options.initial_window_size = manager->initial_window_size;
-    options.socket_options = &manager->socket_options;
+    options.response_first_byte_timeout_ms = manager->response_first_byte_timeout_ms;
+    struct aws_socket_options socket_options = manager->socket_options;
+    if (aws_array_list_length(&manager->network_interface_names)) {
+        struct aws_string *interface_name = NULL;
+        aws_array_list_get_at(
+            &manager->network_interface_names, &interface_name, manager->network_interface_names_index);
+        manager->network_interface_names_index =
+            (manager->network_interface_names_index + 1) % aws_array_list_length(&manager->network_interface_names);
+#if defined(_MSC_VER)
+#    pragma warning(push)
+#    pragma warning(disable : 4996) /* allow strncpy() */
+#endif
+        /* If the interface_name is too long or not null terminated, it will be caught in the `aws_socket_init` function
+         * so we don't need to worry about that here.*/
+        strncpy(
+            socket_options.network_interface_name, aws_string_c_str(interface_name), AWS_NETWORK_INTERFACE_NAME_MAX);
+#if defined(_MSC_VER)
+#    pragma warning(pop)
+#endif
+    }
+    options.socket_options = &socket_options;
     options.on_setup = s_aws_http_connection_manager_on_connection_setup;
     options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
     options.manual_window_management = manager->enable_read_back_pressure;
@@ -1024,7 +1147,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
         options.proxy_options = &proxy_options;
     }
 
-    if (manager->system_vtable->create_connection(&options)) {
+    if (manager->system_vtable->aws_http_client_connect(&options)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION_MANAGER,
             "id=%p: http connection creation failed with error code %d(%s)",
@@ -1041,7 +1164,6 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
 
     struct aws_http_connection_manager *manager = work->manager;
 
-    int representative_error = 0;
     size_t new_connection_failures = 0;
 
     /*
@@ -1061,7 +1183,7 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
             "id=%p: Releasing connection (id=%p)",
             (void *)manager,
             (void *)idle_connection->connection);
-        manager->system_vtable->release_connection(idle_connection->connection);
+        manager->system_vtable->aws_http_connection_release(idle_connection->connection);
         aws_mem_release(idle_connection->allocator, idle_connection);
     }
 
@@ -1071,7 +1193,7 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
             "id=%p: Releasing connection (id=%p)",
             (void *)manager,
             (void *)work->connection_to_release);
-        manager->system_vtable->release_connection(work->connection_to_release);
+        manager->system_vtable->aws_http_connection_release(work->connection_to_release);
     }
 
     /*
@@ -1079,8 +1201,6 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
      */
     struct aws_array_list errors;
     AWS_ZERO_STRUCT(errors);
-    /* Even if we can't init this array, we still need to invoke error callbacks properly */
-    bool push_errors = false;
 
     if (work->new_connections > 0) {
         AWS_LOGF_INFO(
@@ -1088,20 +1208,21 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
             "id=%p: Requesting %zu new connections from http",
             (void *)manager,
             work->new_connections);
-        push_errors = aws_array_list_init_dynamic(&errors, work->allocator, work->new_connections, sizeof(int)) ==
-                      AWS_ERROR_SUCCESS;
+        AWS_FATAL_ASSERT(
+            aws_array_list_init_dynamic(&errors, work->allocator, work->new_connections, sizeof(int)) ==
+            AWS_OP_SUCCESS);
     }
 
     for (size_t i = 0; i < work->new_connections; ++i) {
         if (s_aws_http_connection_manager_new_connection(manager)) {
             ++new_connection_failures;
-            representative_error = aws_last_error();
-            if (push_errors) {
-                AWS_FATAL_ASSERT(aws_array_list_push_back(&errors, &representative_error) == AWS_OP_SUCCESS);
-            }
+            int error = aws_last_error();
+            AWS_FATAL_ASSERT(aws_array_list_push_back(&errors, &error) == AWS_OP_SUCCESS);
         }
     }
 
+    bool has_pending_acquisitions = false;
+    struct aws_connection_management_transaction pending_acquisitions_work;
     if (new_connection_failures > 0) {
         /*
          * We failed and aren't going to receive a callback, but the current state assumes we will receive
@@ -1112,30 +1233,24 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
         AWS_FATAL_ASSERT(manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] >= new_connection_failures);
         s_connection_manager_internal_ref_decrease(manager, AWS_HCMCT_PENDING_CONNECTIONS, new_connection_failures);
 
-        /*
-         * Rather than failing one acquisition for each connection failure, if there's at least one
-         * connection failure, we instead fail all excess acquisitions, since there's no pending
-         * connect that will necessarily resolve them.
-         *
-         * Try to correspond an error with the acquisition failure, but as a fallback just use the
-         * representative error.
-         */
-        size_t i = 0;
-        while (manager->pending_acquisition_count > manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS]) {
-            int error = representative_error;
-            if (i < aws_array_list_length(&errors)) {
-                aws_array_list_get_at(&errors, &error, i);
-            }
-
+        for (size_t i = 0; i < new_connection_failures && manager->pending_acquisition_count > 0; i++) {
+            int error;
+            aws_array_list_get_at(&errors, &error, i);
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: Failing excess connection acquisition with error code %d",
+                "id=%p: Failing connection acquisition with error code %d",
                 (void *)manager,
                 (int)error);
             s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error, &work->completions);
-            ++i;
         }
-
+        has_pending_acquisitions =
+            manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] + manager->pending_settings_count <
+            manager->pending_acquisition_count;
+        if (has_pending_acquisitions) {
+            /* If there are pending acquisitions, schedule work again to try acquiring them */
+            s_aws_connection_management_transaction_init(&pending_acquisitions_work, manager);
+            s_aws_http_connection_manager_build_transaction(&pending_acquisitions_work);
+        }
         aws_mutex_unlock(&manager->lock);
     }
 
@@ -1143,13 +1258,20 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
      * Step 4 - Perform acquisition callbacks
      */
     s_aws_http_connection_manager_complete_acquisitions(&work->completions, work->allocator);
-
     aws_array_list_clean_up(&errors);
 
     /*
      * Step 5 - Clean up work.  Do this here rather than at the end of every caller. Destroy the manager if necessary
      */
     s_aws_connection_management_transaction_clean_up(work);
+
+    /*
+     * Step 6 - If some connection acquisition requests failed and we still have more pending acquisitions, try to
+     * acquire them.
+     */
+    if (has_pending_acquisitions) {
+        s_aws_http_connection_manager_execute_transaction(&pending_acquisitions_work);
+    }
 }
 
 void aws_http_connection_manager_acquire_connection(
@@ -1167,6 +1289,22 @@ void aws_http_connection_manager_acquire_connection(
     request->user_data = user_data;
     request->manager = manager;
 
+    if (manager->connection_acquisition_timeout_ms) {
+        uint64_t acquire_start_timestamp = 0;
+        if (manager->system_vtable->aws_high_res_clock_get_ticks(&acquire_start_timestamp) == AWS_OP_SUCCESS) {
+            request->timeout_timestamp =
+                acquire_start_timestamp +
+                aws_timestamp_convert(
+                    manager->connection_acquisition_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
+        } else {
+            AWS_LOGF_WARN(
+                AWS_LS_HTTP_CONNECTION_MANAGER,
+                "id=%p: Failed to get current timestamp using aws_high_res_clock_get_ticks function. Ignoring the "
+                "connection_acquisition_timeout_ms value. ",
+                (void *)manager);
+        }
+    }
+
     struct aws_connection_management_transaction work;
     s_aws_connection_management_transaction_init(&work, manager);
 
@@ -1175,8 +1313,15 @@ void aws_http_connection_manager_acquire_connection(
     /* It's a use after free crime, we don't want to handle */
     AWS_FATAL_ASSERT(manager->state == AWS_HCMST_READY);
 
-    aws_linked_list_push_back(&manager->pending_acquisitions, &request->node);
-    ++manager->pending_acquisition_count;
+    if (manager->max_pending_connection_acquisitions == 0 ||
+        manager->pending_acquisition_count + manager->internal_ref[AWS_HCMCT_VENDED_CONNECTION] <
+            manager->max_pending_connection_acquisitions + manager->max_connections) {
+        aws_linked_list_push_back(&manager->pending_acquisitions, &request->node);
+        ++manager->pending_acquisition_count;
+    } else {
+        request->error_code = AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED;
+        aws_linked_list_push_back(&work.completions, &request->node);
+    }
 
     s_aws_http_connection_manager_build_transaction(&work);
 
@@ -1194,7 +1339,7 @@ static int s_idle_connection(struct aws_http_connection_manager *manager, struct
     idle_connection->connection = connection;
 
     uint64_t idle_start_timestamp = 0;
-    if (manager->system_vtable->get_monotonic_time(&idle_start_timestamp)) {
+    if (manager->system_vtable->aws_high_res_clock_get_ticks(&idle_start_timestamp)) {
         goto on_error;
     }
 
@@ -1223,7 +1368,7 @@ int aws_http_connection_manager_release_connection(
     s_aws_connection_management_transaction_init(&work, manager);
 
     int result = AWS_OP_ERR;
-    bool should_release_connection = !manager->system_vtable->is_connection_available(connection);
+    bool should_release_connection = !manager->system_vtable->aws_http_connection_new_requests_allowed(connection);
 
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_CONNECTION_MANAGER,
@@ -1333,12 +1478,11 @@ static void s_cm_on_connection_ready_or_failed(
             work->connection_to_release = connection;
         }
     } else {
-        /* fail acquisition as one connection cannot be used any more */
-        while (manager->pending_acquisition_count >
-               manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] + manager->pending_settings_count) {
+        if (manager->pending_acquisition_count > 0) {
+            /* fail acquisition as connection acquire failed */
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: Failing excess connection acquisition with error code %d",
+                "id=%p: Failing connection acquisition with error code %d",
                 (void *)manager,
                 (int)error_code);
             s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &work->completions);
@@ -1413,7 +1557,8 @@ static void s_aws_http_connection_manager_on_connection_setup(
         s_connection_manager_internal_ref_increase(manager, AWS_HCMCT_OPEN_CONNECTION, 1);
     }
 
-    if (connection != NULL && manager->system_vtable->connection_get_version(connection) == AWS_HTTP_VERSION_2) {
+    if (connection != NULL &&
+        manager->system_vtable->aws_http_connection_get_version(connection) == AWS_HTTP_VERSION_2) {
         /* If the manager is shutting down, we will still wait for the settings, since we don't have map for connections
          */
         ++manager->pending_settings_count;
@@ -1484,15 +1629,16 @@ static void s_aws_http_connection_manager_on_connection_shutdown(
     s_aws_http_connection_manager_execute_transaction(&work);
 }
 
-static void s_cull_idle_connections(struct aws_http_connection_manager *manager) {
-    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: culling idle connections", (void *)manager);
+static void s_cull_task_impl(struct aws_http_connection_manager *manager) {
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: culling idle connections and pending acquisitions", (void *)manager);
 
-    if (manager == NULL || manager->max_connection_idle_in_milliseconds == 0) {
+    if (manager == NULL) {
         return;
     }
 
     uint64_t now = 0;
-    if (manager->system_vtable->get_monotonic_time(&now)) {
+    if (manager->system_vtable->aws_high_res_clock_get_ticks(&now)) {
         return;
     }
 
@@ -1503,26 +1649,53 @@ static void s_cull_idle_connections(struct aws_http_connection_manager *manager)
 
     /* Only if we're not shutting down */
     if (manager->state == AWS_HCMST_READY) {
-        const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections);
-        struct aws_linked_list_node *current_node = aws_linked_list_begin(&manager->idle_connections);
-        while (current_node != end) {
-            struct aws_linked_list_node *node = current_node;
-            struct aws_idle_connection *current_idle_connection =
-                AWS_CONTAINER_OF(node, struct aws_idle_connection, node);
-            if (current_idle_connection->cull_timestamp > now) {
-                break;
+        /* cull idle connections */
+        if (manager->max_connection_idle_in_milliseconds != 0) {
+            const struct aws_linked_list_node *idle_connections_end = aws_linked_list_end(&manager->idle_connections);
+            struct aws_linked_list_node *idle_connections_current = aws_linked_list_begin(&manager->idle_connections);
+            while (idle_connections_current != idle_connections_end) {
+                struct aws_linked_list_node *node = idle_connections_current;
+                struct aws_idle_connection *current_idle_connection =
+                    AWS_CONTAINER_OF(node, struct aws_idle_connection, node);
+                if (current_idle_connection->cull_timestamp > now) {
+                    break;
+                }
+
+                idle_connections_current = aws_linked_list_next(idle_connections_current);
+                aws_linked_list_remove(node);
+                aws_linked_list_push_back(&work.connections_to_release, node);
+                --manager->idle_connection_count;
+
+                AWS_LOGF_DEBUG(
+                    AWS_LS_HTTP_CONNECTION_MANAGER,
+                    "id=%p: culling idle connection (%p)",
+                    (void *)manager,
+                    (void *)current_idle_connection->connection);
             }
+        }
 
-            current_node = aws_linked_list_next(current_node);
-            aws_linked_list_remove(node);
-            aws_linked_list_push_back(&work.connections_to_release, node);
-            --manager->idle_connection_count;
+        /* cull pending acquisitions */
+        if (manager->connection_acquisition_timeout_ms != 0) {
+            const struct aws_linked_list_node *pending_acquisitions_end =
+                aws_linked_list_end(&manager->pending_acquisitions);
+            struct aws_linked_list_node *pending_acquisitions_current =
+                aws_linked_list_begin(&manager->pending_acquisitions);
+            while (pending_acquisitions_current != pending_acquisitions_end) {
+                struct aws_linked_list_node *node = pending_acquisitions_current;
+                struct aws_http_connection_acquisition *current_pending_acquire =
+                    AWS_CONTAINER_OF(node, struct aws_http_connection_acquisition, node);
+                if (current_pending_acquire->timeout_timestamp > now) {
+                    break;
+                }
 
-            AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: culling idle connection (%p)",
-                (void *)manager,
-                (void *)current_idle_connection->connection);
+                pending_acquisitions_current = aws_linked_list_next(pending_acquisitions_current);
+                s_aws_http_connection_manager_move_front_acquisition(
+                    manager, NULL, AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUISITION_TIMEOUT, &work.completions);
+                AWS_LOGF_DEBUG(
+                    AWS_LS_HTTP_CONNECTION_MANAGER,
+                    "id=%p: Failing pending acquisition due to timeout",
+                    (void *)manager);
+            }
         }
     }
 
@@ -1540,10 +1713,9 @@ static void s_cull_task(struct aws_task *task, void *arg, enum aws_task_status s
     }
 
     struct aws_http_connection_manager *manager = arg;
+    s_cull_task_impl(manager);
 
-    s_cull_idle_connections(manager);
-
-    s_schedule_connection_culling(manager);
+    s_schedule_culling(manager);
 }
 
 void aws_http_connection_manager_fetch_metrics(

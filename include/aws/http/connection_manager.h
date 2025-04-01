@@ -10,6 +10,8 @@
 
 #include <aws/common/byte_buf.h>
 
+AWS_PUSH_SANE_WARNING_LEVEL
+
 struct aws_client_bootstrap;
 struct aws_http_connection;
 struct aws_http_connection_manager;
@@ -57,6 +59,14 @@ struct aws_http_connection_manager_options {
     struct aws_client_bootstrap *bootstrap;
     size_t initial_window_size;
     const struct aws_socket_options *socket_options;
+    /**
+     * Optional (ignored if 0).
+     * After a request is fully sent, if the server does not begin responding within N milliseconds,
+     * then fail with AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT.
+     * This can be overridden per-request by aws_http_make_request_options.response_first_byte_timeout_ms.
+     * TODO: Only supported in HTTP/1.1 now, support it in HTTP/2
+     */
+    uint64_t response_first_byte_timeout_ms;
 
     /**
      * Options to create secure (HTTPS) connections.
@@ -78,7 +88,7 @@ struct aws_http_connection_manager_options {
 
     const struct aws_http_connection_monitoring_options *monitoring_options;
     struct aws_byte_cursor host;
-    uint16_t port;
+    uint32_t port;
 
     /**
      * Optional.
@@ -122,6 +132,35 @@ struct aws_http_connection_manager_options {
      * timeout will be closed automatically.
      */
     uint64_t max_connection_idle_in_milliseconds;
+
+    /**
+     * If set to a non-zero value, aws_http_connection_manager_acquire_connection() calls
+     * will give up after waiting this long for a connection from the pool,
+     * failing with error AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUISITION_TIMEOUT.
+     */
+    uint64_t connection_acquisition_timeout_ms;
+
+    /*
+     * If set to a non-zero value, aws_http_connection_manager_acquire_connection() calls will fail with
+     * AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED if the number of pending acquisitions
+     * reaches `max_pending_connection_acquisitions` after the connection pool has reached its capacity (i.e., all
+     * `num_connections` have been vended).
+     */
+    uint64_t max_pending_connection_acquisitions;
+
+    /**
+     * THIS IS AN EXPERIMENTAL AND UNSTABLE API
+     * (Optional)
+     * An array of network interface names. The manager will distribute the
+     * connections across network interface names provided in this array. If any interface name is invalid, goes down,
+     * or has any issues like network access, you will see connection failures. If
+     * `socket_options.network_interface_name` is also set, an `AWS_ERROR_INVALID_ARGUMENT` error will be raised.
+     *
+     * This option is only supported on Linux, MacOS, and platforms that have either SO_BINDTODEVICE or IP_BOUND_IF. It
+     * is not supported on Windows. `AWS_ERROR_PLATFORM_NOT_SUPPORTED` will be raised on unsupported platforms.
+     */
+    const struct aws_byte_cursor *network_interface_names_array;
+    size_t num_network_interface_names;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -190,5 +229,6 @@ void aws_http_connection_manager_fetch_metrics(
     struct aws_http_manager_metrics *out_metrics);
 
 AWS_EXTERN_C_END
+AWS_POP_SANE_WARNING_LEVEL
 
 #endif /* AWS_HTTP_CONNECTION_MANAGER_H */

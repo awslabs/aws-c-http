@@ -78,7 +78,6 @@ struct tester {
     size_t stream_completed_count;
     size_t stream_complete_errors;
     size_t stream_200_count;
-    size_t stream_4xx_count;
     size_t stream_status_not_200_count;
 
     uint64_t num_sen_received;
@@ -94,7 +93,10 @@ struct tester {
 static struct tester s_tester;
 
 #define DEFINE_HEADER(NAME, VALUE)                                                                                     \
-    { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
+    {                                                                                                                  \
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME),                                                           \
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE),                                                         \
+    }
 
 enum {
     TESTER_TIMEOUT_SEC = 60, /* Give enough time for non-sudo users to enter password */
@@ -184,10 +186,9 @@ static void s_tester_on_stream_completed(struct aws_http_stream *stream, int err
             ++s_tester.stream_complete_errors;
             s_tester.stream_completed_error_code = aws_last_error();
         } else {
-            if (status == 200) {
+            if (status / 100 == 2) {
                 s_tester.stream_completed_with_200 = true;
                 ++s_tester.stream_200_count;
-            } else if (status / 100 == 4) {
             } else {
                 ++s_tester.stream_status_not_200_count;
             }
@@ -369,6 +370,11 @@ static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool comp
     }
 
     aws_string_destroy(http_localhost_host);
+    const struct aws_socket_endpoint *remote_endpoint = aws_http_connection_get_remote_endpoint(s_tester.connection);
+    ASSERT_NOT_NULL(remote_endpoint);
+    struct aws_byte_cursor remote_ip = aws_byte_cursor_from_c_str(remote_endpoint->address);
+    /* Local host IP should always be 127.0.0.1 */
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&remote_ip, "127.0.0.1"));
     return s_tester_clean_up(&s_tester);
 }
 
