@@ -386,7 +386,7 @@ int main(int argc, char **argv) {
     aws_atomic_store_int(&app_ctx.streams_failed, 0);
 
     bool use_tls = true;
-    uint16_t port = 443;
+    uint32_t port = 443;
 
     if (!app_ctx.uri.scheme.len && (app_ctx.uri.port == 80 || app_ctx.uri.port == 8080)) {
         use_tls = false;
@@ -427,7 +427,7 @@ int main(int argc, char **argv) {
         tls_options = &tls_connection_options;
 
         if (app_ctx.uri.port) {
-            port = (uint16_t)app_ctx.uri.port;
+            port = app_ctx.uri.port;
         }
     } else {
         port = 80;
