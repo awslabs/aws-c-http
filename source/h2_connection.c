@@ -1767,7 +1767,7 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
         aws_linked_list_push_back(
             &connection->thread_data.outgoing_frames_queue, &connection_window_update_frame->node);
         connection->thread_data.window_size_self += initial_window_update_size;
-        /* For automatic window management, we only update connectio windows when it droped blow 50% of MAX. */
+        /* For automatic window management, we only update connection windows when it droped blow 50% of MAX. */
         connection->thread_data.window_size_self_dropped_threshold = AWS_H2_WINDOW_UPDATE_MAX / 2;
     }
     aws_h2_try_write_outgoing_frames(connection);

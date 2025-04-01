@@ -32,7 +32,10 @@
 #endif
 
 #define DEFINE_HEADER(NAME, VALUE)                                                                                     \
-    { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
+    {                                                                                                                  \
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME),                                                           \
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE),                                                         \
+    }
 
 /* TODO: Make those configurable from cmd line */
 const struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("http://localhost:3280/");
@@ -424,7 +427,7 @@ int main(int argc, char **argv) {
         tls_options = &tls_connection_options;
 
         if (app_ctx.uri.port) {
-            port = app_ctx.uri.port;
+            port = (uint16_t)app_ctx.uri.port;
         }
     } else {
         port = 80;
