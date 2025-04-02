@@ -69,7 +69,13 @@ class H2Protocol(asyncio.Protocol):
             for event in events:
                 if isinstance(event, RequestReceived):
                     self.request_received(event.headers, event.stream_id)
+                    self.conn.increment_flow_control_window(214748364)
+                    self.conn.increment_flow_control_window(
+                        214748364, event.stream_id)
                 elif isinstance(event, DataReceived):
+                    self.conn.increment_flow_control_window(event.flow_controlled_length)
+                    self.conn.increment_flow_control_window(
+                        event.flow_controlled_length, event.stream_id)
                     self.receive_data(event.data, event.stream_id)
                 elif isinstance(event, StreamEnded):
                     self.stream_complete(event.stream_id)
@@ -164,11 +170,7 @@ class H2Protocol(asyncio.Protocol):
                         len(data)
                 else:
                     self.num_sentence_received[stream_id] = len(data)
-                # update window for stream
-                if len(data) > 0:
-                    self.conn.increment_flow_control_window(len(data))
-                    self.conn.increment_flow_control_window(
-                        len(data), stream_id)
+
             else:
                 stream_data.data.write(data)
 
