@@ -51,6 +51,7 @@ class H2Protocol(asyncio.Protocol):
     def connection_made(self, transport: asyncio.Transport):
         self.transport = transport
         self.conn.initiate_connection()
+        self.conn.increment_flow_control_window(int(2147483647/2))
         self.transport.write(self.conn.data_to_send())
 
     def connection_lost(self, exc):
@@ -69,9 +70,8 @@ class H2Protocol(asyncio.Protocol):
             for event in events:
                 if isinstance(event, RequestReceived):
                     self.request_received(event.headers, event.stream_id)
-                    self.conn.increment_flow_control_window(214748364)
                     self.conn.increment_flow_control_window(
-                        214748364, event.stream_id)
+                        int(2147483647/2), event.stream_id)
                 elif isinstance(event, DataReceived):
                     self.conn.increment_flow_control_window(event.flow_controlled_length)
                     self.conn.increment_flow_control_window(
