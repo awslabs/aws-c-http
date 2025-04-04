@@ -3,7 +3,6 @@ project(aws-c-http C)
 
 option(ENABLE_PROXY_INTEGRATION_TESTS "Whether to run the proxy integration tests that rely on pre-configured proxy" OFF)
 option(ENABLE_LOCALHOST_INTEGRATION_TESTS "Whether to run the integration tests that rely on pre-configured localhost" OFF)
-option(AWS_BUILD_CANARY "Whether to build the canary for benchmark the performance of our http client" OFF)
 
 if (NOT IN_SOURCE_BUILD)
     # this is required so we can use aws-c-common's CMake modules
@@ -84,8 +83,6 @@ if (NOT BYO_CRYPTO AND BUILD_TESTING)
     add_subdirectory(tests)
     if (NOT CMAKE_CROSSCOMPILING)
         add_subdirectory(bin/elasticurl)
-        if (AWS_BUILD_CANARY)
-            add_subdirectory(bin/canary)
-        endif()
+        add_subdirectory(bin/h2benchmark)
     endif()
 endif()

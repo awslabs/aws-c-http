@@ -51,19 +51,19 @@ const double rate_threshold =
     4000; /* From the previous tests. All platforms seem to be larger than 4000, but it could various. TODO: Maybe
              gather the number of previous test run, and be platform specific. */
 
-struct aws_http_canary_helper {
+struct aws_http_benchmark_helper {
     struct aws_task task;
     struct aws_event_loop *eventloop;
 
     int num_collected; /* number of data collected */
     uint64_t rate_ns;  /* Collect data per rate_ns */
 
-    struct aws_atomic_var canary_finished;
+    struct aws_atomic_var benchmark_finished;
 
     double *results;
 };
 
-struct canary_ctx {
+struct benchmark_ctx {
     struct aws_allocator *allocator;
     const char *verb;
     struct aws_uri uri;
@@ -71,7 +71,7 @@ struct canary_ctx {
     struct aws_condition_variable c_var;
 
     enum aws_log_level log_level;
-    struct aws_http_canary_helper helper;
+    struct aws_http_benchmark_helper helper;
     struct aws_event_loop_group *el_group;
     struct aws_http2_stream_manager *manager;
 
@@ -91,8 +91,8 @@ static void s_collect_data_task(struct aws_task *task, void *arg, enum aws_task_
     (void)status;
     (void)task;
 
-    struct canary_ctx *app_ctx = arg;
-    struct aws_http_canary_helper *helper = &app_ctx->helper;
+    struct benchmark_ctx *app_ctx = arg;
+    struct aws_http_benchmark_helper *helper = &app_ctx->helper;
 
     /* collect data */
     size_t stream_completed = aws_atomic_exchange_int(&app_ctx->streams_completed, 0);
@@ -117,7 +117,7 @@ static void s_collect_data_task(struct aws_task *task, void *arg, enum aws_task_
             exit(1);
         }
 
-        aws_atomic_store_int(&helper->canary_finished, 1);
+        aws_atomic_store_int(&helper->benchmark_finished, 1);
     } else {
         /* keep running */
         uint64_t now = 0;
@@ -126,11 +126,11 @@ static void s_collect_data_task(struct aws_task *task, void *arg, enum aws_task_
     }
 }
 
-void aws_http_canary_helper_init(struct canary_ctx *app_ctx, struct aws_http_canary_helper *helper) {
+void aws_http_benchmark_helper_init(struct benchmark_ctx *app_ctx, struct aws_http_benchmark_helper *helper) {
 
     helper->eventloop = aws_event_loop_group_get_next_loop(app_ctx->el_group);
     helper->rate_ns = aws_timestamp_convert(rate_secs, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL);
-    aws_atomic_init_int(&helper->canary_finished, 0);
+    aws_atomic_init_int(&helper->benchmark_finished, 0);
     aws_task_init(&helper->task, s_collect_data_task, app_ctx, "data_collector");
     helper->results = aws_mem_calloc(app_ctx->allocator, num_data_to_collect, sizeof(double));
     uint64_t now = 0;
@@ -154,7 +154,7 @@ static void s_on_stream_acquired(struct aws_http_stream *stream, int error_code,
 static void s_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     (void)stream;
 
-    struct canary_ctx *app_ctx = user_data;
+    struct benchmark_ctx *app_ctx = user_data;
     aws_mutex_lock(&app_ctx->mutex);
     aws_atomic_fetch_add(&app_ctx->batch_completed, 1);
     if (error_code) {
@@ -172,12 +172,12 @@ static void s_on_stream_complete(struct aws_http_stream *stream, int error_code,
 /************************* Stream manager ops ******************************************/
 
 static bool s_are_batch_completed(void *context) {
-    struct canary_ctx *app_ctx = context;
+    struct benchmark_ctx *app_ctx = context;
     size_t completed = aws_atomic_load_int(&app_ctx->batch_completed);
     return (int)completed >= app_ctx->batch_size;
 }
 
-static int s_wait_on_batch_complete(struct canary_ctx *app_ctx) {
+static int s_wait_on_batch_complete(struct benchmark_ctx *app_ctx) {
 
     aws_mutex_lock(&app_ctx->mutex);
     int signal_error =
@@ -187,7 +187,7 @@ static int s_wait_on_batch_complete(struct canary_ctx *app_ctx) {
     return signal_error;
 }
 
-static void s_run_stream_manager_test(struct canary_ctx *app_ctx, struct aws_http_message *request) {
+static void s_run_stream_manager_test(struct benchmark_ctx *app_ctx, struct aws_http_message *request) {
     struct aws_http_make_request_options request_options = {
         .self_size = sizeof(request_options),
         .request = request,
@@ -220,7 +220,7 @@ static void s_run_stream_manager_test(struct canary_ctx *app_ctx, struct aws_htt
             exit(1);
         }
 
-        size_t finished = aws_atomic_load_int(&app_ctx->helper.canary_finished);
+        size_t finished = aws_atomic_load_int(&app_ctx->helper.benchmark_finished);
         if (finished) {
             keep_loop = false;
         }
@@ -228,7 +228,7 @@ static void s_run_stream_manager_test(struct canary_ctx *app_ctx, struct aws_htt
 }
 
 static void s_on_shutdown_complete(void *user_data) {
-    struct canary_ctx *app_ctx = user_data;
+    struct benchmark_ctx *app_ctx = user_data;
 
     aws_mutex_lock(&app_ctx->mutex);
     app_ctx->is_shutdown_complete = true;
@@ -238,7 +238,7 @@ static void s_on_shutdown_complete(void *user_data) {
 
 /************************* direct connection ops ******************************************/
 
-static void s_run_direct_connection_test(struct canary_ctx *app_ctx, struct aws_http_message *request) {
+static void s_run_direct_connection_test(struct benchmark_ctx *app_ctx, struct aws_http_message *request) {
     struct aws_http_make_request_options request_options = {
         .self_size = sizeof(request_options),
         .request = request,
@@ -266,7 +266,7 @@ static void s_run_direct_connection_test(struct canary_ctx *app_ctx, struct aws_
             exit(1);
         }
 
-        size_t finished = aws_atomic_load_int(&app_ctx->helper.canary_finished);
+        size_t finished = aws_atomic_load_int(&app_ctx->helper.benchmark_finished);
         if (finished) {
             keep_loop = false;
         }
@@ -276,7 +276,7 @@ static void s_run_direct_connection_test(struct canary_ctx *app_ctx, struct aws_
 static void s_on_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
     (void)connection;
     (void)error_code;
-    struct canary_ctx *app_ctx = user_data;
+    struct benchmark_ctx *app_ctx = user_data;
 
     aws_mutex_lock(&app_ctx->mutex);
     app_ctx->is_shutdown_complete = true;
@@ -289,7 +289,7 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
         fprintf(stderr, "Failed to create connection with error %s\n", aws_error_debug_str(aws_last_error()));
         exit(1);
     }
-    struct canary_ctx *app_ctx = user_data;
+    struct benchmark_ctx *app_ctx = user_data;
 
     aws_mutex_lock(&app_ctx->mutex);
     app_ctx->connection = connection;
@@ -298,18 +298,18 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
 }
 
 static bool s_is_connected(void *context) {
-    struct canary_ctx *app_ctx = context;
+    struct benchmark_ctx *app_ctx = context;
     return app_ctx->connection != NULL;
 }
 
 /************************* general ops ******************************************/
 
 static bool s_is_shutdown_complete(void *context) {
-    struct canary_ctx *app_ctx = context;
+    struct benchmark_ctx *app_ctx = context;
     return app_ctx->is_shutdown_complete;
 }
 
-static struct aws_http_message *s_create_request(struct canary_ctx *app_ctx) {
+static struct aws_http_message *s_create_request(struct benchmark_ctx *app_ctx) {
     struct aws_http_message *request = aws_http2_message_new_request(app_ctx->allocator);
 
     struct aws_http_header request_headers_src[] = {
@@ -331,8 +331,8 @@ static struct aws_http_message *s_create_request(struct canary_ctx *app_ctx) {
     return request;
 }
 
-static void s_run_canary(struct canary_ctx *app_ctx) {
-    aws_http_canary_helper_init(app_ctx, &app_ctx->helper);
+static void s_run_benchmark(struct benchmark_ctx *app_ctx) {
+    aws_http_benchmark_helper_init(app_ctx, &app_ctx->helper);
     struct aws_http_message *request = s_create_request(app_ctx);
 
     if (direct_connection) {
@@ -352,7 +352,7 @@ int main(int argc, char **argv) {
 
     aws_http_library_init(allocator);
 
-    struct canary_ctx app_ctx;
+    struct benchmark_ctx app_ctx;
     AWS_ZERO_STRUCT(app_ctx);
     app_ctx.allocator = allocator;
     app_ctx.batch_size = max_connections * streams_per_connection;
@@ -495,7 +495,7 @@ int main(int argc, char **argv) {
     }
 
     /* Really do the job */
-    s_run_canary(&app_ctx);
+    s_run_benchmark(&app_ctx);
 
     if (!direct_connection) {
         aws_http2_stream_manager_release(app_ctx.manager);
