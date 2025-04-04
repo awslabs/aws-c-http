@@ -16,7 +16,6 @@ def send_response(conn, event):
         stream_id=stream_id,
         headers=[
             (':status', '200'),
-            ('content-length', str(len(response_data))),
         ],
     )
     conn.send_data(
