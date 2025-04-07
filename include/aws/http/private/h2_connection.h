@@ -28,6 +28,14 @@ struct aws_h2_connection {
     struct aws_channel_task outgoing_frames_task;
 
     bool conn_manual_window_management;
+    /* The threshold to send out a window update frame.
+     * When the window_size_self is less than the threshold, client will starts the sending of WINDOW_UPDATE frame
+     * to keep flow continues.
+     */
+    uint32_t window_size_threshold_to_send_update;
+    /* The threshold to send out a window update frame for all the streams on the connection.
+     */
+    uint32_t stream_window_size_threshold_to_send_update;
 
     /* Only the event-loop thread may touch this data */
     struct {
@@ -92,23 +100,14 @@ struct aws_h2_connection {
         /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
          * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
          * connection */
-        size_t window_size_peer;
+        uint32_t window_size_peer;
 
         /* Flow-control of connection for this side.
          * Reduce the space after receiving a flow-controlled frame. Increment after sending WINDOW_UPDATE for
          * connection */
-        size_t window_size_self;
-        /* The self window size dropped before the client send window update automatically.
-         * When manual management for connection window is off, the dropped size equals to the size of data frame
-         * received.
-         * When manual management for connection window is on, the dropped size equals to the size of all the padding in
-         * the data frame received */
-        uint32_t window_size_self_dropped;
-        /* The threshold to send out a window update frame. When the window_size_self_dropped is larger than the
-         * threshold, client will automatically send a WINDOW_UPDATE frame with the dropped size to keep flow continues.
-         * TODO: expose this to user
-         */
-        uint32_t window_size_self_dropped_threshold;
+        uint32_t window_size_self;
+        /* The size to increment the window_size_self pending to be sent. */
+        uint32_t pending_window_update_size;
 
         /* Highest self-initiated stream-id that peer might have processed.
          * Defaults to max stream-id, may be lowered when GOAWAY frame received. */
@@ -161,7 +160,7 @@ struct aws_h2_connection {
         bool is_cross_thread_work_task_scheduled;
 
         /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
-        size_t window_update_size;
+        uint32_t window_update_size;
 
         /* For checking status from outside the event-loop thread. */
         bool is_open;

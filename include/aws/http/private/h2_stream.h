@@ -75,6 +75,11 @@ struct aws_h2_stream {
 
     struct aws_linked_list_node node;
     struct aws_channel_task cross_thread_work_task;
+    /* The threshold to send out a window update frame.
+     * When the window_size_self is less than the threshold, client will starts the sending of WINDOW_UPDATE frame
+     * to keep flow continues.
+     */
+    uint32_t window_size_threshold_to_send_update;
 
     /* Only the event-loop thread may touch this data */
     struct {
@@ -84,17 +89,9 @@ struct aws_h2_stream {
          * We allow this value exceed the max window size (int64 can hold much more than 0x7FFFFFFF),
          * We leave it up to the remote peer to detect whether the max window size has been exceeded. */
         int64_t window_size_self;
-        /* The self window size dropped before the client send window update automatically.
-         * When manual management for stream window is off, the dropped size equals to the size of data frame
-         * received.
-         * When manual management for stream window is on, the dropped size equals to the size of all the padding in
-         * the data frame received */
-        uint32_t window_size_self_dropped;
-        /* The threshold to send out a window update frame. When the window_size_self_dropped is larger than the
-         * threshold, client will automatically send a WINDOW_UPDATE frame with the dropped size to keep flow continues.
-         * TODO: expose this to user
-         */
-        uint32_t window_size_self_dropped_threshold;
+
+        /* The size to increment the window_size_self pending to be sent. */
+        uint32_t pending_window_update_size;
 
         struct aws_http_message *outgoing_message;
         /* All queued writes. If the message provides a body stream, it will be first in this list
@@ -121,7 +118,7 @@ struct aws_h2_stream {
         bool is_cross_thread_work_task_scheduled;
 
         /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
-        size_t window_update_size;
+        uint32_t window_update_size;
 
         /* The combined aws_http2_error_code user wanted to send to remote peer via rst_stream and internal aws error
          * code we want to inform user about. */

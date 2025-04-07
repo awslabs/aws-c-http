@@ -1,11 +1,11 @@
 project(h2benchmark C)
 
-file(GLOB CANARY_SRC
+file(GLOB H2BENCHMARK_SRC
         "*.c"
         )
 
 set(PROJECT_NAME h2benchmark)
-add_executable(${PROJECT_NAME} ${CANARY_SRC})
+add_executable(${PROJECT_NAME} ${H2BENCHMARK_SRC})
 aws_set_common_properties(${PROJECT_NAME})
 
 target_link_libraries(${PROJECT_NAME} aws-c-http)
