@@ -84,14 +84,22 @@ struct aws_h2_stream {
     /* Only the event-loop thread may touch this data */
     struct {
         enum aws_h2_stream_state state;
+        /* The remote window size.
+         * RFC-9113 6.9.2: The settings can shrink the exiting flow-control windows to negative values.
+         **/
         int32_t window_size_peer;
         /* The local window size.
-         * We allow this value exceed the max window size (int64 can hold much more than 0x7FFFFFFF),
-         * We leave it up to the remote peer to detect whether the max window size has been exceeded. */
-        int64_t window_size_self;
+         * RFC-9113 6.9.2: The settings can shrink the exiting flow-control windows to negative values.
+         **/
+        int32_t window_size_self;
 
-        /* The size to increment the window_size_self pending to be sent. */
-        uint32_t pending_window_update_size;
+        /**
+         * The size to increment the window_size_self pending to be sent.
+         * Allow the pending_window_update_size to exceed the max window size.
+         * The client will send the WINDOW_UPDATE frame to the server only valid.
+         * If the pending_window_update_size is too large, we will leave the excess to send it out later.
+         **/
+        uint64_t pending_window_update_size_thread;
 
         struct aws_http_message *outgoing_message;
         /* All queued writes. If the message provides a body stream, it will be first in this list
@@ -118,7 +126,7 @@ struct aws_h2_stream {
         bool is_cross_thread_work_task_scheduled;
 
         /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
-        uint32_t window_update_size;
+        uint64_t pending_window_update_size_sync;
 
         /* The combined aws_http2_error_code user wanted to send to remote peer via rst_stream and internal aws error
          * code we want to inform user about. */
@@ -149,7 +157,12 @@ struct aws_h2_stream *aws_h2_stream_new_request(
 
 enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *stream);
 
-struct aws_h2err aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed, bool self);
+/**
+ * When the flow control windows changed with SETTING and WINDOW_UPDATE frame receive.
+ * The SETTINGS and remote WINDOW_UPDATE frame should cause flow control error if window size is illegal.
+ * But client controls the window to be legal for the user.
+ **/
+struct aws_h2err aws_h2_stream_window_size_change_direct(struct aws_h2_stream *stream, int32_t size_changed, bool self);
 
 /* Connection is ready to send frames from stream now */
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_body_state *body_state);
