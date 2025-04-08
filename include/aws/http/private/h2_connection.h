@@ -28,6 +28,14 @@ struct aws_h2_connection {
     struct aws_channel_task outgoing_frames_task;
 
     bool conn_manual_window_management;
+    /* The threshold to send out a window update frame.
+     * When the window_size_self is less than the threshold, client will starts the sending of WINDOW_UPDATE frame
+     * to keep flow continues.
+     */
+    uint32_t window_size_threshold_to_send_update;
+    /* The threshold to send out a window update frame for all the streams on the connection.
+     */
+    uint32_t stream_window_size_threshold_to_send_update;
 
     /* Only the event-loop thread may touch this data */
     struct {
@@ -92,12 +100,18 @@ struct aws_h2_connection {
         /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
          * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
          * connection */
-        size_t window_size_peer;
+        uint32_t window_size_peer;
 
         /* Flow-control of connection for this side.
          * Reduce the space after receiving a flow-controlled frame. Increment after sending WINDOW_UPDATE for
          * connection */
-        size_t window_size_self;
+        uint32_t window_size_self;
+        /* The size to increment the window_size_self pending to be sent.
+         * Allow the pending_window_update_size to exceed the max window size.
+         * The client will send the WINDOW_UPDATE frame to the server only valid.
+         * If the pending_window_update_size is too large, we will leave the excess to send it out later.
+         */
+        uint64_t pending_window_update_size_thread;
 
         /* Highest self-initiated stream-id that peer might have processed.
          * Defaults to max stream-id, may be lowered when GOAWAY frame received. */
@@ -150,7 +164,7 @@ struct aws_h2_connection {
         bool is_cross_thread_work_task_scheduled;
 
         /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
-        size_t window_update_size;
+        uint64_t pending_window_update_size_sync;
 
         /* For checking status from outside the event-loop thread. */
         bool is_open;
@@ -286,5 +300,8 @@ void aws_h2_connection_shutdown_due_to_write_err(struct aws_h2_connection *conne
  * Try to write outgoing frames, if the outgoing-frames-task isn't scheduled, run it immediately.
  */
 void aws_h2_try_write_outgoing_frames(struct aws_h2_connection *connection);
+
+/* Helper to calculate the capped windows update delta */
+uint32_t aws_h2_calculate_cap_window_update_delta(int64_t current_window, uint64_t pending_update_size);
 
 #endif /* AWS_HTTP_H2_CONNECTION_H */

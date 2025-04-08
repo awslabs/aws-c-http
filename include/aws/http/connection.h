@@ -238,6 +238,27 @@ struct aws_http2_connection_options {
      * But, the client will always automatically update the window for padding even for manual window update.
      */
     bool conn_manual_window_management;
+
+    /**
+     * Optional.
+     * The threshold to send out a window update frame for the connection.
+     * Ignored if `conn_manual_window_management` is false.
+     * When the window_size_self for the connection is larger than the threshold,
+     * client will batch the window update and not send it out until the window_size_self
+     * drops below the threshold.
+     * Default to half of the initial connection flow-control window size, which is 32767.
+     */
+    size_t conn_window_size_threshold_to_send_update;
+    /**
+     * Optional.
+     * The threshold to send out a window update frame for the streams.
+     * Ignored if `manual_window_management` is false.
+     * When the window_size_self for the stream is larger than the threshold,
+     * client will batch the window update and not send it out until the window_size_self
+     * drops below the threshold.
+     * Default to half of the `initial_window_size`.
+     */
+    size_t stream_window_size_threshold_to_send_update;
 };
 
 /**
@@ -330,10 +351,11 @@ struct aws_http_client_connection_options {
      * If a stream's flow-control window reaches 0, no further data will be received. The user must call
      * aws_http_stream_update_window() to increment the stream's window and keep data flowing.
      *
-     * If a HTTP/2 connection created, it will ONLY control the stream window
-     * management. Connection window management is controlled by
-     * conn_manual_window_management. Note: the padding of data frame counts to the flow-control window.
-     * But, the client will always automatically update the window for padding even for manual window update.
+     * If a HTTP/2 connection created, it will ONLY control the stream window management.
+     * Connection window management is controlled by `conn_manual_window_management`.
+     * `stream_window_size_threshold_to_send_update` controls when to send the WINDOW_UPDATE frame for the stream.
+     * Note: the padding of data frame counts to the flow-control window. But, the client will always automatically
+     * update the window for padding even for manual window update.
      */
     bool manual_window_management;
 
@@ -692,8 +714,11 @@ int aws_http2_connection_get_received_goaway(
  * If you are not connected, this call will have no effect.
  *
  * Crashes when the connection is not http2 connection.
- * The limit of the Maximum Size is 2**31 - 1. If the increment size cause the connection flow window exceeds the
- * Maximum size, this call will result in the connection lost.
+ * The limit of the Maximum Size is 2**31 - 1.
+ * And client will make sure the WINDOW_UPDATE frame to be valid.
+ *
+ * The client control exactly when the WINDOW_UPDATE frame sent.
+ * Check `conn_window_size_threshold_to_send_update` for details.
  *
  * @param http2_connection HTTP/2 connection.
  * @param increment_size The size to increment for the connection's flow control window
