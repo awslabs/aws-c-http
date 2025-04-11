@@ -308,7 +308,9 @@ class H2Protocol(asyncio.Protocol):
 ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
 ssl_context.options |= (ssl.OP_NO_COMPRESSION)
 ssl_context.load_cert_chain(
-    certfile="../resources/unittests.crt", keyfile="../resources/unittests.key")
+    certfile=os.path.join(os.path.dirname(__file__),
+                          "../resources/unittests.crt"),
+    keyfile=os.path.join(os.path.dirname(__file__), "../resources/unittests.key"))
 ssl_context.set_alpn_protocols(["h2"])
 
 loop = asyncio.new_event_loop()
