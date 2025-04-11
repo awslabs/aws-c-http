@@ -606,7 +606,8 @@ int h2_fake_peer_send_data_frame_with_padding_length(
         &connection_window_size_peer,
         &msg->message_data,
         &body_complete,
-        &body_stalled));
+        &body_stalled,
+        NULL /*body_error*/));
 
     ASSERT_TRUE(body_complete);
     ASSERT_FALSE(body_stalled);

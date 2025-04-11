@@ -400,15 +400,12 @@ end:
     aws_http_stream_release(&stream->base);
 }
 
-static void s_stream_data_write_destroy(
-    struct aws_h2_stream *stream,
-    struct aws_h2_stream_data_write *write,
-    int error_code) {
+static void s_stream_data_write_destroy(struct aws_h2_stream *stream, struct aws_h2_stream_data_write *write) {
 
     AWS_PRECONDITION(stream);
     AWS_PRECONDITION(write);
     if (write->on_complete) {
-        write->on_complete(&stream->base, error_code, write->user_data);
+        write->on_complete(&stream->base, write->error_code, write->user_data);
     }
     if (write->data_stream) {
         aws_input_stream_release(write->data_stream);
@@ -430,7 +427,10 @@ static void s_h2_stream_destroy_pending_writes(struct aws_h2_stream *stream) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
         struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
         AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "Stream closing, cancelling write of stream %p", (void *)write->data_stream);
-        s_stream_data_write_destroy(stream, write, AWS_ERROR_HTTP_STREAM_HAS_COMPLETED);
+        if (write->error_code == AWS_ERROR_SUCCESS) {
+            write->error_code = AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
+        }
+        s_stream_data_write_destroy(stream, write);
     }
 }
 
@@ -690,7 +690,7 @@ static void s_h2_stream_write_data_complete(struct aws_h2_stream *stream, bool *
     struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
     struct aws_h2_stream_data_write *write_op = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
     const bool ending_stream = write_op->end_stream;
-    s_stream_data_write_destroy(stream, write_op, AWS_OP_SUCCESS);
+    s_stream_data_write_destroy(stream, write_op);
 
     /* check to see if there are more queued writes or stream_end was called */
     *waiting_writes = !ending_stream && !s_h2_stream_has_outgoing_writes(stream);
@@ -701,11 +701,6 @@ static struct aws_h2_stream_data_write *s_h2_stream_get_current_write(struct aws
     struct aws_linked_list_node *node = aws_linked_list_front(&stream->thread_data.outgoing_writes);
     struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
     return write;
-}
-
-static struct aws_input_stream *s_h2_stream_get_data_stream(struct aws_h2_stream *stream) {
-    struct aws_h2_stream_data_write *write = s_h2_stream_get_current_write(stream);
-    return write->data_stream;
 }
 
 static bool s_h2_stream_does_current_write_end_stream(struct aws_h2_stream *stream) {
@@ -799,11 +794,13 @@ int aws_h2_stream_encode_data_frame(
     }
 
     *data_encode_status = AWS_H2_DATA_ENCODE_COMPLETE;
-    struct aws_input_stream *input_stream = s_h2_stream_get_data_stream(stream);
+    struct aws_h2_stream_data_write *current_write = s_h2_stream_get_current_write(stream);
+    struct aws_input_stream *input_stream = current_write->data_stream;
     AWS_ASSERT(input_stream);
 
     bool input_stream_complete = false;
     bool input_stream_stalled = false;
+    bool input_stream_error = false;
     bool ends_stream = s_h2_stream_does_current_write_end_stream(stream);
     if (aws_h2_encode_data_frame(
             encoder,
@@ -815,7 +812,13 @@ int aws_h2_stream_encode_data_frame(
             &connection->thread_data.window_size_peer,
             output,
             &input_stream_complete,
-            &input_stream_stalled)) {
+            &input_stream_stalled,
+            &input_stream_error)) {
+
+        if (input_stream_error) {
+            /* If the error comes from the input stream, propagate it to the current_write */
+            current_write->error_code = aws_last_error();
+        }
 
         /* Failed to write DATA, treat it as a Stream Error */
         AWS_H2_STREAM_LOGF(ERROR, stream, "Error encoding stream DATA, %s", aws_error_name(aws_last_error()));
@@ -1335,14 +1338,16 @@ static int s_stream_write_data(
                 int error_code = stream->synced_data.api_state == AWS_H2_STREAM_API_STATE_INIT
                                      ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
                                      : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
-                s_stream_data_write_destroy(stream, pending_write, error_code);
+                pending_write->error_code = error_code;
+                s_stream_data_write_destroy(stream, pending_write);
                 AWS_H2_STREAM_LOG(ERROR, stream, "Cannot write DATA frames to an inactive or closed stream");
                 return aws_raise_error(error_code);
             }
 
             if (stream->synced_data.manual_write_ended) {
                 s_unlock_synced_data(stream);
-                s_stream_data_write_destroy(stream, pending_write, AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED);
+                pending_write->error_code = AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED;
+                s_stream_data_write_destroy(stream, pending_write);
                 AWS_H2_STREAM_LOG(ERROR, stream, "Cannot write DATA frames to a stream after manual write ended");
                 /* Fail with error, otherwise, people can wait for on_complete callback that will never be invoked. */
                 return aws_raise_error(AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED);
