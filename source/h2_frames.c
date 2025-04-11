@@ -329,6 +329,7 @@ int aws_h2_encode_data_frame(
     AWS_PRECONDITION(output);
     AWS_PRECONDITION(body_complete);
     AWS_PRECONDITION(body_stalled);
+    AWS_PRECONDITION(body_error);
     AWS_PRECONDITION(*stream_window_size_peer > 0);
 
     if (aws_h2_validate_stream_id(stream_id)) {
@@ -336,6 +337,7 @@ int aws_h2_encode_data_frame(
     }
 
     *body_complete = false;
+    *body_stalled = false;
     *body_stalled = false;
     uint8_t flags = 0;
 
@@ -379,18 +381,14 @@ int aws_h2_encode_data_frame(
 
     /* Read body into sub-buffer */
     if (aws_input_stream_read(body_stream, &body_sub_buf)) {
-        if (body_error) {
-            *body_error = true;
-        }
+        *body_error = true;
         goto error;
     }
 
     /* Check if we've reached the end of the body */
     struct aws_stream_status body_status;
     if (aws_input_stream_get_status(body_stream, &body_status)) {
-        if (body_error) {
-            *body_error = true;
-        }
+        *body_error = true;
         goto error;
     }
 
