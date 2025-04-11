@@ -338,7 +338,7 @@ int aws_h2_encode_data_frame(
 
     *body_complete = false;
     *body_stalled = false;
-    *body_stalled = false;
+    *body_error = false;
     uint8_t flags = 0;
 
     /*
