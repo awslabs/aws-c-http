@@ -86,7 +86,7 @@ TEST_CASE(h2_encoder_data) {
 
     bool body_complete;
     bool body_stalled;
-    bool body_error;
+    bool body_failed;
     int32_t stream_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
     size_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
     ASSERT_SUCCESS(aws_h2_encode_data_frame(
@@ -100,12 +100,12 @@ TEST_CASE(h2_encoder_data) {
         &output,
         &body_complete,
         &body_stalled,
-        &body_error));
+        &body_failed));
 
     ASSERT_BIN_ARRAYS_EQUALS(expected, sizeof(expected), output.buffer, output.len);
     ASSERT_TRUE(body_complete);
     ASSERT_FALSE(body_stalled);
-    ASSERT_FALSE(body_error);
+    ASSERT_FALSE(body_failed);
 
     aws_byte_buf_clean_up(&output);
     aws_input_stream_release(body);
@@ -143,7 +143,7 @@ TEST_CASE(h2_encoder_data_stalled) {
 
     bool body_complete;
     bool body_stalled;
-    bool body_error;
+    bool body_failed;
     int32_t stream_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
     size_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
     ASSERT_SUCCESS(aws_h2_encode_data_frame(
@@ -157,12 +157,12 @@ TEST_CASE(h2_encoder_data_stalled) {
         &output,
         &body_complete,
         &body_stalled,
-        &body_error));
+        &body_failed));
 
     ASSERT_BIN_ARRAYS_EQUALS(expected, sizeof(expected), output.buffer, output.len);
     ASSERT_FALSE(body_complete);
     ASSERT_TRUE(body_stalled);
-    ASSERT_FALSE(body_error);
+    ASSERT_FALSE(body_failed);
 
     aws_byte_buf_clean_up(&output);
     aws_input_stream_release(body);
@@ -188,7 +188,7 @@ TEST_CASE(h2_encoder_data_stalled_completely) {
 
     bool body_complete;
     bool body_stalled;
-    bool body_error;
+    bool body_failed;
     int32_t stream_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
     size_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
     ASSERT_SUCCESS(aws_h2_encode_data_frame(
@@ -202,11 +202,11 @@ TEST_CASE(h2_encoder_data_stalled_completely) {
         &output,
         &body_complete,
         &body_stalled,
-        &body_error));
+        &body_failed));
 
     ASSERT_FALSE(body_complete);
     ASSERT_TRUE(body_stalled);
-    ASSERT_FALSE(body_error);
+    ASSERT_FALSE(body_failed);
     ASSERT_UINT_EQUALS(0, output.len);
 
     /* clean up */

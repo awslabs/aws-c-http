@@ -68,7 +68,6 @@ struct aws_h2_stream_data_write {
     aws_http2_stream_write_data_complete_fn *on_complete;
     void *user_data;
     bool end_stream;
-    int error_code;
 };
 
 struct aws_h2_stream {
