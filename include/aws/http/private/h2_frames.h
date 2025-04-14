@@ -207,6 +207,7 @@ int aws_h2_encode_frame(
  * body_complete will be set true if encoder reaches the end of the body_stream.
  * body_stalled will be true if aws_input_stream_read() stopped early (didn't
  * complete, though more space was available).
+ * body_failed will be true if the aws_input_stream was the cause of an error.
  *
  * Each call to this function encodes a complete DATA frame, or nothing at all,
  * so it's always safe to encode a different frame type or the body of a different stream
@@ -223,7 +224,8 @@ int aws_h2_encode_data_frame(
     size_t *connection_window_size_peer,
     struct aws_byte_buf *output,
     bool *body_complete,
-    bool *body_stalled);
+    bool *body_stalled,
+    bool *body_failed);
 
 AWS_HTTP_API
 void aws_h2_frame_destroy(struct aws_h2_frame *frame);
