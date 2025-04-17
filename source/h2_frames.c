@@ -321,13 +321,15 @@ int aws_h2_encode_data_frame(
     size_t *connection_window_size_peer,
     struct aws_byte_buf *output,
     bool *body_complete,
-    bool *body_stalled) {
+    bool *body_stalled,
+    bool *body_failed) {
 
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(body_stream);
     AWS_PRECONDITION(output);
     AWS_PRECONDITION(body_complete);
     AWS_PRECONDITION(body_stalled);
+    AWS_PRECONDITION(body_failed);
     AWS_PRECONDITION(*stream_window_size_peer > 0);
 
     if (aws_h2_validate_stream_id(stream_id)) {
@@ -336,6 +338,7 @@ int aws_h2_encode_data_frame(
 
     *body_complete = false;
     *body_stalled = false;
+    *body_failed = false;
     uint8_t flags = 0;
 
     /*
@@ -378,12 +381,14 @@ int aws_h2_encode_data_frame(
 
     /* Read body into sub-buffer */
     if (aws_input_stream_read(body_stream, &body_sub_buf)) {
+        *body_failed = true;
         goto error;
     }
 
     /* Check if we've reached the end of the body */
     struct aws_stream_status body_status;
     if (aws_input_stream_get_status(body_stream, &body_status)) {
+        *body_failed = true;
         goto error;
     }
 

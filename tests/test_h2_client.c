@@ -5461,8 +5461,8 @@ TEST_CASE(h2_client_manual_data_write_read_broken) {
     ASSERT_TRUE(stream_tester.complete);
     /* The stream complete will get the error code from the input stream read. */
     ASSERT_UINT_EQUALS(stream_tester.on_complete_error_code, AWS_IO_STREAM_READ_FAILED);
-    /* The write triggers the stream to complete with error, so the write failed as the stream completes. */
-    ASSERT_UINT_EQUALS(error_code, AWS_ERROR_HTTP_STREAM_HAS_COMPLETED);
+    /* The write triggers the error, which should be reported to the write complete */
+    ASSERT_UINT_EQUALS(error_code, AWS_IO_STREAM_READ_FAILED);
 
     aws_http_message_release(request);
 
