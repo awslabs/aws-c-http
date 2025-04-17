@@ -6,6 +6,7 @@
 #include "h2_test_helper.h"
 #include "stream_test_helper.h"
 #include <aws/http/private/h2_connection.h>
+#include <aws/http/private/h2_stream.h>
 #include <aws/http/private/request_response_impl.h>
 #include <aws/http/request_response.h>
 #include <aws/io/stream.h>
@@ -106,6 +107,9 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
         .on_goaway_received = s_on_goaway_received,
         .on_remote_settings_change = s_on_remote_settings_change,
         .conn_manual_window_management = !s_tester.no_conn_manual_win_management,
+        /* Disable the batching for window update in tests */
+        .conn_window_size_threshold_to_send_update = UINT32_MAX,
+        .stream_window_size_threshold_to_send_update = UINT32_MAX,
     };
 
     s_tester.connection =
@@ -2183,7 +2187,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_window_size) {
     ASSERT_TRUE(latest_frame->end_stream);
     size_t frames_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
 
-    /* Send the rest requst, which only data frames will be blocked */
+    /* Send the rest request, and only data frames will be blocked */
     ASSERT_SUCCESS(s_stream_tester_init(&stream_testers[1], requests[1]));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
@@ -2506,18 +2510,23 @@ TEST_CASE(h2_client_stream_send_window_update) {
     const char *body_src = "hello";
     ASSERT_SUCCESS(h2_fake_peer_send_data_frame_str(&s_tester.peer, stream_id, body_src, false /*end_stream*/));
 
-    /* check that 1 WINDOW_UPDATE frames have been sent.
-     * 1 for the connection, and no window_update for the stream as window only updates when the window smaller than
-     * half of the original window */
+    /* check that 2 WINDOW_UPDATE frames have been sent.
+     * 1 for the connection, and 1 for the stream */
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     struct h2_decoded_frame *stream_window_update_frame = h2_decode_tester_find_stream_frame(
         &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id, 0 /*idx*/, NULL);
-    ASSERT_NULL(stream_window_update_frame);
-
-    /* For testing automatic window update, we have localhost_integ_h2_download_stress that downloads a file from one
-     * connection and one stream. If the window was not properly updated, that should fail */
+    ASSERT_NOT_NULL(stream_window_update_frame);
+    ASSERT_UINT_EQUALS(5, stream_window_update_frame->window_size_increment);
+    struct h2_decoded_frame *connection_window_update_frame = h2_decode_tester_find_stream_frame(
+        &s_tester.peer.decode,
+        AWS_H2_FRAME_T_WINDOW_UPDATE,
+        0 /*stream_id*/,
+        initial_window_update_index + 1 /*idx*/,
+        NULL);
+    ASSERT_NOT_NULL(connection_window_update_frame);
+    ASSERT_UINT_EQUALS(5, connection_window_update_frame->window_size_increment);
 
     /* clean up */
     aws_http_headers_release(response_headers);
@@ -2631,6 +2640,9 @@ static int s_manual_window_management_tester_init(struct aws_allocator *alloc, b
         .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
         .conn_manual_window_management = conn,
+        /* Disable the batching for window update in tests */
+        .conn_window_size_threshold_to_send_update = UINT32_MAX,
+        .stream_window_size_threshold_to_send_update = UINT32_MAX,
     };
 
     s_tester.connection =
@@ -3873,7 +3885,7 @@ TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update_with
     return s_tester_clean_up();
 }
 
-TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update_overflow) {
+TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update_overflow_capped) {
 
     ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, false /*conn*/, true /*stream*/, ctx));
     /* fake peer sends connection preface */
@@ -3901,18 +3913,10 @@ TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update_over
     aws_http_stream_update_window(stream_tester.stream, INT32_MAX);
     aws_http_stream_update_window(stream_tester.stream, INT32_MAX);
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    /* validate that stream completed with error */
+    /* The overflowed update window will be capped to the allowed max */
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
-    ASSERT_TRUE(stream_tester.complete);
-    /* overflow happens */
-    ASSERT_INT_EQUALS(AWS_ERROR_OVERFLOW_DETECTED, stream_tester.on_complete_error_code);
-    /* validate that stream sent RST_STREAM */
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *rst_stream_frame =
-        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, 0, NULL);
-    /* But the error code is not the same as user was trying to send */
-    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_INTERNAL_ERROR, rst_stream_frame->error_code);
-
+    struct aws_h2_stream *h2_stream = AWS_CONTAINER_OF(stream_tester.stream, struct aws_h2_stream, base);
+    ASSERT_TRUE(h2_stream->thread_data.window_size_self == AWS_H2_WINDOW_UPDATE_MAX);
     /* clean up */
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
@@ -4113,7 +4117,7 @@ TEST_CASE(h2_client_manual_window_management_user_send_conn_window_update_with_p
     return s_tester_clean_up();
 }
 
-TEST_CASE(h2_client_manual_window_management_user_send_connection_window_update_overflow) {
+TEST_CASE(h2_client_manual_window_management_user_send_connection_window_update_overflow_capped) {
 
     ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, true /*conn*/, false /*stream*/, ctx));
     /* fake peer sends connection preface */
@@ -4126,15 +4130,10 @@ TEST_CASE(h2_client_manual_window_management_user_send_connection_window_update_
     aws_http2_connection_update_window(s_tester.connection, INT32_MAX);
     aws_http2_connection_update_window(s_tester.connection, INT32_MAX);
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    /* validate that connection closed with error */
-    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
-    /* client should send GOAWAY */
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *goaway =
-        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
-    ASSERT_NOT_NULL(goaway);
-    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_INTERNAL_ERROR, goaway->error_code);
-    ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
+    /* The overflowed update window will be capped to the allowed max */
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+    struct aws_h2_connection *h2_connection = AWS_CONTAINER_OF(s_tester.connection, struct aws_h2_connection, base);
+    ASSERT_TRUE(h2_connection->thread_data.window_size_self == AWS_H2_WINDOW_UPDATE_MAX);
 
     /* clean up */
     return s_tester_clean_up();

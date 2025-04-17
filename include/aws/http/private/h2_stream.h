@@ -79,7 +79,7 @@ struct aws_h2_stream {
      * When the window_size_self is less than the threshold, client will starts the sending of WINDOW_UPDATE frame
      * to keep flow continues.
      */
-    uint32_t window_size_threshold_to_send_update;
+    int32_t window_size_threshold_to_send_update;
 
     /* Only the event-loop thread may touch this data */
     struct {

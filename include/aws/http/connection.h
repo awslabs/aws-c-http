@@ -248,7 +248,7 @@ struct aws_http2_connection_options {
      * drops below the threshold.
      * Default to half of the initial connection flow-control window size, which is 32767.
      */
-    size_t conn_window_size_threshold_to_send_update;
+    uint32_t conn_window_size_threshold_to_send_update;
     /**
      * Optional.
      * The threshold to send out a window update frame for the streams.
@@ -258,7 +258,7 @@ struct aws_http2_connection_options {
      * drops below the threshold.
      * Default to half of the `initial_window_size`.
      */
-    size_t stream_window_size_threshold_to_send_update;
+    uint32_t stream_window_size_threshold_to_send_update;
 };
 
 /**

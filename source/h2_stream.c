@@ -234,26 +234,37 @@ static int s_stream_send_update_window_if_needed(struct aws_h2_stream *stream, u
     uint32_t window_delta = aws_h2_calculate_cap_window_update_delta(
         stream->thread_data.window_size_self, stream->thread_data.pending_window_update_size_thread);
 
-    struct aws_h2_frame *stream_window_update_frame =
-        aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, window_delta);
-    if (!stream_window_update_frame) {
+    if (window_delta != stream->thread_data.pending_window_update_size_thread) {
         AWS_H2_STREAM_LOGF(
-            ERROR,
+            DEBUG,
             stream,
-            "WINDOW_UPDATE frame on stream failed to be sent, error %s",
-            aws_error_name(aws_last_error()));
-        stream->thread_data.window_size_self = previous_window;
-        return AWS_OP_ERR;
+            "Capping window update delta from %" PRIu64 " to %" PRIu32,
+            stream->thread_data.pending_window_update_size_thread,
+            window_delta);
     }
-    AWS_H2_STREAM_LOGF(TRACE, stream, "Sending WINDOW_UPDATE by %" PRIu32 ".", window_delta);
 
-    aws_h2_connection_enqueue_outgoing_frame(s_get_h2_connection(stream), stream_window_update_frame);
-    /* The real size should be delta plus previous window size. Since the math in
-     * aws_h2_calculate_cap_window_update_delta, no overflow should happen. */
-    stream->thread_data.window_size_self = previous_window + (uint32_t)window_delta;
-    AWS_ASSERT(stream->thread_data.window_size_self <= AWS_H2_WINDOW_UPDATE_MAX);
-    AWS_ASSERT(window_delta <= stream->thread_data.pending_window_update_size_thread);
-    stream->thread_data.pending_window_update_size_thread -= window_delta;
+    if (window_delta > 0) {
+        struct aws_h2_frame *stream_window_update_frame =
+            aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, window_delta);
+        if (!stream_window_update_frame) {
+            AWS_H2_STREAM_LOGF(
+                ERROR,
+                stream,
+                "WINDOW_UPDATE frame on stream failed to be sent, error %s",
+                aws_error_name(aws_last_error()));
+            stream->thread_data.window_size_self = previous_window;
+            return AWS_OP_ERR;
+        }
+        AWS_H2_STREAM_LOGF(TRACE, stream, "Sending WINDOW_UPDATE by %" PRIu32 ".", window_delta);
+
+        aws_h2_connection_enqueue_outgoing_frame(s_get_h2_connection(stream), stream_window_update_frame);
+        /* The real size should be delta plus previous window size. Since the math in
+         * aws_h2_calculate_cap_window_update_delta, no overflow should happen. */
+        stream->thread_data.window_size_self = previous_window + (uint32_t)window_delta;
+        AWS_ASSERT(stream->thread_data.window_size_self <= AWS_H2_WINDOW_UPDATE_MAX);
+        AWS_ASSERT(window_delta <= stream->thread_data.pending_window_update_size_thread);
+        stream->thread_data.pending_window_update_size_thread -= window_delta;
+    }
     return AWS_OP_SUCCESS;
 }
 
@@ -398,10 +409,6 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
             aws_h2_connection_shutdown_due_to_write_err(connection, aws_last_error());
         }
     }
-
-    /* The largest legal value will be 2 * max window size, which is way less than INT64_MAX, so if the window_size_self
-     * overflows, remote peer will find it out. So just apply the change and ignore the possible overflow.*/
-    stream->thread_data.window_size_self += window_update_size;
 
     if (reset_called) {
         struct aws_h2err returned_h2err = s_send_rst_and_close_stream(stream, reset_error);
@@ -733,13 +740,11 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
     stream->thread_data.window_size_self =
         connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
 
-    if (!connection->base.stream_manual_window_management) {
-        if (connection->stream_window_size_threshold_to_send_update) {
-            stream->window_size_threshold_to_send_update = connection->stream_window_size_threshold_to_send_update;
-        } else {
-            stream->window_size_threshold_to_send_update =
-                connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] / 2;
-        }
+    if (connection->stream_window_size_threshold_to_send_update) {
+        stream->window_size_threshold_to_send_update = connection->stream_window_size_threshold_to_send_update;
+    } else {
+        stream->window_size_threshold_to_send_update =
+            connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] / 2;
     }
 
     if (with_data) {
@@ -809,7 +814,7 @@ int aws_h2_stream_encode_data_frame(
             ends_stream,
             0 /*pad_length*/,
             &stream->thread_data.window_size_peer,
-            (size_t *)&connection->thread_data.window_size_peer,
+            &connection->thread_data.window_size_peer,
             output,
             &input_stream_complete,
             &input_stream_stalled,

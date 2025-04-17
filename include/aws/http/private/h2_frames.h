@@ -221,7 +221,7 @@ int aws_h2_encode_data_frame(
     bool body_ends_stream,
     uint8_t pad_length,
     int32_t *stream_window_size_peer,
-    size_t *connection_window_size_peer,
+    uint32_t *connection_window_size_peer,
     struct aws_byte_buf *output,
     bool *body_complete,
     bool *body_stalled,

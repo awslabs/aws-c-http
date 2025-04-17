@@ -33,9 +33,10 @@ struct aws_h2_connection {
      * to keep flow continues.
      */
     uint32_t window_size_threshold_to_send_update;
-    /* The threshold to send out a window update frame for all the streams on the connection.
+    /* The threshold to send out a window update frame for all the streams on the connection. Stream window takes int32
+     * since it allows negative.
      */
-    uint32_t stream_window_size_threshold_to_send_update;
+    int32_t stream_window_size_threshold_to_send_update;
 
     /* Only the event-loop thread may touch this data */
     struct {

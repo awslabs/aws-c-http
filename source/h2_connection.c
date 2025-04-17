@@ -390,8 +390,9 @@ static struct aws_h2_connection *s_connection_new(
     } else {
         connection->window_size_threshold_to_send_update = (uint32_t)(AWS_H2_INIT_WINDOW_SIZE / 2);
     }
+    /* Cap it to int32 max, since stream window allows negative. */
     connection->stream_window_size_threshold_to_send_update =
-        http2_options->stream_window_size_threshold_to_send_update;
+        aws_min_u32(http2_options->stream_window_size_threshold_to_send_update, INT32_MAX);
 
     connection->thread_data.goaway_received_last_stream_id = AWS_H2_STREAM_ID_MAX;
     connection->thread_data.goaway_sent_last_stream_id = AWS_H2_STREAM_ID_MAX;
@@ -1260,24 +1261,35 @@ static int s_connection_send_update_window_if_needed(struct aws_h2_connection *c
     uint32_t previous_window = connection->thread_data.window_size_self;
     uint32_t window_delta = aws_h2_calculate_cap_window_update_delta(
         connection->thread_data.window_size_self, connection->thread_data.pending_window_update_size_thread);
-    struct aws_h2_frame *connection_window_update_frame =
-        aws_h2_frame_new_window_update(connection->base.alloc, 0, window_delta);
-    if (!connection_window_update_frame) {
+
+    if (window_delta != connection->thread_data.pending_window_update_size_thread) {
         CONNECTION_LOGF(
-            ERROR,
-            connection,
-            "WINDOW_UPDATE frame on connection failed to be sent, error %s",
-            aws_error_name(aws_last_error()));
-        connection->thread_data.window_size_self = previous_window;
-        return AWS_OP_ERR;
+            DEBUG,
+            (void *)connection,
+            "Capping window update delta from %" PRIu64 " to %" PRIu32,
+            connection->thread_data.pending_window_update_size_thread,
+            window_delta);
     }
 
-    CONNECTION_LOGF(DEBUG, connection, "Sending connection window by %" PRIu32 ".", window_delta);
-    aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
+    if (window_delta > 0) {
+        struct aws_h2_frame *connection_window_update_frame =
+            aws_h2_frame_new_window_update(connection->base.alloc, 0, window_delta);
+        if (!connection_window_update_frame) {
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "WINDOW_UPDATE frame on connection failed to be sent, error %s",
+                aws_error_name(aws_last_error()));
+            connection->thread_data.window_size_self = previous_window;
+            return AWS_OP_ERR;
+        }
+        CONNECTION_LOGF(DEBUG, connection, "Sending connection window by %" PRIu32 ".", window_delta);
+        aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
+        /* The math in aws_h2_calculate_cap_window_update_delta makes sure no overflow afterwards. */
+        connection->thread_data.window_size_self = previous_window + window_delta;
+        connection->thread_data.pending_window_update_size_thread -= window_delta;
+    }
 
-    /* The math in aws_h2_calculate_cap_window_update_delta makes sure no overflow afterwards. */
-    connection->thread_data.window_size_self = previous_window + window_delta;
-    connection->thread_data.pending_window_update_size_thread -= window_delta;
     return AWS_OP_SUCCESS;
 }
 
@@ -1833,8 +1845,6 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
         aws_linked_list_push_back(
             &connection->thread_data.outgoing_frames_queue, &connection_window_update_frame->node);
         connection->thread_data.window_size_self += initial_window_update_size;
-        /* Only update the window when the windows size drop to half of the size */
-        connection->window_size_threshold_to_send_update = (uint32_t)(AWS_H2_WINDOW_UPDATE_MAX / 2);
     }
     aws_h2_try_write_outgoing_frames(connection);
     return;
@@ -2255,6 +2265,7 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
     bool connection_open = false;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
+        connection_open = connection->synced_data.is_open;
         if (connection_open) {
             cross_thread_work_should_schedule = !connection->synced_data.is_cross_thread_work_task_scheduled;
             connection->synced_data.is_cross_thread_work_task_scheduled = true;
