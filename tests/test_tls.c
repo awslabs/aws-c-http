@@ -169,6 +169,15 @@ static int s_test_tls_download_medium_file_general(
     struct test_ctx test;
     ASSERT_SUCCESS(s_test_ctx_init(allocator, &test, h2_required));
 
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_ENABLE_PUSH, .value = 0},
+    };
+
+    struct aws_http2_connection_options http2_options = {
+        .initial_settings_array = settings_array,
+        .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
+    };
+
     struct aws_tls_connection_options tls_connection_options;
     aws_tls_connection_options_init_from_ctx(&tls_connection_options, test.tls_ctx);
     aws_tls_connection_options_set_server_name(
@@ -182,6 +191,7 @@ static int s_test_tls_download_medium_file_general(
     http_options.on_shutdown = s_on_connection_shutdown;
     http_options.socket_options = &socket_options;
     http_options.tls_options = &tls_connection_options;
+    http_options.http2_options = &http2_options;
     http_options.user_data = &test;
 
     ASSERT_SUCCESS(aws_http_client_connect(&http_options));
