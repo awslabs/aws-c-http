@@ -963,7 +963,7 @@ int s_validate_http_client_connection_options(const struct aws_http_client_conne
     }
 
     /* http2_options cannot be NULL here, calling function adds them if they were missing */
-    if (options->http2_options->num_initial_settings > 0 && options->http2_options->initial_settings_array) {
+    if (options->http2_options->num_initial_settings > 0 && !options->http2_options->initial_settings_array) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "static: Invalid connection options, h2 settings count is non-zero but settings array is null");
