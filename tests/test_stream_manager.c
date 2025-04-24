@@ -610,7 +610,7 @@ static struct sm_fake_connection *s_sm_tester_fake_connection_new_from_options(
     }
 
     struct aws_http_connection *connection = aws_http_connection_new_http2_client(
-        options->allocator, options->manual_window_management /* manual window management */, options->http2_options);
+        options->allocator, options->manual_window_management, 0 /*initial window size*/, options->http2_options);
     AWS_FATAL_ASSERT(connection);
     aws_http_connection_acquire(connection);
 

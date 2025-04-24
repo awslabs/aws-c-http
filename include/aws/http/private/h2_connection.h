@@ -249,12 +249,14 @@ AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http2_server(
     struct aws_allocator *allocator,
     bool manual_window_management,
+    size_t initial_window_size,
     const struct aws_http2_connection_options *http2_options);
 
 AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
     bool manual_window_management,
+    size_t initial_window_size,
     const struct aws_http2_connection_options *http2_options);
 
 AWS_EXTERN_C_END

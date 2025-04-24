@@ -1119,9 +1119,6 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
             /* Automatically update the full amount we just received */
             auto_window_update = payload_len;
         }
-        if (total_padding_bytes) {
-            AWS_H2_STREAM_LOGF(TRACE, stream, "%" PRIu32 " Bytes of padding received.", total_padding_bytes);
-        }
 
         if (s_stream_send_update_window_if_needed(stream, auto_window_update)) {
             return aws_h2err_from_last_error();
