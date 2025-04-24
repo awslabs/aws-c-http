@@ -563,7 +563,7 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     if (add_initial_window) {
         /* insert the initial window size settings to the first of all the settings. */
         pending_settings->settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
-        pending_settings->settings_array[0].value = initial_window_size;
+        pending_settings->settings_array[0].value = (uint32_t)initial_window_size;
         /* Move the storage pointer to the second in the list */
         settings_storage = settings_storage + sizeof(struct aws_http2_setting);
     }
