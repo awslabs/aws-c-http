@@ -112,7 +112,7 @@ struct aws_h2_connection {
          * The client will send the WINDOW_UPDATE frame to the server only valid.
          * If the pending_window_update_size is too large, we will leave the excess to send it out later.
          */
-        uint64_t pending_window_update_size_thread;
+        uint64_t pending_window_update_size_self;
 
         /* Highest self-initiated stream-id that peer might have processed.
          * Defaults to max stream-id, may be lowered when GOAWAY frame received. */
@@ -164,8 +164,8 @@ struct aws_h2_connection {
 
         bool is_cross_thread_work_task_scheduled;
 
-        /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
-        uint64_t pending_window_update_size_sync;
+        /* Value for `thread_data.pending_window_update_size_self` that we haven't applied yet */
+        uint64_t pending_window_update_size_self;
 
         /* For checking status from outside the event-loop thread. */
         bool is_open;

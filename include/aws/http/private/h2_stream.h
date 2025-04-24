@@ -99,7 +99,7 @@ struct aws_h2_stream {
          * The client will send the WINDOW_UPDATE frame to the server only valid.
          * If the pending_window_update_size is too large, we will leave the excess to send it out later.
          **/
-        uint64_t pending_window_update_size_thread;
+        uint64_t pending_window_update_size_self;
 
         struct aws_http_message *outgoing_message;
         /* All queued writes. If the message provides a body stream, it will be first in this list
@@ -126,7 +126,7 @@ struct aws_h2_stream {
         bool is_cross_thread_work_task_scheduled;
 
         /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
-        uint64_t pending_window_update_size_sync;
+        uint64_t pending_window_update_size_self;
 
         /* The combined aws_http2_error_code user wanted to send to remote peer via rst_stream and internal aws error
          * code we want to inform user about. */

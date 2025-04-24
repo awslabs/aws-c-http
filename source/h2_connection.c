@@ -1197,77 +1197,55 @@ struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised
     return AWS_H2ERR_SUCCESS;
 }
 
-static int64_t s_add_i64_saturating(int64_t a, int64_t b) {
-    if (a > 0 && b > INT64_MAX - a) {
-        return INT64_MAX;
-    }
-    if (a < 0 && b < INT64_MIN - a) {
-        return INT64_MIN;
-    }
-    return a + b;
-}
-
 /* Calculate the capped windows update delta */
 uint32_t aws_h2_calculate_cap_window_update_delta(int64_t current_window, uint64_t pending_update_size) {
 
-    /* Calculate target window size, ensuring proper handling of negative windows */
-    int64_t target_window;
-
-    if (pending_update_size > INT64_MAX) {
-        /* If pending update is enormous, cap it at maximum positive value */
-        target_window = current_window < 0 ? INT64_MAX : s_add_i64_saturating(current_window, INT64_MAX);
-    } else {
-        /* Normal case: add pending update to current window with overflow protection */
-        target_window = s_add_i64_saturating(current_window, (int64_t)pending_update_size);
-    }
-
-    /* Cap window size to maximum allowed */
-    target_window = aws_min_i64(target_window, AWS_H2_WINDOW_UPDATE_MAX);
-
-    /* Calculate delta (how much we need to increase the window) */
-    uint32_t delta = 0;
-    AWS_ASSERT(target_window >= current_window);
-    delta = (uint32_t)(target_window - current_window);
-    if (delta > AWS_H2_WINDOW_UPDATE_MAX) {
-        /* Cap delta to maximum allowed */
-        delta = AWS_H2_WINDOW_UPDATE_MAX;
-    }
-    return delta;
+    /* UPDATE_WINDOW frame can't exceed AWS_H2_WINDOW_UPDATE_MAX (aka INT32_MAX) */
+    int64_t delta = (int64_t)aws_min_u64(pending_update_size, INT32_MAX);
+    /* resulting window size can't exceed INT32_MAX */
+    delta = aws_min_i64(delta, (int64_t)INT32_MAX - current_window);
+    /* assert should hold, based on our clamping above */
+    AWS_ASSERT(delta >= 0 && delta <= AWS_H2_WINDOW_UPDATE_MAX);
+    return (uint32_t)delta;
 }
 
-static int s_connection_send_update_window_if_needed(struct aws_h2_connection *connection, uint64_t window_size) {
+static int s_connection_send_update_window_if_needed(
+    struct aws_h2_connection *connection,
+    uint64_t window_update_size) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
-
+    if (window_update_size == 0) {
+        /* Nothing to do */
+        return AWS_OP_SUCCESS;
+    }
     /**
      * Only send a WINDOW_UPDATE frame if the connection window is below the threshold
      * If the pending amount is greater than uin64 max. Probably an unexpected error, ignores it and cap it.
      */
-    connection->thread_data.pending_window_update_size_thread =
-        aws_add_u64_saturating(connection->thread_data.pending_window_update_size_thread, window_size);
+    connection->thread_data.pending_window_update_size_self =
+        aws_add_u64_saturating(connection->thread_data.pending_window_update_size_self, window_update_size);
     if (connection->thread_data.window_size_self > connection->window_size_threshold_to_send_update) {
         CONNECTION_LOGF(
             TRACE,
             connection,
             "Ignoring sending connection window update of size%" PRIu64 ". Current size: %" PRIu32
             ", threshold: %" PRIu32 " pending: %" PRIu64,
-            window_size,
+            window_update_size,
             connection->thread_data.window_size_self,
             connection->window_size_threshold_to_send_update,
-            connection->thread_data.pending_window_update_size_thread);
+            connection->thread_data.pending_window_update_size_self);
         return AWS_OP_SUCCESS;
     }
 
     /* Cap the window to AWS_H2_WINDOW_UPDATE_MAX */
-    uint32_t previous_window = connection->thread_data.window_size_self;
     uint32_t window_delta = aws_h2_calculate_cap_window_update_delta(
-        connection->thread_data.window_size_self, connection->thread_data.pending_window_update_size_thread);
+        connection->thread_data.window_size_self, connection->thread_data.pending_window_update_size_self);
 
-    if (window_delta != connection->thread_data.pending_window_update_size_thread) {
+    if (window_delta != connection->thread_data.pending_window_update_size_self) {
         CONNECTION_LOGF(
             DEBUG,
             (void *)connection,
             "Capping window update delta from %" PRIu64 " to %" PRIu32,
-            connection->thread_data.pending_window_update_size_thread,
+            connection->thread_data.pending_window_update_size_self,
             window_delta);
     }
 
@@ -1280,14 +1258,13 @@ static int s_connection_send_update_window_if_needed(struct aws_h2_connection *c
                 connection,
                 "WINDOW_UPDATE frame on connection failed to be sent, error %s",
                 aws_error_name(aws_last_error()));
-            connection->thread_data.window_size_self = previous_window;
             return AWS_OP_ERR;
         }
         CONNECTION_LOGF(DEBUG, connection, "Sending connection window by %" PRIu32 ".", window_delta);
         aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
         /* The math in aws_h2_calculate_cap_window_update_delta makes sure no overflow afterwards. */
-        connection->thread_data.window_size_self = previous_window + window_delta;
-        connection->thread_data.pending_window_update_size_thread -= window_delta;
+        connection->thread_data.window_size_self += window_delta;
+        connection->thread_data.pending_window_update_size_self -= window_delta;
     }
 
     return AWS_OP_SUCCESS;
@@ -2045,8 +2022,8 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         aws_linked_list_swap_contents(&connection->synced_data.pending_settings_list, &pending_settings);
         aws_linked_list_swap_contents(&connection->synced_data.pending_ping_list, &pending_ping);
         aws_linked_list_swap_contents(&connection->synced_data.pending_goaway_list, &pending_goaway);
-        window_update_size = connection->synced_data.pending_window_update_size_sync;
-        connection->synced_data.pending_window_update_size_sync = 0;
+        window_update_size = connection->synced_data.pending_window_update_size_self;
+        connection->synced_data.pending_window_update_size_self = 0;
         new_stream_error_code = connection->synced_data.new_stream_error_code;
 
         s_unlock_synced_data(connection);
@@ -2273,8 +2250,8 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
              * Be more user friendly, if the increment size is too large, we will just saturate it to the max.
              * AWS_H2_WINDOW_UPDATE_MAX will be checked during the actual sending of the window update frame.
              */
-            connection->synced_data.pending_window_update_size_sync =
-                aws_add_u64_saturating(connection->synced_data.pending_window_update_size_sync, increment_size);
+            connection->synced_data.pending_window_update_size_self =
+                aws_add_u64_saturating(connection->synced_data.pending_window_update_size_self, increment_size);
             connection_open = connection->synced_data.is_open;
         }
         s_unlock_synced_data(connection);
