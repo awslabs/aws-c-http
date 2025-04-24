@@ -745,6 +745,7 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
     if (connection->stream_window_size_threshold_to_send_update) {
         stream->window_size_threshold_to_send_update = connection->stream_window_size_threshold_to_send_update;
     } else {
+        /* Set reasonable default of: 50% initial window size (same as Netty's DEFAULT_WINDOW_UPDATE_RATIO) */
         stream->window_size_threshold_to_send_update =
             connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] / 2;
     }
