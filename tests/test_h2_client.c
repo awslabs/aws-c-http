@@ -2651,7 +2651,7 @@ static int s_manual_window_management_tester_init(
     };
 
     s_tester.connection = aws_http_connection_new_http2_client(
-        alloc, stream /* manual window management */, AWS_H2_INIT_WINDOW_SIZE, &http2_options);
+        alloc, stream /* manual window management */, stream_initial_window_size, &http2_options);
     ASSERT_NOT_NULL(s_tester.connection);
 
     { /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
@@ -3579,7 +3579,6 @@ TEST_CASE(h2_client_manual_window_management_disabled_auto_window_update) {
         s_manual_window_management_tester_init(allocator, false /*conn*/, true /*stream*/, window_size, ctx));
     /* fake peer sends connection preface */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* fake peer sends settings ack back for the initial settings */
     struct aws_h2_frame *peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);

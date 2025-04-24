@@ -569,7 +569,7 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     }
     if (settings_array) {
         /* copy all passin settings to the settings storage. */
-        memcpy(settings_storage, settings_array, num_settings * sizeof(struct aws_http2_setting));
+        memcpy(settings_storage, settings_array, passin_num_settings * sizeof(struct aws_http2_setting));
     }
     pending_settings->num_settings = num_settings;
     pending_settings->on_completed = on_completed;

@@ -1128,6 +1128,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         .host = options->host,
         .port = options->port,
         .enable_read_back_pressure = options->enable_read_back_pressure,
+        .initial_window_size = options->initial_window_size,
         .monitoring_options = options->monitoring_options,
         .proxy_options = options->proxy_options,
         .proxy_ev_settings = options->proxy_ev_settings,
