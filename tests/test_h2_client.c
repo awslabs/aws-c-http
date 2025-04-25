@@ -5759,3 +5759,86 @@ TEST_CASE(h2_client_manual_data_write_connection_close) {
     aws_input_stream_release(data_stream);
     return s_tester_clean_up();
 }
+
+/* Initialize the tester to test on the behavior that window update will be batched */
+static int s_batch_window_management_tester_init(
+    struct aws_allocator *alloc,
+    bool manual_conn,
+    bool manual_stream,
+    uint32_t conn_threshold,
+    uint32_t stream_threshold,
+    uint32_t initial_window_size,
+    void *ctx) {
+    (void)ctx;
+    aws_http_library_init(alloc);
+
+    s_tester.alloc = alloc;
+
+    struct aws_testing_channel_options options = {.clock_fn = aws_high_res_clock_get_ticks};
+
+    ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc, &options));
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_ENABLE_PUSH, .value = 0},
+    };
+
+    struct aws_http2_connection_options http2_options = {
+        .initial_settings_array = settings_array,
+        .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
+        .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
+        .conn_manual_window_management = manual_conn,
+    };
+
+    s_tester.connection =
+        aws_http_connection_new_http2_client(alloc, manual_stream /* manual window management */, &http2_options);
+    ASSERT_NOT_NULL(s_tester.connection);
+
+    { /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
+        struct aws_channel_slot *slot = aws_channel_slot_new(s_tester.testing_channel.channel);
+        ASSERT_NOT_NULL(slot);
+        ASSERT_SUCCESS(aws_channel_slot_insert_end(s_tester.testing_channel.channel, slot));
+        ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &s_tester.connection->channel_handler));
+        s_tester.connection->vtable->on_channel_handler_installed(&s_tester.connection->channel_handler, slot);
+    }
+
+    struct h2_fake_peer_options peer_options = {
+        .alloc = alloc,
+        .testing_channel = &s_tester.testing_channel,
+        .is_server = true,
+    };
+    ASSERT_SUCCESS(h2_fake_peer_init(&s_tester.peer, &peer_options));
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h2_client_batch_auto_window_update) {
+    /* Automated and default threshold */
+    ASSERT_SUCCESS(s_batch_window_management_tester_init(
+        allocator, false /*manual_conn*/, false /*manual_stream*/, 0 /*conn_threshold*/, 0 /*stream_threshold*/, ctx));
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    size_t window_size = 10;
+
+    /* change the settings of the initial window size for new stream flow-control window */
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE, .value = (uint32_t)window_size},
+    };
+
+    ASSERT_SUCCESS(aws_http2_connection_change_settings(
+        s_tester.connection,
+        settings_array,
+        AWS_ARRAY_SIZE(settings_array),
+        NULL /*callback function*/,
+        NULL /*user_data*/));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* fake peer sends two settings ack back, one for the initial settings, one for the user settings we just sent */
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    return s_tester_clean_up();
+}
