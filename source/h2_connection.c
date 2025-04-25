@@ -107,6 +107,8 @@ static void s_send_goaway(
     const struct aws_byte_cursor *optional_debug_data);
 static struct aws_h2_pending_settings *s_new_pending_settings(
     struct aws_allocator *allocator,
+    bool add_initial_window,
+    size_t initial_window_size,
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     aws_http2_on_change_settings_complete_fn *on_completed,
@@ -298,6 +300,7 @@ void aws_h2_connection_shutdown_due_to_write_err(struct aws_h2_connection *conne
 static struct aws_h2_connection *s_connection_new(
     struct aws_allocator *alloc,
     bool manual_window_management,
+    size_t initial_window_size,
     const struct aws_http2_connection_options *http2_options,
     bool server) {
 
@@ -426,6 +429,10 @@ static struct aws_h2_connection *s_connection_new(
     /* User data from connection base is not ready until the handler installed */
     connection->thread_data.init_pending_settings = s_new_pending_settings(
         connection->base.alloc,
+        manual_window_management &&
+            initial_window_size != AWS_H2_INIT_WINDOW_SIZE, /* If the initial window size equals to the initial window
+                                                               size, don't need to send an extra one. */
+        initial_window_size,
         http2_options->initial_settings_array,
         http2_options->num_initial_settings,
         http2_options->on_initial_settings_completed,
@@ -445,9 +452,11 @@ error:
 struct aws_http_connection *aws_http_connection_new_http2_server(
     struct aws_allocator *allocator,
     bool manual_window_management,
+    size_t initial_window_size,
     const struct aws_http2_connection_options *http2_options) {
 
-    struct aws_h2_connection *connection = s_connection_new(allocator, manual_window_management, http2_options, true);
+    struct aws_h2_connection *connection =
+        s_connection_new(allocator, manual_window_management, initial_window_size, http2_options, true);
     if (!connection) {
         return NULL;
     }
@@ -460,9 +469,11 @@ struct aws_http_connection *aws_http_connection_new_http2_server(
 struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
     bool manual_window_management,
+    size_t initial_window_size,
     const struct aws_http2_connection_options *http2_options) {
 
-    struct aws_h2_connection *connection = s_connection_new(allocator, manual_window_management, http2_options, false);
+    struct aws_h2_connection *connection =
+        s_connection_new(allocator, manual_window_management, initial_window_size, http2_options, false);
     if (!connection) {
         return NULL;
     }
@@ -513,14 +524,29 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
 
 static struct aws_h2_pending_settings *s_new_pending_settings(
     struct aws_allocator *allocator,
+    bool add_initial_window,
+    size_t initial_window_size,
     const struct aws_http2_setting *settings_array,
-    size_t num_settings,
+    size_t passin_num_settings,
     aws_http2_on_change_settings_complete_fn *on_completed,
     void *user_data) {
+    size_t num_settings = passin_num_settings;
+    if (add_initial_window) {
+        if (initial_window_size > AWS_H2_WINDOW_UPDATE_MAX) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION,
+                "Initial window size %zu is larger than max %d",
+                initial_window_size,
+                AWS_H2_WINDOW_UPDATE_MAX);
+            aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+            return NULL;
+        }
+        num_settings++;
+    }
 
     size_t settings_storage_size = sizeof(struct aws_http2_setting) * num_settings;
     struct aws_h2_pending_settings *pending_settings;
-    void *settings_storage;
+    uint8_t *settings_storage;
     if (!aws_mem_acquire_many(
             allocator,
             2,
@@ -533,9 +559,17 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
 
     AWS_ZERO_STRUCT(*pending_settings);
     /* We buffer the settings up, incase the caller has freed them when the ACK arrives */
-    pending_settings->settings_array = settings_storage;
+    pending_settings->settings_array = (void *)settings_storage;
+    if (add_initial_window) {
+        /* insert the initial window size settings to the first of all the settings. */
+        pending_settings->settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
+        pending_settings->settings_array[0].value = (uint32_t)initial_window_size;
+        /* Move the storage pointer to the second in the list */
+        settings_storage = settings_storage + sizeof(struct aws_http2_setting);
+    }
     if (settings_array) {
-        memcpy(pending_settings->settings_array, settings_array, num_settings * sizeof(struct aws_http2_setting));
+        /* copy all passin settings to the settings storage. */
+        memcpy(settings_storage, settings_array, passin_num_settings * sizeof(struct aws_http2_setting));
     }
     pending_settings->num_settings = num_settings;
     pending_settings->on_completed = on_completed;
@@ -2288,8 +2322,14 @@ static int s_connection_change_settings(
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    struct aws_h2_pending_settings *pending_settings =
-        s_new_pending_settings(connection->base.alloc, settings_array, num_settings, on_completed, user_data);
+    struct aws_h2_pending_settings *pending_settings = s_new_pending_settings(
+        connection->base.alloc,
+        false /*add initial window*/,
+        0 /*initial window size*/,
+        settings_array,
+        num_settings,
+        on_completed,
+        user_data);
     if (!pending_settings) {
         return AWS_OP_ERR;
     }

@@ -113,7 +113,7 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
     };
 
     s_tester.connection =
-        aws_http_connection_new_http2_client(alloc, false /* manual window management */, &http2_options);
+        aws_http_connection_new_http2_client(alloc, false /* manual window management */, 0, &http2_options);
     ASSERT_NOT_NULL(s_tester.connection);
 
     {
@@ -2622,7 +2622,12 @@ TEST_CASE(h2_client_stream_err_received_data_flow_control) {
     return s_tester_clean_up();
 }
 
-static int s_manual_window_management_tester_init(struct aws_allocator *alloc, bool conn, bool stream, void *ctx) {
+static int s_manual_window_management_tester_init(
+    struct aws_allocator *alloc,
+    bool conn,
+    bool stream,
+    size_t stream_initial_window_size,
+    void *ctx) {
     (void)ctx;
     aws_http_library_init(alloc);
 
@@ -2645,8 +2650,8 @@ static int s_manual_window_management_tester_init(struct aws_allocator *alloc, b
         .stream_window_size_threshold_to_send_update = UINT32_MAX,
     };
 
-    s_tester.connection =
-        aws_http_connection_new_http2_client(alloc, stream /* manual window management */, &http2_options);
+    s_tester.connection = aws_http_connection_new_http2_client(
+        alloc, stream /* manual window management */, stream_initial_window_size, &http2_options);
     ASSERT_NOT_NULL(s_tester.connection);
 
     { /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
@@ -2672,7 +2677,8 @@ static int s_manual_window_management_tester_init(struct aws_allocator *alloc, b
  * flow-control error */
 TEST_CASE(h2_client_conn_err_received_data_flow_control) {
     /* disable the connection automatic window update */
-    ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, true /*conn*/, false /*stream*/, ctx));
+    ASSERT_SUCCESS(s_manual_window_management_tester_init(
+        allocator, true /*conn*/, false /*stream*/, AWS_H2_INIT_WINDOW_SIZE, ctx));
 
     /* get connection preface and acks out of the way */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
@@ -3568,29 +3574,14 @@ TEST_CASE(h2_client_change_settings_failed_no_ack_received) {
 
 /* Test manual window management for stream successfully disabled the automatically window update */
 TEST_CASE(h2_client_manual_window_management_disabled_auto_window_update) {
-    ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, false /*conn*/, true /*stream*/, ctx));
+    size_t window_size = 10;
+    ASSERT_SUCCESS(
+        s_manual_window_management_tester_init(allocator, false /*conn*/, true /*stream*/, window_size, ctx));
     /* fake peer sends connection preface */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-
-    size_t window_size = 10;
-
-    /* change the settings of the initial window size for new stream flow-control window */
-    struct aws_http2_setting settings_array[] = {
-        {.id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE, .value = (uint32_t)window_size},
-    };
-
-    ASSERT_SUCCESS(aws_http2_connection_change_settings(
-        s_tester.connection,
-        settings_array,
-        AWS_ARRAY_SIZE(settings_array),
-        NULL /*callback function*/,
-        NULL /*user_data*/));
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    /* fake peer sends two settings ack back, one for the initial settings, one for the user settings we just sent */
+    /* fake peer sends settings ack back for the initial settings */
     struct aws_h2_frame *peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
-    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
-    peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
@@ -3663,9 +3654,25 @@ TEST_CASE(h2_client_manual_window_management_disabled_auto_window_update) {
     return s_tester_clean_up();
 }
 
+/* Test manual window management for stream with an invalid initial window size. */
+TEST_CASE(h2_client_manual_window_management_invalid_initial_window_size) {
+    /* The initial window size must be less than or equal to 2^31 - 1. */
+    ASSERT_FAILS(
+        s_manual_window_management_tester_init(allocator, false /*conn*/, true /*stream*/, (size_t)INT32_MAX + 1, ctx));
+    ASSERT_UINT_EQUALS(AWS_ERROR_INVALID_ARGUMENT, aws_last_error());
+    return s_tester_clean_up();
+}
+/* Test manual window management for stream with the max initial window size. */
+TEST_CASE(h2_client_manual_window_management_max_initial_window_size) {
+    ASSERT_SUCCESS(
+        s_manual_window_management_tester_init(allocator, false /*conn*/, true /*stream*/, (size_t)INT32_MAX, ctx));
+    return s_tester_clean_up();
+}
+
 TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update) {
 
-    ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, false /*conn*/, true /*stream*/, ctx));
+    ASSERT_SUCCESS(s_manual_window_management_tester_init(
+        allocator, false /*conn*/, true /*stream*/, AWS_H2_INIT_WINDOW_SIZE, ctx));
     /* fake peer sends connection preface */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -3772,31 +3779,17 @@ TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update) {
 
 TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update_with_padding) {
 
-    ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, false /*conn*/, true /*stream*/, ctx));
+    size_t window_size = 20;
+    size_t padding_length = 10;
+    size_t data_length = window_size - padding_length - 1;
+    ASSERT_SUCCESS(
+        s_manual_window_management_tester_init(allocator, false /*conn*/, true /*stream*/, window_size, ctx));
     /* fake peer sends connection preface */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
-    size_t window_size = 20;
-    size_t padding_length = 10;
-    size_t data_length = window_size - padding_length - 1;
-
-    /* change the settings of the initial window size for new stream flow-control window */
-    struct aws_http2_setting settings_array[] = {
-        {.id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE, .value = (uint32_t)window_size},
-    };
-
-    ASSERT_SUCCESS(aws_http2_connection_change_settings(
-        s_tester.connection,
-        settings_array,
-        AWS_ARRAY_SIZE(settings_array),
-        NULL /*callback function*/,
-        NULL /*user_data*/));
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    /* fake peer sends two settings ack back, one for the initial settings, one for the user settings we just sent */
+    /* fake peer sends settings ack back for the initial settings */
     struct aws_h2_frame *peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
-    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
-    peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
@@ -3887,7 +3880,8 @@ TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update_with
 
 TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update_overflow_capped) {
 
-    ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, false /*conn*/, true /*stream*/, ctx));
+    ASSERT_SUCCESS(s_manual_window_management_tester_init(
+        allocator, false /*conn*/, true /*stream*/, AWS_H2_INIT_WINDOW_SIZE, ctx));
     /* fake peer sends connection preface */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -3928,7 +3922,7 @@ TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update_over
  * flow-control error */
 TEST_CASE(h2_client_manual_window_management_user_send_conn_window_update) {
 
-    ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, true /*conn*/, false /*stream*/, ctx));
+    ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, true /*conn*/, false /*stream*/, 0, ctx));
 
     /* get connection preface and acks out of the way */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
@@ -4017,7 +4011,8 @@ TEST_CASE(h2_client_manual_window_management_user_send_conn_window_update) {
 
 TEST_CASE(h2_client_manual_window_management_user_send_conn_window_update_with_padding) {
 
-    ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, true /*conn*/, false /*stream*/, ctx));
+    ASSERT_SUCCESS(s_manual_window_management_tester_init(
+        allocator, true /*conn*/, false /*stream*/, AWS_H2_INIT_WINDOW_SIZE, ctx));
 
     /* get connection preface and acks out of the way */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
@@ -4119,7 +4114,7 @@ TEST_CASE(h2_client_manual_window_management_user_send_conn_window_update_with_p
 
 TEST_CASE(h2_client_manual_window_management_user_send_connection_window_update_overflow_capped) {
 
-    ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, true /*conn*/, false /*stream*/, ctx));
+    ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, true /*conn*/, false /*stream*/, 0, ctx));
     /* fake peer sends connection preface */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -4311,8 +4306,8 @@ TEST_CASE(h2_client_empty_initial_settings) {
         .on_remote_settings_change = s_on_remote_settings_change,
     };
 
-    s_tester.connection =
-        aws_http_connection_new_http2_client(allocator, false /* manual window management */, &http2_options);
+    s_tester.connection = aws_http_connection_new_http2_client(
+        allocator, false /* manual window management */, AWS_H2_INIT_WINDOW_SIZE, &http2_options);
     ASSERT_NOT_NULL(s_tester.connection);
 
     {
@@ -4363,8 +4358,8 @@ TEST_CASE(h2_client_conn_failed_initial_settings_completed_not_invoked) {
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
         .on_remote_settings_change = s_on_remote_settings_change,
     };
-    s_tester.connection =
-        aws_http_connection_new_http2_client(allocator, false /* manual window management */, &http2_options);
+    s_tester.connection = aws_http_connection_new_http2_client(
+        allocator, false /* manual window management */, AWS_H2_INIT_WINDOW_SIZE, &http2_options);
     ASSERT_NOT_NULL(s_tester.connection);
     s_tester.user_data.initial_settings_error_code = INT32_MAX;
     {
