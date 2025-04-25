@@ -345,8 +345,7 @@ struct aws_http_client_connection_options {
      *
      * If true, the flow-control window of each stream will shrink as body data
      * is received (headers, padding, and other metadata do not affect the window).
-     * `initial_window_size` determines the starting size of each stream's window for HTTP/1 stream, while HTTP/2 stream
-     * will use the settings AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE to inform the other side about read back pressure
+     * `initial_window_size` determines the starting size of each stream's window.
      *
      * If a stream's flow-control window reaches 0, no further data will be received. The user must call
      * aws_http_stream_update_window() to increment the stream's window and keep data flowing.
@@ -360,12 +359,17 @@ struct aws_http_client_connection_options {
     bool manual_window_management;
 
     /**
-     * The starting size of each HTTP stream's flow-control window for HTTP/1 connection.
+     * The starting size of each HTTP stream's flow-control window.
      * Required if `manual_window_management` is true,
      * ignored if `manual_window_management` is false.
      *
-     * Always ignored when HTTP/2 connection created. The initial window size is controlled by the settings,
-     * `AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE`
+     * For HTTP/2 connection, this value will end up being one of the initial settings for the connection,
+     * `AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE`.
+     * The corresponding settings from `initial_settings_array` will override this value.
+     * Notes:
+     *  - the setting value has the limitation of 2^31-1, otherwise the connection will be failed to be established with
+     *      AWS_ERROR_INVALID_ARGUMENT.
+     *  - when this set to 0, the initial window size will be set to 0, when `manual_window_management` is true.
      */
     size_t initial_window_size;
 

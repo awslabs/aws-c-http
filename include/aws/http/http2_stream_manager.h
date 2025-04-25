@@ -79,7 +79,7 @@ struct aws_http2_stream_manager_options {
      * - For connection level window control, `conn_manual_window_management` will enable manual control. The
      * inital window size is not controllable.
      * - For stream level window control, `enable_read_back_pressure` will enable manual control. The initial window
-     * size needs to be set through `initial_settings_array`.
+     * size needs to be set through `initial_window_size` or `initial_settings_array`.
      */
     const struct aws_http2_setting *initial_settings_array;
     size_t num_initial_settings;
@@ -92,6 +92,16 @@ struct aws_http2_stream_manager_options {
      * The initial window size can be set by `AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE` via `initial_settings_array`
      */
     bool enable_read_back_pressure;
+    /*
+     * This value will end up being one of the initial settings for the connection,
+     * `AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE`.
+     * The corresponding settings from `initial_settings_array` will override this value.
+     * Notes:
+     *  - the setting value has the limitation of 2^31-1, otherwise the connection will be failed to be established with
+     *      AWS_ERROR_INVALID_ARGUMENT.
+     *  - when this set to 0, the initial window size will be set to 0, when `enable_read_back_pressure` is true.
+     * */
+    size_t initial_window_size;
 
     /* Connection monitor for the underlying connections made */
     const struct aws_http_connection_monitoring_options *monitoring_options;
