@@ -367,7 +367,8 @@ struct aws_http_client_connection_options {
      * `AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE`.
      * The corresponding settings from `initial_settings_array` will override this value.
      * Notes:
-     *  - the setting value has the limitation of 2^31-1,
+     *  - the setting value has the limitation of 2^31-1, otherwise the connection will be failed to be established with
+     *      AWS_ERROR_INVALID_ARGUMENT.
      *  - when this set to 0, the initial window size will be set to 0, when `manual_window_management` is true.
      */
     size_t initial_window_size;

@@ -3654,6 +3654,21 @@ TEST_CASE(h2_client_manual_window_management_disabled_auto_window_update) {
     return s_tester_clean_up();
 }
 
+/* Test manual window management for stream with an invalid initial window size. */
+TEST_CASE(h2_client_manual_window_management_invalid_initial_window_size) {
+    /* The initial window size must be less than or equal to 2^31 - 1. */
+    ASSERT_FAILS(
+        s_manual_window_management_tester_init(allocator, false /*conn*/, true /*stream*/, (size_t)INT32_MAX + 1, ctx));
+    ASSERT_UINT_EQUALS(AWS_ERROR_INVALID_ARGUMENT, aws_last_error());
+    return s_tester_clean_up();
+}
+/* Test manual window management for stream with the max initial window size. */
+TEST_CASE(h2_client_manual_window_management_max_initial_window_size) {
+    ASSERT_SUCCESS(
+        s_manual_window_management_tester_init(allocator, false /*conn*/, true /*stream*/, (size_t)INT32_MAX, ctx));
+    return s_tester_clean_up();
+}
+
 TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update) {
 
     ASSERT_SUCCESS(s_manual_window_management_tester_init(
