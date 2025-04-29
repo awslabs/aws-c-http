@@ -5858,7 +5858,9 @@ TEST_CASE(h2_client_batch_auto_window_update) {
 
     /* The other end sents half the initial window size to get the window below he threshold and trigger the window
      * update from client. */
-    size_t total_data_size = AWS_H2_INIT_WINDOW_SIZE / 2 + 1;
+    /* The threshold is floor(AWS_H2_INIT_WINDOW_SIZE/2), so we need the window size to drop below the threshold.
+     * So, we need at least AWS_H2_INIT_WINDOW_SIZE - AWS_H2_INIT_WINDOW_SIZE/2 + 1 */
+    size_t total_data_size = AWS_H2_INIT_WINDOW_SIZE - AWS_H2_INIT_WINDOW_SIZE / 2 + 1;
 
     /* The frame size has the limit from channel and the protocol level. */
     size_t max_frame_data_size =
