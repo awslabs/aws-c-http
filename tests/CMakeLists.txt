@@ -509,6 +509,8 @@ add_test_case(h2_client_manual_data_write_not_enabled)
 add_test_case(h2_client_manual_data_write_with_body)
 add_test_case(h2_client_manual_data_write_no_data)
 add_test_case(h2_client_manual_data_write_connection_close)
+add_test_case(h2_client_batch_auto_window_update)
+add_test_case(h2_client_batch_manual_window_update)
 
 add_test_case(server_new_destroy)
 add_test_case(server_new_destroy_tcp)

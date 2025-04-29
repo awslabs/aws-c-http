@@ -220,7 +220,7 @@ static int s_stream_send_update_window_if_needed(struct aws_h2_stream *stream, u
      * If the pending amount is greater than uin64 max. Probably an unexpected error, ignores it and cap it. */
     stream->thread_data.pending_window_update_size_self =
         aws_add_u64_saturating(stream->thread_data.pending_window_update_size_self, window_update_size);
-    if (stream->thread_data.window_size_self > (int32_t)stream->window_size_threshold_to_send_update) {
+    if (stream->thread_data.window_size_self >= (int32_t)stream->window_size_threshold_to_send_update) {
         AWS_H2_STREAM_LOGF(
             TRACE,
             stream,

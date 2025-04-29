@@ -1257,11 +1257,11 @@ static int s_connection_send_update_window_if_needed(
      */
     connection->thread_data.pending_window_update_size_self =
         aws_add_u64_saturating(connection->thread_data.pending_window_update_size_self, window_update_size);
-    if (connection->thread_data.window_size_self > connection->window_size_threshold_to_send_update) {
+    if (connection->thread_data.window_size_self >= connection->window_size_threshold_to_send_update) {
         CONNECTION_LOGF(
             TRACE,
             connection,
-            "Ignoring sending connection window update of size%" PRIu64 ". Current size: %" PRIu32
+            "Ignoring sending connection window update of size %" PRIu64 ". Current size: %" PRIu32
             ", threshold: %" PRIu32 " pending: %" PRIu64,
             window_update_size,
             connection->thread_data.window_size_self,
