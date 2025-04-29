@@ -107,6 +107,8 @@ static void s_send_goaway(
     const struct aws_byte_cursor *optional_debug_data);
 static struct aws_h2_pending_settings *s_new_pending_settings(
     struct aws_allocator *allocator,
+    bool add_initial_window,
+    size_t initial_window_size,
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     aws_http2_on_change_settings_complete_fn *on_completed,
@@ -298,6 +300,7 @@ void aws_h2_connection_shutdown_due_to_write_err(struct aws_h2_connection *conne
 static struct aws_h2_connection *s_connection_new(
     struct aws_allocator *alloc,
     bool manual_window_management,
+    size_t initial_window_size,
     const struct aws_http2_connection_options *http2_options,
     bool server) {
 
@@ -384,6 +387,16 @@ static struct aws_h2_connection *s_connection_new(
     connection->thread_data.window_size_peer = AWS_H2_INIT_WINDOW_SIZE;
     connection->thread_data.window_size_self = AWS_H2_INIT_WINDOW_SIZE;
 
+    /* Default to half of the initial window size */
+    if (http2_options->conn_window_size_threshold_to_send_update) {
+        connection->window_size_threshold_to_send_update = http2_options->conn_window_size_threshold_to_send_update;
+    } else {
+        connection->window_size_threshold_to_send_update = (uint32_t)(AWS_H2_INIT_WINDOW_SIZE / 2);
+    }
+    /* Cap it to int32 max, since stream window allows negative. */
+    connection->stream_window_size_threshold_to_send_update =
+        aws_min_u32(http2_options->stream_window_size_threshold_to_send_update, INT32_MAX);
+
     connection->thread_data.goaway_received_last_stream_id = AWS_H2_STREAM_ID_MAX;
     connection->thread_data.goaway_sent_last_stream_id = AWS_H2_STREAM_ID_MAX;
 
@@ -416,6 +429,10 @@ static struct aws_h2_connection *s_connection_new(
     /* User data from connection base is not ready until the handler installed */
     connection->thread_data.init_pending_settings = s_new_pending_settings(
         connection->base.alloc,
+        manual_window_management &&
+            initial_window_size != AWS_H2_INIT_WINDOW_SIZE, /* If the initial window size equals to the initial window
+                                                               size, don't need to send an extra one. */
+        initial_window_size,
         http2_options->initial_settings_array,
         http2_options->num_initial_settings,
         http2_options->on_initial_settings_completed,
@@ -435,9 +452,11 @@ error:
 struct aws_http_connection *aws_http_connection_new_http2_server(
     struct aws_allocator *allocator,
     bool manual_window_management,
+    size_t initial_window_size,
     const struct aws_http2_connection_options *http2_options) {
 
-    struct aws_h2_connection *connection = s_connection_new(allocator, manual_window_management, http2_options, true);
+    struct aws_h2_connection *connection =
+        s_connection_new(allocator, manual_window_management, initial_window_size, http2_options, true);
     if (!connection) {
         return NULL;
     }
@@ -450,9 +469,11 @@ struct aws_http_connection *aws_http_connection_new_http2_server(
 struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
     bool manual_window_management,
+    size_t initial_window_size,
     const struct aws_http2_connection_options *http2_options) {
 
-    struct aws_h2_connection *connection = s_connection_new(allocator, manual_window_management, http2_options, false);
+    struct aws_h2_connection *connection =
+        s_connection_new(allocator, manual_window_management, initial_window_size, http2_options, false);
     if (!connection) {
         return NULL;
     }
@@ -503,14 +524,29 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
 
 static struct aws_h2_pending_settings *s_new_pending_settings(
     struct aws_allocator *allocator,
+    bool add_initial_window,
+    size_t initial_window_size,
     const struct aws_http2_setting *settings_array,
-    size_t num_settings,
+    size_t passin_num_settings,
     aws_http2_on_change_settings_complete_fn *on_completed,
     void *user_data) {
+    size_t num_settings = passin_num_settings;
+    if (add_initial_window) {
+        if (initial_window_size > AWS_H2_WINDOW_UPDATE_MAX) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION,
+                "Initial window size %zu is larger than max %d",
+                initial_window_size,
+                AWS_H2_WINDOW_UPDATE_MAX);
+            aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+            return NULL;
+        }
+        num_settings++;
+    }
 
     size_t settings_storage_size = sizeof(struct aws_http2_setting) * num_settings;
     struct aws_h2_pending_settings *pending_settings;
-    void *settings_storage;
+    uint8_t *settings_storage;
     if (!aws_mem_acquire_many(
             allocator,
             2,
@@ -523,9 +559,17 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
 
     AWS_ZERO_STRUCT(*pending_settings);
     /* We buffer the settings up, incase the caller has freed them when the ACK arrives */
-    pending_settings->settings_array = settings_storage;
+    pending_settings->settings_array = (void *)settings_storage;
+    if (add_initial_window) {
+        /* insert the initial window size settings to the first of all the settings. */
+        pending_settings->settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
+        pending_settings->settings_array[0].value = (uint32_t)initial_window_size;
+        /* Move the storage pointer to the second in the list */
+        settings_storage = settings_storage + sizeof(struct aws_http2_setting);
+    }
     if (settings_array) {
-        memcpy(pending_settings->settings_array, settings_array, num_settings * sizeof(struct aws_http2_setting));
+        /* copy all passin settings to the settings storage. */
+        memcpy(settings_storage, settings_array, passin_num_settings * sizeof(struct aws_http2_setting));
     }
     pending_settings->num_settings = num_settings;
     pending_settings->on_completed = on_completed;
@@ -832,7 +876,8 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
             CONNECTION_LOGF(
                 DEBUG,
                 connection,
-                "Peer connection's flow-control window is too small now %zu. Connection will stop sending DATA until "
+                "Peer connection's flow-control window is too small now %" PRIu32
+                ". Connection will stop sending DATA until "
                 "WINDOW_UPDATE is received.",
                 connection->thread_data.window_size_peer);
             goto done;
@@ -1186,19 +1231,77 @@ struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised
     return AWS_H2ERR_SUCCESS;
 }
 
-static int s_connection_send_update_window(struct aws_h2_connection *connection, uint32_t window_size) {
-    struct aws_h2_frame *connection_window_update_frame =
-        aws_h2_frame_new_window_update(connection->base.alloc, 0, window_size);
-    if (!connection_window_update_frame) {
-        CONNECTION_LOGF(
-            ERROR,
-            connection,
-            "WINDOW_UPDATE frame on connection failed to be sent, error %s",
-            aws_error_name(aws_last_error()));
-        return AWS_OP_ERR;
+/* Calculate the capped windows update delta */
+uint32_t aws_h2_calculate_cap_window_update_delta(int64_t current_window, uint64_t pending_update_size) {
+
+    /* UPDATE_WINDOW frame can't exceed AWS_H2_WINDOW_UPDATE_MAX (aka INT32_MAX) */
+    int64_t delta = (int64_t)aws_min_u64(pending_update_size, INT32_MAX);
+    /* resulting window size can't exceed INT32_MAX */
+    delta = aws_min_i64(delta, (int64_t)INT32_MAX - current_window);
+    /* assert should hold, based on our clamping above */
+    AWS_ASSERT(delta >= 0 && delta <= AWS_H2_WINDOW_UPDATE_MAX);
+    return (uint32_t)delta;
+}
+
+static int s_connection_send_update_window_if_needed(
+    struct aws_h2_connection *connection,
+    uint64_t window_update_size) {
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
+    /**
+     * Only send a WINDOW_UPDATE frame if the connection window is below the threshold
+     * If the pending amount is greater than uin64 max. Probably an unexpected error, ignores it and cap it.
+     */
+    connection->thread_data.pending_window_update_size_self =
+        aws_add_u64_saturating(connection->thread_data.pending_window_update_size_self, window_update_size);
+    if (connection->thread_data.pending_window_update_size_self == 0) {
+        /* Nothing to do */
+        return AWS_OP_SUCCESS;
     }
-    aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
-    connection->thread_data.window_size_self += window_size;
+    if (connection->thread_data.window_size_self >= connection->window_size_threshold_to_send_update) {
+        CONNECTION_LOGF(
+            TRACE,
+            connection,
+            "Ignoring sending connection window update of size %" PRIu64 ". Current size: %" PRIu32
+            ", threshold: %" PRIu32 " pending: %" PRIu64,
+            window_update_size,
+            connection->thread_data.window_size_self,
+            connection->window_size_threshold_to_send_update,
+            connection->thread_data.pending_window_update_size_self);
+        return AWS_OP_SUCCESS;
+    }
+
+    /* Cap the window to AWS_H2_WINDOW_UPDATE_MAX */
+    uint32_t window_delta = aws_h2_calculate_cap_window_update_delta(
+        connection->thread_data.window_size_self, connection->thread_data.pending_window_update_size_self);
+
+    if (window_delta != connection->thread_data.pending_window_update_size_self) {
+        CONNECTION_LOGF(
+            DEBUG,
+            (void *)connection,
+            "Capping window update delta from %" PRIu64 " to %" PRIu32,
+            connection->thread_data.pending_window_update_size_self,
+            window_delta);
+    }
+
+    if (window_delta > 0) {
+        struct aws_h2_frame *connection_window_update_frame =
+            aws_h2_frame_new_window_update(connection->base.alloc, 0, window_delta);
+        if (!connection_window_update_frame) {
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "WINDOW_UPDATE frame on connection failed to be sent, error %s",
+                aws_error_name(aws_last_error()));
+            return AWS_OP_ERR;
+        }
+        CONNECTION_LOGF(DEBUG, connection, "Sending connection window by %" PRIu32 ".", window_delta);
+        aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
+        /* The math in aws_h2_calculate_cap_window_update_delta makes sure no overflow afterwards. */
+        connection->thread_data.window_size_self += window_delta;
+        connection->thread_data.pending_window_update_size_self -= window_delta;
+    }
+
     return AWS_OP_SUCCESS;
 }
 
@@ -1212,12 +1315,12 @@ struct aws_h2err s_decoder_on_data_begin(
 
     /* A receiver that receives a flow-controlled frame MUST always account for its contribution against the connection
      * flow-control window, unless the receiver treats this as a connection error */
-    if (aws_sub_size_checked(
+    if (aws_sub_u32_checked(
             connection->thread_data.window_size_self, payload_len, &connection->thread_data.window_size_self)) {
         CONNECTION_LOGF(
             ERROR,
             connection,
-            "DATA length %" PRIu32 " exceeds flow-control window %zu",
+            "DATA length %" PRIu32 " exceeds flow-control window %" PRIu32 ".",
             payload_len,
             connection->thread_data.window_size_self);
         return aws_h2err_from_h2_code(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR);
@@ -1247,16 +1350,8 @@ struct aws_h2err s_decoder_on_data_begin(
         auto_window_update = payload_len;
     }
 
-    if (auto_window_update != 0) {
-        if (s_connection_send_update_window(connection, auto_window_update)) {
-            return aws_h2err_from_last_error();
-        }
-        CONNECTION_LOGF(
-            TRACE,
-            connection,
-            "Automatically updating connection window by %" PRIu32 "(%" PRIu32 " due to padding).",
-            auto_window_update,
-            total_padding_bytes);
+    if (s_connection_send_update_window_if_needed(connection, auto_window_update)) {
+        return aws_h2err_from_last_error();
     }
 
     return AWS_H2ERR_SUCCESS;
@@ -1436,7 +1531,7 @@ static struct aws_h2err s_decoder_on_settings(
                 while (!aws_hash_iter_done(&stream_iter)) {
                     struct aws_h2_stream *stream = stream_iter.element.value;
                     aws_hash_iter_next(&stream_iter);
-                    err = aws_h2_stream_window_size_change(stream, size_changed, false /*self*/);
+                    err = aws_h2_stream_window_size_change_direct(stream, size_changed, false /*self*/);
                     if (aws_h2err_failed(err)) {
                         CONNECTION_LOG(
                             ERROR,
@@ -1512,7 +1607,7 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
                 while (!aws_hash_iter_done(&stream_iter)) {
                     struct aws_h2_stream *stream = stream_iter.element.value;
                     aws_hash_iter_next(&stream_iter);
-                    err = aws_h2_stream_window_size_change(stream, size_changed, true /*self*/);
+                    err = aws_h2_stream_window_size_change_direct(stream, size_changed, true /*self*/);
                     if (aws_h2err_failed(err)) {
                         CONNECTION_LOG(
                             ERROR,
@@ -1951,7 +2046,7 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
     struct aws_linked_list pending_goaway;
     aws_linked_list_init(&pending_goaway);
 
-    size_t window_update_size;
+    uint64_t window_update_size;
     int new_stream_error_code;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
@@ -1962,8 +2057,8 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         aws_linked_list_swap_contents(&connection->synced_data.pending_settings_list, &pending_settings);
         aws_linked_list_swap_contents(&connection->synced_data.pending_ping_list, &pending_ping);
         aws_linked_list_swap_contents(&connection->synced_data.pending_goaway_list, &pending_goaway);
-        window_update_size = connection->synced_data.window_update_size;
-        connection->synced_data.window_update_size = 0;
+        window_update_size = connection->synced_data.pending_window_update_size_self;
+        connection->synced_data.pending_window_update_size_self = 0;
         new_stream_error_code = connection->synced_data.new_stream_error_code;
 
         s_unlock_synced_data(connection);
@@ -1976,10 +2071,8 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         aws_h2_connection_enqueue_outgoing_frame(connection, frame);
     }
 
-    /* We already enqueued the window_update frame, just apply the change and let our peer check this value, no matter
-     * overflow happens or not. Peer will detect it for us. */
-    connection->thread_data.window_size_self =
-        aws_add_size_saturating(connection->thread_data.window_size_self, window_update_size);
+    /* Add window update and enqueue the frame if needed */
+    s_connection_send_update_window_if_needed(connection, window_update_size);
 
     /* Process new pending_streams */
     while (!aws_linked_list_empty(&pending_streams)) {
@@ -2168,7 +2261,7 @@ static bool s_connection_new_requests_allowed(const struct aws_http_connection *
 
 static void s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size) {
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
-    if (!increment_size) {
+    if (increment_size == 0) {
         /* Silently do nothing. */
         return;
     }
@@ -2180,47 +2273,24 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
             "Connection manual window management is off, update window operations are not supported.");
         return;
     }
-    struct aws_h2_frame *connection_window_update_frame =
-        aws_h2_frame_new_window_update(connection->base.alloc, 0, increment_size);
-    if (!connection_window_update_frame) {
-        CONNECTION_LOGF(
-            ERROR,
-            connection,
-            "Failed to create WINDOW_UPDATE frame on connection, error %s",
-            aws_error_name(aws_last_error()));
-        /* OOM should result in a crash. And the increment size is too huge is the only other failure case, which will
-         * result in overflow. */
-        goto overflow;
-    }
-
-    int err = 0;
     bool cross_thread_work_should_schedule = false;
     bool connection_open = false;
-    size_t sum_size = 0;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
-
-        err |= aws_add_size_checked(connection->synced_data.window_update_size, increment_size, &sum_size);
-        err |= sum_size > AWS_H2_WINDOW_UPDATE_MAX;
         connection_open = connection->synced_data.is_open;
-
-        if (!err && connection_open) {
+        if (connection_open) {
             cross_thread_work_should_schedule = !connection->synced_data.is_cross_thread_work_task_scheduled;
             connection->synced_data.is_cross_thread_work_task_scheduled = true;
-            aws_linked_list_push_back(
-                &connection->synced_data.pending_frame_list, &connection_window_update_frame->node);
-            connection->synced_data.window_update_size = sum_size;
+            /**
+             * Be more user friendly, if the increment size is too large, we will just saturate it to the max.
+             * AWS_H2_WINDOW_UPDATE_MAX will be checked during the actual sending of the window update frame.
+             */
+            connection->synced_data.pending_window_update_size_self =
+                aws_add_u64_saturating(connection->synced_data.pending_window_update_size_self, increment_size);
+            connection_open = connection->synced_data.is_open;
         }
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
-    if (err) {
-        CONNECTION_LOG(
-            ERROR,
-            connection,
-            "The connection's flow-control windows has been incremented beyond 2**31 -1, the max for HTTP/2. The ");
-        aws_h2_frame_destroy(connection_window_update_frame);
-        goto overflow;
-    }
 
     if (cross_thread_work_should_schedule) {
         CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
@@ -2229,7 +2299,6 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
 
     if (!connection_open) {
         /* connection already closed, just do nothing */
-        aws_h2_frame_destroy(connection_window_update_frame);
         return;
     }
     CONNECTION_LOGF(
@@ -2238,14 +2307,6 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
         "User requested to update the HTTP/2 connection's flow-control windows by %" PRIu32 ".",
         increment_size);
     return;
-overflow:
-    /* Shutdown the connection as overflow detected */
-    s_stop(
-        connection,
-        false /*stop_reading*/,
-        false /*stop_writing*/,
-        true /*schedule_shutdown*/,
-        AWS_ERROR_OVERFLOW_DETECTED);
 }
 
 static int s_connection_change_settings(
@@ -2262,8 +2323,14 @@ static int s_connection_change_settings(
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    struct aws_h2_pending_settings *pending_settings =
-        s_new_pending_settings(connection->base.alloc, settings_array, num_settings, on_completed, user_data);
+    struct aws_h2_pending_settings *pending_settings = s_new_pending_settings(
+        connection->base.alloc,
+        false /*add initial window*/,
+        0 /*initial window size*/,
+        settings_array,
+        num_settings,
+        on_completed,
+        user_data);
     if (!pending_settings) {
         return AWS_OP_ERR;
     }

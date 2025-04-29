@@ -64,24 +64,24 @@ jobs:
           - name: gcc-8
           - name: gcc-11
           - name: gcc-13
-          # See Issue: https://github.com/llvm/llvm-project/issues/59007. Although this issue 
-          # has been fixed in LLVM, the fix will probably not propagate to older versions of Ubuntu and GCC 13.1. 
+          # See Issue: https://github.com/llvm/llvm-project/issues/59007. Although this issue
+          # has been fixed in LLVM, the fix will probably not propagate to older versions of Ubuntu and GCC 13.1.
           #
-          # Starting with GLIBC version 2.34, the `dn_expand` function, previously found in `libresolv.so`, was moved to `libc.so`. This 
+          # Starting with GLIBC version 2.34, the `dn_expand` function, previously found in `libresolv.so`, was moved to `libc.so`. This
           # function is used internally by the `getaddrinfo()` system call.
           #
-          # In our setup (As of December 2024), we are using an Ubuntu 18 Docker image on a newer Ubuntu host. 
+          # In our setup (As of December 2024), we are using an Ubuntu 18 Docker image on a newer Ubuntu host.
           # However, due to compatibility issues between newer libasan.so in GCC 13.1
-          # and the older Ubuntu image, the linker does not link with `libresolv.so`. 
+          # and the older Ubuntu image, the linker does not link with `libresolv.so`.
           # This results in crashes in `getaddrinfo()` since Ubuntu-18 GLIBC is 2.31.
           #
-          # This problem does not occur on Ubuntu 22 and newer because GLIBC versions 2.34 
-          # and above include `dn_expand` in `libc.so`, eliminating the dependency on 
+          # This problem does not occur on Ubuntu 22 and newer because GLIBC versions 2.34
+          # and above include `dn_expand` in `libc.so`, eliminating the dependency on
           # `libresolv.so`.
           #
-          # We can bypass this problem by linking with "resolv" manually until we bump 
+          # We can bypass this problem by linking with "resolv" manually until we bump
           # our base Linux image to Ubuntu 22.
-            extra-build-flag: --cmake-extra=-DCMAKE_EXE_LINKER_FLAGS="-lresolv" 
+            extra-build-flag: --cmake-extra=-DCMAKE_EXE_LINKER_FLAGS="-lresolv"
     steps:
     - uses: aws-actions/configure-aws-credentials@v4
       with:

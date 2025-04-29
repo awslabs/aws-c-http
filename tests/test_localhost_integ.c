@@ -408,12 +408,6 @@ static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, v
     s_tester.alloc = allocator;
 
     size_t length = 2500000000UL;
-#ifdef AWS_OS_LINUX
-    /* Using Python hyper h2 server frame work, met a weird upload performance issue on Linux. Our client against nginx
-     * platform has not met the same issue. We assume it's because the server framework implementation.  Use lower
-     * number of linux */
-    length = 250000000UL;
-#endif
 
     struct aws_string *http_localhost_host = NULL;
     if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||

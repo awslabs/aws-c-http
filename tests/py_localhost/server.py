@@ -51,6 +51,8 @@ class H2Protocol(asyncio.Protocol):
     def connection_made(self, transport: asyncio.Transport):
         self.transport = transport
         self.conn.initiate_connection()
+        # Increase the window to large enough to avoid blocking on the window limits.
+        self.conn.increment_flow_control_window(int(2147483647/2))
         self.transport.write(self.conn.data_to_send())
 
     def connection_lost(self, exc):
@@ -70,7 +72,8 @@ class H2Protocol(asyncio.Protocol):
                 if isinstance(event, RequestReceived):
                     self.request_received(event.headers, event.stream_id)
                 elif isinstance(event, DataReceived):
-                    self.receive_data(event.data, event.stream_id)
+                    self.receive_data(event.data, event.stream_id,
+                                      event.flow_controlled_length)
                 elif isinstance(event, StreamEnded):
                     self.stream_complete(event.stream_id)
                 elif isinstance(event, ConnectionTerminated):
@@ -86,6 +89,9 @@ class H2Protocol(asyncio.Protocol):
                 self.transport.write(self.conn.data_to_send())
 
     def request_received(self, headers: List[Tuple[str, str]], stream_id: int):
+        # Bump the flow control window to large enough to avoid blocking on the window limits.
+        self.conn.increment_flow_control_window(
+            int(2147483647/2), stream_id)
         self.raw_headers = headers
         headers = collections.OrderedDict(headers)
         path = headers[':path']
@@ -145,12 +151,16 @@ class H2Protocol(asyncio.Protocol):
             self.conn.send_headers(stream_id, [(':status', '404')])
             asyncio.ensure_future(self.send_data(b"Not Found", stream_id))
 
-    def receive_data(self, data: bytes, stream_id: int):
+    def receive_data(self, data: bytes, stream_id: int, flow_controlled_length: int):
         """
         We've received some data on a stream. If that stream is one we're
         expecting data on, save it off. Otherwise, reset the stream.
         """
         try:
+            self.conn.increment_flow_control_window(
+                flow_controlled_length)
+            self.conn.increment_flow_control_window(
+                flow_controlled_length, stream_id)
             stream_data = self.stream_data[stream_id]
         except KeyError:
             self.conn.reset_stream(
@@ -164,11 +174,7 @@ class H2Protocol(asyncio.Protocol):
                         len(data)
                 else:
                     self.num_sentence_received[stream_id] = len(data)
-                # update window for stream
-                if len(data) > 0:
-                    self.conn.increment_flow_control_window(len(data))
-                    self.conn.increment_flow_control_window(
-                        len(data), stream_id)
+
             else:
                 stream_data.data.write(data)
 

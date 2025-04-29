@@ -19,7 +19,7 @@ program_to_run = elasticurl_cmd_prefix[0]
 
 if 'bin' in program_to_run:
     if not os.path.exists(program_to_run):
-        print('the program_to_run is not found, skip integration test')
+        print(f'the {program_to_run} is not found, skip integration test')
         sys.exit(0)
 
 # Remove args from sys.argv so that unittest doesn't also try to parse them.

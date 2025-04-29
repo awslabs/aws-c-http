@@ -88,7 +88,7 @@ TEST_CASE(h2_encoder_data) {
     bool body_stalled;
     bool body_failed;
     int32_t stream_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
-    size_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
+    uint32_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
     ASSERT_SUCCESS(aws_h2_encode_data_frame(
         &encoder,
         0x76543210 /*stream_id*/,
@@ -145,7 +145,7 @@ TEST_CASE(h2_encoder_data_stalled) {
     bool body_stalled;
     bool body_failed;
     int32_t stream_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
-    size_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
+    uint32_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
     ASSERT_SUCCESS(aws_h2_encode_data_frame(
         &encoder,
         0x76543210 /*stream_id*/,
@@ -190,7 +190,7 @@ TEST_CASE(h2_encoder_data_stalled_completely) {
     bool body_stalled;
     bool body_failed;
     int32_t stream_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
-    size_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
+    uint32_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
     ASSERT_SUCCESS(aws_h2_encode_data_frame(
         &encoder,
         0x76543210 /*stream_id*/,

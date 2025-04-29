@@ -596,7 +596,7 @@ int h2_fake_peer_send_data_frame_with_padding_length(
     bool body_stalled;
     bool body_failed;
     int32_t stream_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
-    size_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
+    uint32_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
     ASSERT_SUCCESS(aws_h2_encode_data_frame(
         &peer->encoder,
         stream_id,

@@ -238,7 +238,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             bool body_stalled;
             bool body_failed;
             int32_t stream_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
-            size_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
+            uint32_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
             AWS_FATAL_ASSERT(
                 aws_h2_encode_data_frame(
                     &encoder,

@@ -318,7 +318,7 @@ int aws_h2_encode_data_frame(
     bool body_ends_stream,
     uint8_t pad_length,
     int32_t *stream_window_size_peer,
-    size_t *connection_window_size_peer,
+    uint32_t *connection_window_size_peer,
     struct aws_byte_buf *output,
     bool *body_complete,
     bool *body_stalled,
@@ -443,7 +443,7 @@ int aws_h2_encode_data_frame(
 
     /* update the connection window size now, we will update stream window size when this function returns */
     AWS_ASSERT(payload_len <= min_window_size);
-    *connection_window_size_peer -= payload_len;
+    *connection_window_size_peer -= (uint32_t)payload_len;
     *stream_window_size_peer -= (int32_t)payload_len;
 
     AWS_ASSERT(writes_ok);
