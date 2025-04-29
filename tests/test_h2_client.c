@@ -5969,6 +5969,11 @@ TEST_CASE(h2_client_batch_manual_window_update) {
     /* Make sure we have multiple data frames. */
     size_t num_data_frames = 3;
     for (size_t i = 0; i < num_data_frames; i++) {
+        /* Client update the window manually before receive the data, since once the data received, the client will
+         * start to send out window updates if needed. */
+        aws_http_stream_update_window(stream_tester.stream, body_size);
+        aws_http2_connection_update_window(s_tester.connection, body_size);
+        testing_channel_drain_queued_tasks(&s_tester.testing_channel);
         struct aws_byte_buf body_buf;
         ASSERT_SUCCESS(aws_byte_buf_init(&body_buf, allocator, body_size));
         ASSERT_TRUE(aws_byte_buf_write_u8_n(&body_buf, (uint8_t)'a', body_size));
@@ -5976,10 +5981,6 @@ TEST_CASE(h2_client_batch_manual_window_update) {
         ASSERT_SUCCESS(h2_fake_peer_send_data_frame(&s_tester.peer, stream_id, body_cursor, false /*end_stream*/));
         testing_channel_drain_queued_tasks(&s_tester.testing_channel);
         aws_byte_buf_clean_up(&body_buf);
-        /* Client update the window manually */
-        aws_http_stream_update_window(stream_tester.stream, body_size);
-        aws_http2_connection_update_window(s_tester.connection, body_size);
-        testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     }
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
