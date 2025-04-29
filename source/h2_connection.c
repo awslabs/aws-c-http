@@ -1247,16 +1247,17 @@ static int s_connection_send_update_window_if_needed(
     struct aws_h2_connection *connection,
     uint64_t window_update_size) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
-    if (window_update_size == 0) {
-        /* Nothing to do */
-        return AWS_OP_SUCCESS;
-    }
+
     /**
      * Only send a WINDOW_UPDATE frame if the connection window is below the threshold
      * If the pending amount is greater than uin64 max. Probably an unexpected error, ignores it and cap it.
      */
     connection->thread_data.pending_window_update_size_self =
         aws_add_u64_saturating(connection->thread_data.pending_window_update_size_self, window_update_size);
+    if (connection->thread_data.pending_window_update_size_self == 0) {
+        /* Nothing to do */
+        return AWS_OP_SUCCESS;
+    }
     if (connection->thread_data.window_size_self >= connection->window_size_threshold_to_send_update) {
         CONNECTION_LOGF(
             TRACE,

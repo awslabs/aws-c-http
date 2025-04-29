@@ -211,20 +211,20 @@ static struct aws_h2err s_check_state_allows_frame_type(
 
 static int s_stream_send_update_window_if_needed(struct aws_h2_stream *stream, uint64_t window_update_size) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
-    if (window_update_size == 0) {
-        /* Nothing to do */
-        return AWS_OP_SUCCESS;
-    }
 
     /* Only send a WINDOW_UPDATE frame if the stream window is below the threshold
      * If the pending amount is greater than uin64 max. Probably an unexpected error, ignores it and cap it. */
     stream->thread_data.pending_window_update_size_self =
         aws_add_u64_saturating(stream->thread_data.pending_window_update_size_self, window_update_size);
+    if (stream->thread_data.pending_window_update_size_self == 0) {
+        /* Nothing to do */
+        return AWS_OP_SUCCESS;
+    }
     if (stream->thread_data.window_size_self >= (int32_t)stream->window_size_threshold_to_send_update) {
         AWS_H2_STREAM_LOGF(
             TRACE,
             stream,
-            "Ignoring sending WINDOW_UPDATE update of size%" PRIu64 ". Current size: %" PRIi32 ", threshold: %" PRIu32
+            "Ignoring sending WINDOW_UPDATE update of size %" PRIu64 ". Current size: %" PRIi32 ", threshold: %" PRIu32
             " pending: %" PRIu64,
             window_update_size,
             stream->thread_data.window_size_self,
