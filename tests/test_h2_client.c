@@ -5972,7 +5972,7 @@ TEST_CASE(h2_client_batch_manual_window_update) {
         /* Client update the window manually before receive the data, since once the data received, the client will
          * start to send out window updates if needed. */
         aws_http_stream_update_window(stream_tester.stream, body_size);
-        aws_http2_connection_update_window(s_tester.connection, body_size);
+        aws_http2_connection_update_window(s_tester.connection, (uint32_t)body_size);
         testing_channel_drain_queued_tasks(&s_tester.testing_channel);
         struct aws_byte_buf body_buf;
         ASSERT_SUCCESS(aws_byte_buf_init(&body_buf, allocator, body_size));
@@ -6077,7 +6077,7 @@ TEST_CASE(h2_client_cap_manual_window_update) {
 
     /* User wants to update the connection window to overflow */
     size_t allowed_max_window_update = INT32_MAX - AWS_H2_INIT_WINDOW_SIZE;
-    aws_http2_connection_update_window(s_tester.connection, allowed_max_window_update + 100);
+    aws_http2_connection_update_window(s_tester.connection, (uint32_t)allowed_max_window_update + 100);
     /* update stream window to max */
     aws_http_stream_update_window(stream_tester.stream, SIZE_MAX);
     /* The other side should received the allowed max for the connection, since it's below the threshold  */
