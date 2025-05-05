@@ -382,7 +382,8 @@ static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2
                 aws_event_loop_group_get_next_loop(stream_manager->bootstrap->event_loop_group);
             /* Acquire a refcount for the task , released when task finished
              * s_finish_pending_stream_acquisitions_task */
-            aws_event_loop_group_acquire_from_event_loop(stream_manager->bootstrap->event_loop_group);
+            aws_event_loop_group_acquire_from_event_loop(
+                stream_manager->finish_pending_stream_acquisitions_task_event_loop);
             struct aws_task *finish_pending_stream_acquisitions_task =
                 aws_mem_calloc(stream_manager->allocator, 1, sizeof(struct aws_task));
             aws_task_init(
