@@ -161,8 +161,6 @@ class H2Protocol(asyncio.Protocol):
                 # We need to update the flow control window for the stream
                 # and the connection. And the function only accepts value > 0.
                 self.conn.increment_flow_control_window(
-                    flow_controlled_length, stream_id)
-                self.conn.increment_flow_control_window(
                     flow_controlled_length)
                 self.conn.increment_flow_control_window(
                     flow_controlled_length, stream_id)
