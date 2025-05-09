@@ -157,10 +157,13 @@ class H2Protocol(asyncio.Protocol):
         expecting data on, save it off. Otherwise, reset the stream.
         """
         try:
-            self.conn.increment_flow_control_window(
-                flow_controlled_length)
-            self.conn.increment_flow_control_window(
-                flow_controlled_length, stream_id)
+            if flow_controlled_length > 0:
+                # We need to update the flow control window for the stream
+                # and the connection. And the function only accepts value > 0.
+                self.conn.increment_flow_control_window(
+                    flow_controlled_length)
+                self.conn.increment_flow_control_window(
+                    flow_controlled_length, stream_id)
             stream_data = self.stream_data[stream_id]
         except KeyError:
             self.conn.reset_stream(
