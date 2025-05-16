@@ -49,7 +49,6 @@ jobs:
     strategy:
       matrix:
         compiler:
-          - name: clang-3
           - name: clang-6
           - name: clang-8
           - name: clang-9
