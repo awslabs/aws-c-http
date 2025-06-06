@@ -403,7 +403,7 @@ int aws_h2_encode_data_frame(
         }
     }
 
-    if (body_sub_buf.len == 0 && !body_ends_stream) {
+    if (body_sub_buf.len == 0 && !(flags & AWS_H2_FRAME_F_END_STREAM)) {
         /* This frame would have no useful information, don't even bother sending it */
         goto handle_nothing_to_send_right_now;
     }
