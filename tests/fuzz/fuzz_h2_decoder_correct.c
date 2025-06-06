@@ -233,6 +233,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
             /* Allow body to exceed available space. Data encoder should just write what it can fit */
             struct aws_input_stream *body = aws_input_stream_new_from_cursor(allocator, &input);
+            if (input.len == 0) {
+                /* In case of empty body, make sure the end stream flag to be set, other wise, no frames should be
+                 * generated to decode. */
+                body_ends_stream = true;
+            }
 
             bool body_complete;
             bool body_stalled;
