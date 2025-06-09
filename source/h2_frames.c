@@ -378,7 +378,6 @@ int aws_h2_encode_data_frame(
     /* Use a sub-buffer to limit where body can go */
     struct aws_byte_buf body_sub_buf =
         aws_byte_buf_from_empty_array(output->buffer + output->len + bytes_preceding_body, max_body);
-
     /* Read body into sub-buffer */
     if (aws_input_stream_read(body_stream, &body_sub_buf)) {
         *body_failed = true;
@@ -401,12 +400,12 @@ int aws_h2_encode_data_frame(
         if (body_sub_buf.len < body_sub_buf.capacity) {
             /* Body stream was unable to provide as much data as it could have */
             *body_stalled = true;
-
-            if (body_sub_buf.len == 0) {
-                /* This frame would have no useful information, don't even bother sending it */
-                goto handle_nothing_to_send_right_now;
-            }
         }
+    }
+
+    if (body_sub_buf.len == 0 && !(flags & AWS_H2_FRAME_F_END_STREAM)) {
+        /* This frame would have no useful information, don't even bother sending it */
+        goto handle_nothing_to_send_right_now;
     }
 
     ENCODER_LOGF(
