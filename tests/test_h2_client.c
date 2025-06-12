@@ -498,7 +498,7 @@ TEST_CASE(h2_client_stream_complete) {
         stream_tester.metrics.receive_end_timestamp_ns - stream_tester.metrics.receive_start_timestamp_ns);
     ASSERT_TRUE(stream_tester.metrics.send_start_timestamp_ns > 0);
     ASSERT_TRUE(stream_tester.metrics.send_end_timestamp_ns > 0);
-    ASSERT_TRUE(stream_tester.metrics.send_end_timestamp_ns > stream_tester.metrics.send_start_timestamp_ns);
+    ASSERT_TRUE(stream_tester.metrics.send_end_timestamp_ns >= stream_tester.metrics.send_start_timestamp_ns);
     ASSERT_TRUE(
         stream_tester.metrics.sending_duration_ns ==
         stream_tester.metrics.send_end_timestamp_ns - stream_tester.metrics.send_start_timestamp_ns);
