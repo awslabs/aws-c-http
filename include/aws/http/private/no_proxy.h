@@ -11,7 +11,8 @@ AWS_EXTERN_C_BEGIN
 
 /*
  * Check if a host should bypass the proxy based on the NO_PROXY environment variable.
- * Since NO_PROXY has no standard yet. Follows the curl implementation from noproxy.c.
+ * Since NO_PROXY has no standard yet. Follows the curl implementation from noproxy.c at 8.14.1.
+ * https://github.com/curl/curl/blob/curl-8_14_1/lib/noproxy.c
  *
  * NO_PROXY is a comma-separated list of domain names, hostnames, or IP addresses that
  * should bypass the proxy.
