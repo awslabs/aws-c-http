@@ -27,7 +27,7 @@ enum hostname_type {
  * @param host_addr Pre-parsed binary representation of the host IP, or NULL to parse from host
  * @return true if the IP address matches the CIDR pattern, false otherwise
  */
-static bool s_cidr4_match(uint16_t bits, struct aws_string *network_part, uint32_t address) {
+static bool s_cidr4_match(uint64_t bits, struct aws_string *network_part, uint32_t address) {
 
     uint32_t check = 0;
 
@@ -66,7 +66,7 @@ static bool s_cidr4_match(uint16_t bits, struct aws_string *network_part, uint32
  * @param host_addr Pre-parsed binary representation of the host IP, or NULL to parse from host
  * @return true if the IP address matches the CIDR pattern, false otherwise
  */
-static bool s_cidr6_match(uint16_t bits, struct aws_string *network_part, uint8_t *address) {
+static bool s_cidr6_match(uint64_t bits, struct aws_string *network_part, uint8_t *address) {
     uint8_t check[16] = {0};
 
     /* If no bits specified, use full 128 bits for IPv6 */
@@ -147,12 +147,12 @@ bool aws_http_host_matches_no_proxy(
         type = HOSTNAME_TYPE_IPV4;
     } else {
         struct aws_string *host_str_copy = host_str;
-        struct aws_byte_cursor host = aws_byte_cursor_from_string(host_str);
-        if (host.ptr[0] == '[' && host.ptr[host.len - 1] == ']') {
+        struct aws_byte_cursor host_copy = host;
+        if (host_copy.ptr[0] == '[' && host_copy.ptr[host_copy.len - 1] == ']') {
             /* Check if the address is enclosed in brackets and strip them for validation */
-            aws_byte_cursor_advance(&host, 1);
-            host.len--;
-            host_str_copy = aws_string_new_from_cursor(allocator, &host);
+            aws_byte_cursor_advance(&host_copy, 1);
+            host_copy.len--;
+            host_str_copy = aws_string_new_from_cursor(allocator, &host_copy);
         }
 
         if (inet_pton(AF_INET6, aws_string_c_str(host_str_copy), ipv6_addr) == 1) {
