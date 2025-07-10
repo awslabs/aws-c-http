@@ -33,6 +33,8 @@ static const char *s_http_proxy_env_var = "HTTP_PROXY";
 static const char *s_http_proxy_env_var_low = "http_proxy";
 static const char *s_https_proxy_env_var = "HTTPS_PROXY";
 static const char *s_https_proxy_env_var_low = "https_proxy";
+static const char *s_no_proxy_env_var = "NO_PROXY";
+static const char *s_no_proxy_env_var_low = "no_proxy";
 
 #ifndef BYO_CRYPTO
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_no_verify_peer_env_var, "AWS_PROXY_NO_VERIFY_PEER");
@@ -1150,12 +1152,23 @@ static int s_proxy_uri_init_from_env_variable(
 
     /* First check if this host should bypass proxy using NO_PROXY */
     struct aws_byte_cursor host_cursor = options->host_name;
-    if (aws_check_no_proxy(allocator, host_cursor)) {
-        AWS_LOGF_DEBUG(
-            AWS_LS_HTTP_CONNECTION,
-            "Host \"" PRInSTR "\" found in NO_PROXY, bypassing proxy",
-            AWS_BYTE_CURSOR_PRI(host_cursor));
-        return AWS_OP_SUCCESS;
+
+    /* Get the NO_PROXY environment variable */
+    struct aws_string *no_proxy_str = aws_get_env_nonempty(allocator, s_no_proxy_env_var_low);
+    if (no_proxy_str == NULL) {
+        no_proxy_str = aws_get_env_nonempty(allocator, s_no_proxy_env_var);
+    }
+
+    if (no_proxy_str != NULL) {
+        if (aws_http_host_matches_no_proxy(allocator, host_cursor, no_proxy_str)) {
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_CONNECTION,
+                "Host \"" PRInSTR "\" found in NO_PROXY, bypassing proxy",
+                AWS_BYTE_CURSOR_PRI(host_cursor));
+            aws_string_destroy(no_proxy_str);
+            return AWS_OP_SUCCESS;
+        }
+        aws_string_destroy(no_proxy_str);
     }
 
     if (options->tls_options) {
