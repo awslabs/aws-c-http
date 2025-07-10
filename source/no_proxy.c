@@ -18,41 +18,6 @@ enum hostname_type {
 };
 
 /**
- * Prase a host string as an IPv6 address and stores the binary representation.
- * Return False is the host is not a valid IPv6 address.
- * If host contains `[]`, remove them
- *
- * @param host The host string to check
- * @param addr_out Optional pointer to store the parsed binary address. Must be at least 16 bytes.
- * @return true if the host is an IPv6 address, false otherwise
- */
-static bool s_parse_ipv6_address_and_update_host(
-    struct aws_allocator *allocator,
-    struct aws_string *host_str,
-    void *addr_out) {
-    if (!host_str || host_str->len < 2 || !addr_out) {
-        return false;
-    }
-    struct aws_string *host_str_copy = host_str;
-    struct aws_byte_cursor host = aws_byte_cursor_from_string(host_str);
-    if (host.ptr[0] == '[' && host.ptr[host.len - 1] == ']') {
-        /* Check if the address is enclosed in brackets and strip them for validation */
-        aws_byte_cursor_advance(&host, 1);
-        host.len--;
-        host_str_copy = aws_string_new_from_cursor(allocator, &host);
-    }
-
-    if (inet_pton(AF_INET6, aws_string_c_str(host_str_copy), addr_out) == 1) {
-        /* Update the host str */
-        if (host_str != host_str_copy) {
-            aws_string_destroy(host_str);
-            host_str = host_str_copy;
-        }
-        return true;
-    }
-    return false;
-}
-/**
  * s_cidr4_match() returns true if the given IPv4 address is within the
  * specified CIDR address range.
  * Based on the curl implementation Curl_cidr4_match().
@@ -181,14 +146,31 @@ bool aws_http_host_matches_no_proxy(
     if (inet_pton(AF_INET, aws_string_c_str(host_str), &ipv4_addr) == 1) {
         type = HOSTNAME_TYPE_IPV4;
     } else {
-        if (s_parse_ipv6_address_and_update_host(allocator, host_str, ipv6_addr)) {
-            /* the host is valid IPv6 */
+        struct aws_string *host_str_copy = host_str;
+        struct aws_byte_cursor host = aws_byte_cursor_from_string(host_str);
+        if (host.ptr[0] == '[' && host.ptr[host.len - 1] == ']') {
+            /* Check if the address is enclosed in brackets and strip them for validation */
+            aws_byte_cursor_advance(&host, 1);
+            host.len--;
+            host_str_copy = aws_string_new_from_cursor(allocator, &host);
+        }
+
+        if (inet_pton(AF_INET6, aws_string_c_str(host_str_copy), ipv6_addr) == 1) {
+            /* Update the host str */
+            if (host_str != host_str_copy) {
+                aws_string_destroy(host_str);
+                host_str = host_str_copy;
+            }
             type = HOSTNAME_TYPE_IPV6;
         } else {
             /* Not an IP address, so it's a regular hostname */
             type = HOSTNAME_TYPE_REGULAR;
             /* Ignore the trailing dot in the hostname */
             host = aws_byte_cursor_right_trim_pred(&host, s_is_dot);
+        }
+        if (host_str != host_str_copy) {
+            /* clean up the copy, but don't update the str. */
+            aws_string_destroy(host_str_copy);
         }
     }
 
