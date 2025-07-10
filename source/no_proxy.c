@@ -84,8 +84,8 @@ static bool s_cidr6_match(uint64_t bits, struct aws_string *network_part, uint8_
     }
 
     /* Calculate full bytes and remaining bits in the netmask */
-    unsigned int bytes = bits / 8;
-    unsigned int rest = bits % 8;
+    uint64_t bytes = bits / 8;
+    uint64_t rest = bits % 8;
 
     /* Compare full bytes of the network part */
     if (bytes > 0 && memcmp(address, check, bytes) != 0) {
