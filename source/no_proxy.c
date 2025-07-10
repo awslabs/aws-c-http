@@ -88,7 +88,7 @@ static bool s_cidr6_match(uint64_t bits, struct aws_string *network_part, uint8_
     uint64_t rest = bits % 8;
 
     /* Compare full bytes of the network part */
-    if (bytes > 0 && memcmp(address, check, bytes) != 0) {
+    if (bytes > 0 && memcmp(address, check, (size_t)bytes) != 0) {
         return false;
     }
 
