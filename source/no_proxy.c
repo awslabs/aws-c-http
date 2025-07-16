@@ -4,15 +4,7 @@
  */
 #include <aws/common/environment.h>
 #include <aws/http/private/no_proxy.h>
-
-#ifdef _WIN32
-#    include <ws2tcpip.h>
-#else
-#    include <arpa/inet.h>
-#    include <netinet/in.h>
-#    include <sys/socket.h>
-#    include <sys/types.h>
-#endif
+#include <aws/io/socket.h>
 
 enum hostname_type {
     HOSTNAME_TYPE_IPV4,
@@ -41,7 +33,7 @@ static bool s_cidr4_match(uint64_t bits, struct aws_string *network_part, uint32
     }
 
     /* Convert network pattern to binary */
-    if (inet_pton(AF_INET, aws_string_c_str(network_part), &check) != 1) {
+    if (aws_inet_pton(AWS_SOCKET_IPV4, aws_string_c_str(network_part), &check) != AWS_OP_SUCCESS) {
         return false;
     }
 
@@ -82,7 +74,7 @@ static bool s_cidr6_match(uint64_t bits, struct aws_string *network_part, uint8_
         return false;
     }
     /* Convert network pattern to binary */
-    if (inet_pton(AF_INET6, aws_string_c_str(network_part), check) != 1) {
+    if (aws_inet_pton(AWS_SOCKET_IPV6, aws_string_c_str(network_part), check) != AWS_OP_SUCCESS) {
         return false;
     }
 
@@ -146,7 +138,7 @@ bool aws_http_host_matches_no_proxy(
 
     /* Determine host type and parse address if applicable */
     enum hostname_type type = HOSTNAME_TYPE_REGULAR;
-    if (inet_pton(AF_INET, aws_string_c_str(host_str), &ipv4_addr) == 1) {
+    if (aws_inet_pton(AWS_SOCKET_IPV4, aws_string_c_str(host_str), &ipv4_addr) == AWS_OP_SUCCESS) {
         type = HOSTNAME_TYPE_IPV4;
     } else {
         struct aws_string *host_str_copy = host_str;
@@ -158,7 +150,7 @@ bool aws_http_host_matches_no_proxy(
             host_str_copy = aws_string_new_from_cursor(allocator, &host_copy);
         }
 
-        if (inet_pton(AF_INET6, aws_string_c_str(host_str_copy), ipv6_addr) == 1) {
+        if (aws_inet_pton(AWS_SOCKET_IPV6, aws_string_c_str(host_str_copy), ipv6_addr) == AWS_OP_SUCCESS) {
             /* Update the host str */
             if (host_str != host_str_copy) {
                 aws_string_destroy(host_str);
