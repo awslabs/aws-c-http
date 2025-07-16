@@ -43,7 +43,9 @@ enum aws_http_proxy_env_var_type {
      * Enable get proxy URL from environment variable, when the manual proxy options of connection manager is not set.
      * env HTTPS_PROXY/https_proxy will be checked when the main connection use tls.
      * env HTTP_PROXY/http_proxy will be checked when the main connection NOT use tls.
-     * The lower case version has precedence.
+     * env NO_PROXY/no_proxy will be checked to bypass proxy if the host match the pattern.
+     *      Check `aws_http_host_matches_no_proxy` for detail. This function can also be used with a direct no_proxy
+     * parameter. The lower case version has precedence.
      */
     AWS_HPEV_ENABLE,
 };
