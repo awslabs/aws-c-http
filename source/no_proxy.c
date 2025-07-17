@@ -91,7 +91,7 @@ static bool s_cidr6_match(
     if (bytes > address.len || address.len != check_buf.len || check_buf.len != 16) {
         goto cleanup;
     }
-    if (bytes > 0 && !aws_array_eq(address.ptr, bytes, check.ptr, bytes)) {
+    if (bytes > 0 && !aws_array_eq(address.ptr, (size_t)bytes, check.ptr, (size_t)bytes)) {
         goto cleanup;
     }
 
@@ -99,8 +99,8 @@ static bool s_cidr6_match(
     if (rest > 0) {
         /* Create a mask for the remaining bits */
         unsigned char mask = (unsigned char)(0xff << (8 - rest));
-        aws_byte_cursor_advance(&check, bytes);
-        aws_byte_cursor_advance(&address, bytes);
+        aws_byte_cursor_advance(&check, (size_t)bytes);
+        aws_byte_cursor_advance(&address, (size_t)bytes);
         uint8_t address_byte = 0;
         uint8_t check_byte = 0;
         if (aws_byte_cursor_read_u8(&address, &address_byte) == false ||
