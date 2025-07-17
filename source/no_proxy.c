@@ -67,6 +67,7 @@ static bool s_cidr6_match(
     uint64_t bits,
     struct aws_string *network_part,
     struct aws_byte_cursor address) {
+    bool result = false;
     struct aws_byte_buf check_buf;
     aws_byte_buf_init(&check_buf, allocator, 16);
     /* If no bits specified, use full 128 bits for IPv6 */
@@ -76,11 +77,11 @@ static bool s_cidr6_match(
 
     /* Check for valid bits parameter */
     if (bits > 128) {
-        return false;
+        goto cleanup;
     }
     /* Convert network pattern to binary */
     if (aws_parse_ipv6_address(network_part, &check_buf) != AWS_OP_SUCCESS) {
-        return false;
+        goto cleanup;
     }
     struct aws_byte_cursor check = aws_byte_cursor_from_buf(&check_buf);
 
@@ -88,10 +89,10 @@ static bool s_cidr6_match(
     uint64_t bytes = bits / 8;
     uint64_t rest = bits % 8;
     if (bytes > address.len || address.len != check_buf.len || check_buf.len != 16) {
-        return false;
+        goto cleanup;
     }
     if (bytes > 0 && !aws_array_eq(address.ptr, bytes, check.ptr, bytes)) {
-        return false;
+        goto cleanup;
     }
 
     /* If we have remaining bits, compare the partial byte */
@@ -104,16 +105,19 @@ static bool s_cidr6_match(
         uint8_t check_byte = 0;
         if (aws_byte_cursor_read_u8(&address, &address_byte) == false ||
             aws_byte_cursor_read_u8(&check, &check_byte) == false) {
-            return false;
+            goto cleanup;
         }
         /* Check if the masked bits match */
         if ((address_byte & mask) != (check_byte & mask)) {
-            return false;
+            goto cleanup;
         }
     }
 
     /* All checks passed, addresses match within the CIDR range */
-    return true;
+    result = true;
+cleanup:
+    aws_byte_buf_clean_up(&check_buf);
+    return result;
 }
 
 static bool s_is_dot(uint8_t c) {
@@ -282,6 +286,7 @@ bool aws_http_host_matches_no_proxy(
     }
 
 cleanup:
+    aws_byte_buf_clean_up(&ipv6_addr);
     aws_string_destroy(host_str);
     aws_array_list_clean_up(&no_proxy_list);
     return bypass;
