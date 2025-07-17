@@ -2,6 +2,7 @@
  * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0.
  */
+#include <aws/common/byte_order.h>
 #include <aws/common/environment.h>
 #include <aws/http/private/no_proxy.h>
 #include <aws/io/socket.h>
@@ -40,8 +41,8 @@ static bool s_cidr4_match(uint64_t bits, struct aws_string *network_part, uint32
     if (bits > 0 && bits < 32) {
         /* Apply the network mask for CIDR comparison */
         uint32_t mask = 0xffffffff << (32 - bits);
-        uint32_t host_network = ntohl(address);
-        uint32_t check_network = ntohl(check);
+        uint32_t host_network = aws_ntoh32(address);
+        uint32_t check_network = aws_ntoh32(check);
 
         /* Compare the masked addresses */
         return (host_network & mask) == (check_network & mask);
