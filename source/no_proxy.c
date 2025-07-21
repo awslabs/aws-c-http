@@ -2,14 +2,10 @@
  * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0.
  */
+#include <aws/common/byte_order.h>
 #include <aws/common/environment.h>
 #include <aws/http/private/no_proxy.h>
-
-#ifdef _WIN32
-#    include <ws2tcpip.h>
-#else
-#    include <arpa/inet.h>
-#endif
+#include <aws/io/socket.h>
 
 enum hostname_type {
     HOSTNAME_TYPE_IPV4,
@@ -38,15 +34,15 @@ static bool s_cidr4_match(uint64_t bits, struct aws_string *network_part, uint32
     }
 
     /* Convert network pattern to binary */
-    if (inet_pton(AF_INET, aws_string_c_str(network_part), &check) != 1) {
+    if (aws_parse_ipv4_address(network_part, &check) != AWS_OP_SUCCESS) {
         return false;
     }
 
     if (bits > 0 && bits < 32) {
         /* Apply the network mask for CIDR comparison */
         uint32_t mask = 0xffffffff << (32 - bits);
-        uint32_t host_network = ntohl(address);
-        uint32_t check_network = ntohl(check);
+        uint32_t host_network = aws_ntoh32(address);
+        uint32_t check_network = aws_ntoh32(check);
 
         /* Compare the masked addresses */
         return (host_network & mask) == (check_network & mask);
@@ -66,9 +62,14 @@ static bool s_cidr4_match(uint64_t bits, struct aws_string *network_part, uint32
  * @param host_addr Pre-parsed binary representation of the host IP, or NULL to parse from host
  * @return true if the IP address matches the CIDR pattern, false otherwise
  */
-static bool s_cidr6_match(uint64_t bits, struct aws_string *network_part, uint8_t *address) {
-    uint8_t check[16] = {0};
-
+static bool s_cidr6_match(
+    struct aws_allocator *allocator,
+    uint64_t bits,
+    struct aws_string *network_part,
+    struct aws_byte_cursor address) {
+    bool result = false;
+    struct aws_byte_buf check_buf;
+    aws_byte_buf_init(&check_buf, allocator, 16);
     /* If no bits specified, use full 128 bits for IPv6 */
     if (!bits) {
         bits = 128;
@@ -76,35 +77,47 @@ static bool s_cidr6_match(uint64_t bits, struct aws_string *network_part, uint8_
 
     /* Check for valid bits parameter */
     if (bits > 128) {
-        return false;
+        goto cleanup;
     }
     /* Convert network pattern to binary */
-    if (inet_pton(AF_INET6, aws_string_c_str(network_part), check) != 1) {
-        return false;
+    if (aws_parse_ipv6_address(network_part, &check_buf) != AWS_OP_SUCCESS) {
+        goto cleanup;
     }
+    struct aws_byte_cursor check = aws_byte_cursor_from_buf(&check_buf);
 
     /* Calculate full bytes and remaining bits in the netmask */
     uint64_t bytes = bits / 8;
     uint64_t rest = bits % 8;
-
-    /* Compare full bytes of the network part */
-    if (bytes > 0 && memcmp(address, check, (size_t)bytes) != 0) {
-        return false;
+    if (bytes > address.len || address.len != check_buf.len || check_buf.len != 16) {
+        goto cleanup;
+    }
+    if (bytes > 0 && !aws_array_eq(address.ptr, (size_t)bytes, check.ptr, (size_t)bytes)) {
+        goto cleanup;
     }
 
     /* If we have remaining bits, compare the partial byte */
-    if (rest > 0 && bytes < 16) {
+    if (rest > 0) {
         /* Create a mask for the remaining bits */
         unsigned char mask = (unsigned char)(0xff << (8 - rest));
-
+        aws_byte_cursor_advance(&check, (size_t)bytes);
+        aws_byte_cursor_advance(&address, (size_t)bytes);
+        uint8_t address_byte = 0;
+        uint8_t check_byte = 0;
+        if (aws_byte_cursor_read_u8(&address, &address_byte) == false ||
+            aws_byte_cursor_read_u8(&check, &check_byte) == false) {
+            goto cleanup;
+        }
         /* Check if the masked bits match */
-        if ((address[bytes] & mask) != (check[bytes] & mask)) {
-            return false;
+        if ((address_byte & mask) != (check_byte & mask)) {
+            goto cleanup;
         }
     }
 
     /* All checks passed, addresses match within the CIDR range */
-    return true;
+    result = true;
+cleanup:
+    aws_byte_buf_clean_up(&check_buf);
+    return result;
 }
 
 static bool s_is_dot(uint8_t c) {
@@ -128,6 +141,7 @@ bool aws_http_host_matches_no_proxy(
     struct aws_byte_cursor no_proxy_cur = aws_byte_cursor_from_string(no_proxy_str);
     struct aws_array_list no_proxy_list;
     struct aws_string *host_str = aws_string_new_from_cursor(allocator, &host);
+    struct aws_byte_buf ipv6_addr = {0};
 
     if (aws_array_list_init_dynamic(&no_proxy_list, allocator, 10, sizeof(struct aws_byte_cursor))) {
         goto cleanup;
@@ -139,11 +153,10 @@ bool aws_http_host_matches_no_proxy(
 
     /* Store parsed binary addresses for reuse */
     uint32_t ipv4_addr = 0;
-    uint8_t ipv6_addr[16] = {0};
 
     /* Determine host type and parse address if applicable */
     enum hostname_type type = HOSTNAME_TYPE_REGULAR;
-    if (inet_pton(AF_INET, aws_string_c_str(host_str), &ipv4_addr) == 1) {
+    if (aws_parse_ipv4_address(host_str, &ipv4_addr) == AWS_OP_SUCCESS) {
         type = HOSTNAME_TYPE_IPV4;
     } else {
         struct aws_string *host_str_copy = host_str;
@@ -155,7 +168,8 @@ bool aws_http_host_matches_no_proxy(
             host_str_copy = aws_string_new_from_cursor(allocator, &host_copy);
         }
 
-        if (inet_pton(AF_INET6, aws_string_c_str(host_str_copy), ipv6_addr) == 1) {
+        aws_byte_buf_init(&ipv6_addr, allocator, 16);
+        if (aws_parse_ipv6_address(host_str_copy, &ipv6_addr) == AWS_OP_SUCCESS) {
             /* Update the host str */
             if (host_str != host_str_copy) {
                 aws_string_destroy(host_str);
@@ -254,7 +268,8 @@ bool aws_http_host_matches_no_proxy(
                         goto cleanup;
                     }
                 } else {
-                    if (s_cidr6_match(network_bits, network_part_str, ipv6_addr)) {
+                    if (s_cidr6_match(
+                            allocator, network_bits, network_part_str, aws_byte_cursor_from_buf(&ipv6_addr))) {
                         bypass = true;
                         aws_string_destroy(network_part_str);
                         goto cleanup;
@@ -271,6 +286,7 @@ bool aws_http_host_matches_no_proxy(
     }
 
 cleanup:
+    aws_byte_buf_clean_up(&ipv6_addr);
     aws_string_destroy(host_str);
     aws_array_list_clean_up(&no_proxy_list);
     return bypass;
