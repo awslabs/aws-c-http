@@ -83,7 +83,8 @@ struct aws_http_proxy_strategy_basic_auth {
     struct aws_http_proxy_strategy strategy_base;
 };
 
-static void s_destroy_basic_auth_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
+static void s_destroy_basic_auth_strategy(void *user_data) {
+    struct aws_http_proxy_strategy *proxy_strategy = user_data;
     struct aws_http_proxy_strategy_basic_auth *basic_auth_strategy = proxy_strategy->impl;
 
     aws_string_destroy(basic_auth_strategy->user_name);
@@ -102,7 +103,8 @@ struct aws_http_proxy_negotiator_basic_auth {
     struct aws_http_proxy_negotiator negotiator_base;
 };
 
-static void s_destroy_basic_auth_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {
+static void s_destroy_basic_auth_negotiator(void *user_data) {
+    struct aws_http_proxy_negotiator *proxy_negotiator = user_data;
     struct aws_http_proxy_negotiator_basic_auth *basic_auth_negotiator = proxy_negotiator->impl;
 
     aws_http_proxy_strategy_release(basic_auth_negotiator->strategy);
@@ -356,7 +358,8 @@ struct aws_http_proxy_negotiator_one_time_identity {
     struct aws_http_proxy_negotiator negotiator_base;
 };
 
-static void s_destroy_one_time_identity_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {
+static void s_destroy_one_time_identity_negotiator(void *user_data) {
+    struct aws_http_proxy_negotiator *proxy_negotiator = user_data;
     struct aws_http_proxy_negotiator_one_time_identity *identity_negotiator = proxy_negotiator->impl;
 
     aws_mem_release(identity_negotiator->allocator, identity_negotiator);
@@ -432,7 +435,8 @@ static struct aws_http_proxy_strategy_vtable s_one_time_identity_proxy_strategy_
     .create_negotiator = s_create_one_time_identity_negotiator,
 };
 
-static void s_destroy_one_time_identity_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
+static void s_destroy_one_time_identity_strategy(void *user_data) {
+    struct aws_http_proxy_strategy *proxy_strategy = user_data;
     struct aws_http_proxy_strategy_one_time_identity *identity_strategy = proxy_strategy->impl;
 
     aws_mem_release(identity_strategy->allocator, identity_strategy);
@@ -478,7 +482,8 @@ struct aws_http_proxy_negotiator_forwarding_identity {
     struct aws_http_proxy_negotiator negotiator_base;
 };
 
-static void s_destroy_forwarding_identity_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {
+static void s_destroy_forwarding_identity_negotiator(void *user_data) {
+    struct aws_http_proxy_negotiator *proxy_negotiator = user_data;
     struct aws_http_proxy_negotiator_forwarding_identity *identity_negotiator = proxy_negotiator->impl;
 
     aws_mem_release(identity_negotiator->allocator, identity_negotiator);
@@ -529,7 +534,8 @@ static struct aws_http_proxy_strategy_vtable s_forwarding_identity_strategy_vtab
     .create_negotiator = s_create_forwarding_identity_negotiator,
 };
 
-static void s_destroy_forwarding_identity_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
+static void s_destroy_forwarding_identity_strategy(void *user_data) {
+    struct aws_http_proxy_strategy *proxy_strategy = user_data;
     struct aws_http_proxy_strategy_forwarding_identity *identity_strategy = proxy_strategy->impl;
 
     aws_mem_release(identity_strategy->allocator, identity_strategy);
@@ -748,7 +754,8 @@ static struct aws_http_proxy_negotiator_tunnelling_vtable s_tunneling_kerberos_p
     .connect_request_transform = s_kerberos_tunnel_transform_connect,
 };
 
-static void s_destroy_tunneling_kerberos_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {
+static void s_destroy_tunneling_kerberos_negotiator(void *user_data) {
+    struct aws_http_proxy_negotiator *proxy_negotiator = user_data;
     struct aws_http_proxy_negotiator_tunneling_kerberos *kerberos_negotiator = proxy_negotiator->impl;
 
     aws_http_proxy_strategy_release(kerberos_negotiator->strategy);
@@ -789,7 +796,8 @@ static struct aws_http_proxy_strategy_vtable s_tunneling_kerberos_strategy_vtabl
     .create_negotiator = s_create_tunneling_kerberos_negotiator,
 };
 
-static void s_destroy_tunneling_kerberos_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
+static void s_destroy_tunneling_kerberos_strategy(void *user_data) {
+    struct aws_http_proxy_strategy *proxy_strategy = user_data;
     struct aws_http_proxy_strategy_tunneling_kerberos *kerberos_strategy = proxy_strategy->impl;
 
     aws_mem_release(kerberos_strategy->allocator, kerberos_strategy);
@@ -1044,7 +1052,8 @@ static struct aws_http_proxy_negotiator_tunnelling_vtable s_tunneling_ntlm_proxy
     .get_retry_directive = s_ntlm_tunnel_get_retry_directive,
 };
 
-static void s_destroy_tunneling_ntlm_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {
+static void s_destroy_tunneling_ntlm_negotiator(void *user_data) {
+    struct aws_http_proxy_negotiator *proxy_negotiator = user_data;
     struct aws_http_proxy_negotiator_tunneling_ntlm *ntlm_negotiator = proxy_negotiator->impl;
 
     aws_string_destroy(ntlm_negotiator->challenge_token);
@@ -1086,7 +1095,8 @@ static struct aws_http_proxy_strategy_vtable s_tunneling_ntlm_strategy_vtable = 
     .create_negotiator = s_create_tunneling_ntlm_negotiator,
 };
 
-static void s_destroy_tunneling_ntlm_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
+static void s_destroy_tunneling_ntlm_strategy(void *user_data) {
+    struct aws_http_proxy_strategy *proxy_strategy = user_data;
     struct aws_http_proxy_strategy_tunneling_ntlm *ntlm_strategy = proxy_strategy->impl;
 
     aws_mem_release(ntlm_strategy->allocator, ntlm_strategy);
@@ -1189,7 +1199,8 @@ static struct aws_http_proxy_negotiator_tunnelling_vtable
         .connect_request_transform = s_ntlm_credential_tunnel_transform_connect,
 };
 
-static void s_destroy_tunneling_ntlm_credential_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {
+static void s_destroy_tunneling_ntlm_credential_negotiator(void *user_data) {
+    struct aws_http_proxy_negotiator *proxy_negotiator = user_data;
     struct aws_http_proxy_negotiator_tunneling_ntlm *ntlm_credential_negotiator = proxy_negotiator->impl;
 
     aws_string_destroy(ntlm_credential_negotiator->challenge_token);
@@ -1231,7 +1242,8 @@ static struct aws_http_proxy_strategy_vtable s_tunneling_ntlm_credential_strateg
     .create_negotiator = s_create_tunneling_ntlm_credential_negotiator,
 };
 
-static void s_destroy_tunneling_ntlm_credential_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
+static void s_destroy_tunneling_ntlm_credential_strategy(void *user_data) {
+    struct aws_http_proxy_strategy *proxy_strategy = user_data;
     struct aws_http_proxy_strategy_tunneling_ntlm *ntlm_credential_strategy = proxy_strategy->impl;
 
     aws_mem_release(ntlm_credential_strategy->allocator, ntlm_credential_strategy);
@@ -1548,7 +1560,8 @@ static struct aws_http_proxy_negotiator_tunnelling_vtable s_tunneling_sequence_p
     .get_retry_directive = s_sequence_get_retry_directive,
 };
 
-static void s_destroy_tunneling_sequence_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {
+static void s_destroy_tunneling_sequence_negotiator(void *user_data) {
+    struct aws_http_proxy_negotiator *proxy_negotiator = user_data;
     struct aws_http_proxy_negotiator_tunneling_sequence *sequence_negotiator = proxy_negotiator->impl;
 
     size_t negotiator_count = aws_array_list_length(&sequence_negotiator->negotiators);
@@ -1628,7 +1641,8 @@ static struct aws_http_proxy_strategy_vtable s_tunneling_sequence_strategy_vtabl
     .create_negotiator = s_create_tunneling_sequence_negotiator,
 };
 
-static void s_destroy_tunneling_sequence_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
+static void s_destroy_tunneling_sequence_strategy(void *user_data) {
+    struct aws_http_proxy_strategy *proxy_strategy = user_data;
     struct aws_http_proxy_strategy_tunneling_sequence *sequence_strategy = proxy_strategy->impl;
 
     size_t strategy_count = aws_array_list_length(&sequence_strategy->strategies);
