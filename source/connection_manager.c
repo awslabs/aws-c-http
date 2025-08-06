@@ -692,7 +692,8 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
  * cancels the culling task and then calls this function.  If we are not using idle connection culling, we can
  * call this function immediately from the start of destruction.
  */
-static void s_aws_http_connection_manager_finish_destroy(struct aws_http_connection_manager *manager) {
+static void s_aws_http_connection_manager_finish_destroy(void *user_data) {
+    struct aws_http_connection_manager *manager = user_data;
     if (manager == NULL) {
         return;
     }

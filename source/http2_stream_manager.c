@@ -35,7 +35,6 @@
 /* 3 seconds */
 static const size_t s_default_ping_timeout_ms = 3000;
 
-static void s_stream_manager_start_destroy(struct aws_http2_stream_manager *stream_manager);
 static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2_stream_management_transaction *work);
 static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stream_management_transaction *work);
 
@@ -1016,7 +1015,8 @@ void s_stream_manager_on_cm_shutdown_complete(void *user_data) {
     s_stream_manager_destroy_final(stream_manager);
 }
 
-static void s_stream_manager_start_destroy(struct aws_http2_stream_manager *stream_manager) {
+static void s_stream_manager_start_destroy(void *user_data) {
+    struct aws_http2_stream_manager *stream_manager = user_data;
     STREAM_MANAGER_LOG(TRACE, stream_manager, "Stream Manager reaches the condition to destroy, start to destroy");
     /* If there is no outstanding streams, the connections set should be empty. */
     AWS_ASSERT(aws_random_access_set_get_size(&stream_manager->synced_data.ideal_available_set) == 0);
@@ -1031,7 +1031,8 @@ static void s_stream_manager_start_destroy(struct aws_http2_stream_manager *stre
     aws_http_connection_manager_release(cm);
 }
 
-void s_stream_manager_on_zero_external_ref(struct aws_http2_stream_manager *stream_manager) {
+void s_stream_manager_on_zero_external_ref(void *user_data) {
+    struct aws_http2_stream_manager *stream_manager = user_data;
     STREAM_MANAGER_LOG(
         TRACE,
         stream_manager,
