@@ -197,6 +197,18 @@ static void s_destroy_enum_value(void *value) {
     aws_mem_release(enum_value->allocator, enum_value);
 }
 
+static bool s_str_array_eq_ignore_case(const void *a, const void *b) {
+    const struct aws_byte_cursor *a_cursor = a;
+    const struct aws_byte_cursor *b_cursor = b;
+    return aws_byte_cursor_eq_ignore_case(a_cursor, b_cursor);
+}
+
+static bool s_str_array_eq(const void *a, const void *b) {
+    const struct aws_byte_cursor *a_cursor = a;
+    const struct aws_byte_cursor *b_cursor = b;
+    return aws_byte_cursor_eq(a_cursor, b_cursor);
+}
+
 /**
  * Given array of aws_byte_cursors, init hashtable where...
  * Key is aws_byte_cursor* (pointing into cursor from array) and comparisons are case-insensitive.
@@ -215,7 +227,7 @@ static void s_init_str_to_enum_hash_table(
         alloc,
         end_index - start_index,
         ignore_case ? aws_hash_byte_cursor_ptr_ignore_case : aws_hash_byte_cursor_ptr,
-        (aws_hash_callback_eq_fn *)(ignore_case ? aws_byte_cursor_eq_ignore_case : aws_byte_cursor_eq),
+        ignore_case ? s_str_array_eq_ignore_case : s_str_array_eq,
         NULL,
         s_destroy_enum_value);
     AWS_FATAL_ASSERT(!err);
