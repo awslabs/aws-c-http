@@ -57,6 +57,8 @@ struct aws_http_proxy_config {
     struct aws_tls_connection_options *tls_options;
 
     struct aws_http_proxy_strategy *proxy_strategy;
+
+    struct aws_byte_buf no_proxy_hosts;
 };
 
 /*

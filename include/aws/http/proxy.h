@@ -152,6 +152,12 @@ struct aws_http_proxy_options {
      * Replaced by instantiating a proxy_strategy via aws_http_proxy_strategy_new_basic_auth()
      */
     struct aws_byte_cursor auth_password;
+
+    /**
+     * Optional
+     * No proxy hosts - Comma seperated list of hosts for which not to use a proxy, if one is specified.
+     */
+    struct aws_byte_cursor no_proxy_hosts;
 };
 
 /**
