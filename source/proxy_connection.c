@@ -1214,7 +1214,11 @@ static int s_connect_proxy(const struct aws_http_client_connection_options *opti
             aws_string_destroy(no_proxy_host_str);
 
             // host matched no_proxy, connect without a proxy.
-            return aws_http_client_connect_internal(options, NULL);
+            // TODO: We need this to be null to connect without proxy, but is this correct?
+            /* Fill in a new connection options with NULL proxy_options */
+            struct aws_http_client_connection_options options_copy = *options;
+            options_copy.proxy_options = NULL; 
+            return aws_http_client_connect_internal(&options_copy, NULL);
         }
         aws_string_destroy(no_proxy_host_str);
     }
