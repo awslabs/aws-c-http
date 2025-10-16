@@ -1232,7 +1232,7 @@ TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
 TEST_CASE(h2_sm_close_connection_on_server_error) {
     (void)ctx;
     /* server that will return 500 status code all the time. */
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://postman-echo.com/status/500");
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://reqres.in/status/500");
     struct sm_tester_options options = {
         .max_connections = 1,
         .max_concurrent_streams_per_connection = 10,
