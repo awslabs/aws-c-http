@@ -10,7 +10,7 @@ import os.path
 TIMEOUT = 300
 
 # Global variable for test host
-TEST_HOST = 'reqres.in'
+TEST_HOST = 'jsonplaceholder.typicode.com'
 
 # Accepting multiple args so we can pass something like: python elasticurl.py
 elasticurl_cmd_prefix = sys.argv[1:]
@@ -98,13 +98,13 @@ class SimpleTests(unittest.TestCase):
     def test_simple_get_h1(self):
         """make a simple GET request via HTTP/1.1 and make sure it succeeds"""
         simple_get_args = elasticurl_cmd_prefix + \
-            ['-v', 'TRACE', '--http1_1', f'http://{TEST_HOST}/get']
+            ['-v', 'TRACE', '--http1_1', f'http://{TEST_HOST}/posts']
         run_command(simple_get_args)
 
     def test_simple_post_h1(self):
         """make a simple POST request via HTTP/1.1 to make sure sending data succeeds"""
         simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http1_1', '-P', '-H',
-                                                    'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', f'http://{TEST_HOST}/post']
+                                                    'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', f'http://{TEST_HOST}/posts']
         run_command(simple_post_args)
 
     def test_simple_download_h1(self):
@@ -121,13 +121,13 @@ class SimpleTests(unittest.TestCase):
     def test_simple_get_h2(self):
         """make a simple GET request via HTTP2 and make sure it succeeds"""
         simple_get_args = elasticurl_cmd_prefix + \
-            ['-v', 'TRACE', '--http2', f'https://{TEST_HOST}/get']
+            ['-v', 'TRACE', '--http2', f'https://{TEST_HOST}/posts']
         run_command(simple_get_args)
 
     def test_simple_post_h2(self):
         """make a simple POST request via HTTP2 to make sure sending data succeeds"""
         simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http2', '-P', '-H',
-                                                    'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', f'https://{TEST_HOST}/post']
+                                                    'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', f'https://{TEST_HOST}/posts']
         run_command(simple_post_args)
 
     def test_simple_download_h2(self):
