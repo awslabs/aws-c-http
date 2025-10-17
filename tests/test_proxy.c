@@ -195,6 +195,10 @@ static int s_test_aws_proxy_new_socket_channel(struct aws_socket_channel_bootstr
         testing_channel_run_currently_queued_tasks(channel);
     }
 
+    if (tester.test_mode == PTTM_NO_PROXY) {
+        return AWS_OP_SUCCESS;
+    }
+
     if (tester.failure_type == PTFT_NONE || tester.failure_type == PTFT_CONNECT_REQUEST ||
         tester.failure_type == PTFT_TLS_NEGOTIATION) {
         if (tester.proxy_options.connection_type == AWS_HPCT_HTTP_TUNNEL) {
@@ -1142,3 +1146,77 @@ static int s_test_http_forwarding_proxy_uri_rewrite_options_star(struct aws_allo
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(http_forwarding_proxy_uri_rewrite_options_star, s_test_http_forwarding_proxy_uri_rewrite_options_star);
+
+/*
+ * Test no_proxy_hosts functionality - host matches no_proxy pattern, should bypass proxy
+ */
+static int s_test_http_proxy_no_proxy_hosts_match(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    aws_http_connection_set_system_vtable(&s_proxy_connection_system_vtable);
+    aws_http_proxy_system_set_vtable(&s_proxy_table_for_tls);
+
+    struct aws_http_proxy_options proxy_options = {
+        .connection_type = AWS_HPCT_HTTP_TUNNEL,
+        .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
+        .port = s_proxy_port,
+        .no_proxy_hosts = aws_byte_cursor_from_c_str("aws.amazon.com"),
+    };
+
+    struct proxy_tester_options options = {
+        .alloc = allocator,
+        .proxy_options = &proxy_options,
+        .host = aws_byte_cursor_from_c_str(s_host_name), /* aws.amazon.com */
+        .port = s_port,
+        .test_mode = PTTM_NO_PROXY,
+        .failure_type = PTFT_NONE,
+    };
+
+    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
+    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
+
+    /* Should connect directly to target host, not proxy */
+    ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_target(
+        &tester, aws_byte_cursor_from_c_str(s_host_name), s_port));
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(http_proxy_no_proxy_hosts_match, s_test_http_proxy_no_proxy_hosts_match);
+
+/*
+ * Test no_proxy_hosts functionality - host does not match no_proxy pattern, should use proxy
+ */
+static int s_test_http_proxy_no_proxy_hosts_no_match(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    aws_http_connection_set_system_vtable(&s_proxy_connection_system_vtable);
+    aws_http_proxy_system_set_vtable(&s_proxy_table_for_tls);
+
+    struct aws_http_proxy_options proxy_options = {
+        .connection_type = AWS_HPCT_HTTP_TUNNEL,
+        .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
+        .port = s_proxy_port,
+        .no_proxy_hosts = aws_byte_cursor_from_c_str("example.com"),
+    };
+
+    struct proxy_tester_options options = {
+        .alloc = allocator,
+        .proxy_options = &proxy_options,
+        .host = aws_byte_cursor_from_c_str(s_host_name), /* aws.amazon.com */
+        .port = s_port,
+        .test_mode = PTTM_HTTP_TUNNEL,
+        .failure_type = PTFT_NONE,
+    };
+
+    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
+    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
+
+    /* Should connect to proxy since host doesn't match no_proxy pattern */
+    ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
+        &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(http_proxy_no_proxy_hosts_no_match, s_test_http_proxy_no_proxy_hosts_no_match);

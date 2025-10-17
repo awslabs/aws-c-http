@@ -636,6 +636,8 @@ add_test_case(http_proxy_adaptive_ntlm_success)
 add_test_case(http_proxy_adaptive_failure)
 add_test_case(http_forwarding_proxy_uri_rewrite)
 add_test_case(http_forwarding_proxy_uri_rewrite_options_star)
+add_test_case(http_proxy_no_proxy_hosts_match)
+add_test_case(http_proxy_no_proxy_hosts_no_match)
 
 # NO_PROXY tests
 add_test_case(test_no_proxy_subdomain_matching)
