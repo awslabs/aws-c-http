@@ -854,7 +854,6 @@ static int s_aws_http_connection_manager_create_connection_validate(
         ASSERT_TRUE(options->proxy_options->port == tester->verify_proxy_options->port);
         ASSERT_UINT_EQUALS(options->proxy_options->connection_type, tester->verify_proxy_options->connection_type);
     }
-
     /* Verify that any SOCKS5 proxy options have been propagated to the connection attempt */
     if (tester->verify_socks5_options) {
         ASSERT_NOT_NULL(options->socks5_proxy_options);

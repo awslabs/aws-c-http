@@ -726,6 +726,10 @@ static void s_aws_http_connection_manager_finish_destroy(void *user_data) {
     if (manager->proxy_config) {
         aws_http_proxy_config_destroy(manager->proxy_config);
     }
+    if (manager->socks5_proxy_options) {
+        aws_socks5_proxy_options_clean_up(manager->socks5_proxy_options);
+        aws_mem_release(manager->allocator, manager->socks5_proxy_options);
+    }
 
     for (size_t i = 0; i < aws_array_list_length(&manager->network_interface_names); i++) {
         struct aws_string *interface_name = NULL;
