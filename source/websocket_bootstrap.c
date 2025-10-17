@@ -86,6 +86,9 @@ struct aws_websocket_client_bootstrap {
 
     int setup_error_code;
     struct aws_websocket *websocket;
+
+    /* prevent double-destruction when multiple teardown paths race */
+    bool cleanup_invoked;
 };
 
 static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_bootstrap);
@@ -147,6 +150,13 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
+    if (options->proxy_options != NULL && options->socks5_proxy_options != NULL) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=static: SOCKS5 proxy options and HTTP proxy options are mutually exclusive.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
     const struct aws_http_headers *request_headers = aws_http_message_get_headers(options->handshake_request);
     struct aws_byte_cursor sec_websocket_key;
     if (aws_http_headers_get(request_headers, aws_byte_cursor_from_c_str("Sec-WebSocket-Key"), &sec_websocket_key)) {
@@ -197,6 +207,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     http_options.socket_options = options->socket_options;
     http_options.tls_options = options->tls_options;
     http_options.proxy_options = options->proxy_options;
+    http_options.socks5_proxy_options = options->socks5_proxy_options;
 
     if (options->manual_window_management) {
         http_options.manual_window_management = true;
@@ -252,6 +263,11 @@ static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_boo
     if (!ws_bootstrap) {
         return;
     }
+
+    if (ws_bootstrap->cleanup_invoked) {
+        return;
+    }
+    ws_bootstrap->cleanup_invoked = true;
 
     aws_http_message_release(ws_bootstrap->handshake_request);
     aws_http_headers_release(ws_bootstrap->response_headers);
@@ -410,10 +426,17 @@ static void s_ws_bootstrap_invoke_setup_callback(struct aws_websocket_client_boo
         .handshake_response_body = response_body_ptr,
     };
 
-    ws_bootstrap->websocket_setup_callback(&setup_data, ws_bootstrap->user_data);
+    if (ws_bootstrap->websocket_setup_callback) {
+        ws_bootstrap->websocket_setup_callback(&setup_data, ws_bootstrap->user_data);
 
-    /* Clear setup callback so that we know that it's been invoked. */
-    ws_bootstrap->websocket_setup_callback = NULL;
+        /* Clear setup callback so that we know that it's been invoked. */
+        ws_bootstrap->websocket_setup_callback = NULL;
+    } else {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=%p: Websocket setup callback already cleared; skipping invocation.",
+            (void *)ws_bootstrap);
+    }
 
     if (response_header_array) {
         aws_mem_release(ws_bootstrap->alloc, response_header_array);

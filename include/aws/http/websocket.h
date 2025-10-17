@@ -6,6 +6,7 @@
  */
 
 #include <aws/http/http.h>
+#include <aws/io/socks5.h>
 
 AWS_PUSH_SANE_WARNING_LEVEL
 
@@ -174,6 +175,13 @@ struct aws_websocket_client_connection_options {
      * Configuration options related to http proxy usage.
      */
     const struct aws_http_proxy_options *proxy_options;
+
+    /**
+     * Optional
+     * Configuration options for SOCKS5 proxy usage.
+     * Mutually exclusive with proxy_options.
+     */
+    const struct aws_socks5_proxy_options *socks5_proxy_options;
 
     /**
      * Required.

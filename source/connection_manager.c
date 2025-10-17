@@ -17,6 +17,7 @@
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 #include <aws/io/uri.h>
+#include <aws/io/socks5.h>
 
 #include <aws/common/clock.h>
 #include <aws/common/hash_table.h>
@@ -239,6 +240,7 @@ struct aws_http_connection_manager {
     struct aws_string *host;
     struct proxy_env_var_settings proxy_ev_settings;
     struct aws_tls_connection_options *proxy_ev_tls_options;
+    struct aws_socks5_proxy_options *socks5_proxy_options;
     uint32_t port;
     uint64_t response_first_byte_timeout_ms;
 
@@ -731,6 +733,10 @@ static void s_aws_http_connection_manager_finish_destroy(void *user_data) {
         aws_string_destroy(interface_name);
     }
     aws_array_list_clean_up(&manager->network_interface_names);
+    if (manager->socks5_proxy_options) {
+        aws_socks5_proxy_options_clean_up(manager->socks5_proxy_options);
+        aws_mem_release(manager->allocator, manager->socks5_proxy_options);
+    }
 
     /*
      * If this task exists then we are actually in the corresponding event loop running the final destruction task.
@@ -943,6 +949,16 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         }
     }
 
+    if (options->socks5_proxy_options) {
+        manager->socks5_proxy_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_socks5_proxy_options));
+        if (manager->socks5_proxy_options == NULL) {
+            goto on_error;
+        }
+        if (aws_socks5_proxy_options_copy(manager->socks5_proxy_options, options->socks5_proxy_options)) {
+            goto on_error;
+        }
+    }
+
     if (options->monitoring_options) {
         manager->monitoring_options = *options->monitoring_options;
     }
@@ -963,7 +979,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->max_pending_connection_acquisitions = options->max_pending_connection_acquisitions;
     manager->response_first_byte_timeout_ms = options->response_first_byte_timeout_ms;
 
-    if (options->proxy_ev_settings) {
+    if (options->proxy_ev_settings && options->socks5_proxy_options == NULL) {
         manager->proxy_ev_settings = *options->proxy_ev_settings;
     }
     if (manager->proxy_ev_settings.tls_options) {
@@ -1118,8 +1134,11 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.on_setup = s_aws_http_connection_manager_on_connection_setup;
     options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
     options.manual_window_management = manager->enable_read_back_pressure;
-    options.proxy_ev_settings = &manager->proxy_ev_settings;
+    if (manager->socks5_proxy_options == NULL) {
+        options.proxy_ev_settings = &manager->proxy_ev_settings;
+    }
     options.prior_knowledge_http2 = manager->http2_prior_knowledge;
+    options.socks5_proxy_options = manager->socks5_proxy_options;
 
     struct aws_http2_connection_options h2_options;
     AWS_ZERO_STRUCT(h2_options);
@@ -1143,7 +1162,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     struct aws_http_proxy_options proxy_options;
     AWS_ZERO_STRUCT(proxy_options);
 
-    if (manager->proxy_config) {
+    if (manager->proxy_config && manager->socks5_proxy_options == NULL) {
         aws_http_proxy_options_init_from_config(&proxy_options, manager->proxy_config);
         options.proxy_options = &proxy_options;
     }

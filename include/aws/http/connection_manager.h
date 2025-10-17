@@ -19,6 +19,7 @@ struct aws_socket_options;
 struct aws_tls_connection_options;
 struct proxy_env_var_settings;
 struct aws_http2_setting;
+struct aws_socks5_proxy_options;
 
 typedef void(aws_http_connection_manager_on_connection_setup_fn)(
     struct aws_http_connection *connection,
@@ -101,6 +102,13 @@ struct aws_http_connection_manager_options {
 
     /* Proxy configuration for http connection */
     const struct aws_http_proxy_options *proxy_options;
+
+    /**
+     * Optional
+     * Configuration options for SOCKS5 proxy connections. When set, HTTP proxy configuration (including proxy
+     * environment variables) is ignored and traffic is routed via the SOCKS5 proxy instead.
+     */
+    const struct aws_socks5_proxy_options *socks5_proxy_options;
 
     /*
      * Optional.

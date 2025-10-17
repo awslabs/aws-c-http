@@ -9,6 +9,8 @@
 #include <aws/http/private/h1_stream.h>
 #include <aws/http/private/proxy_impl.h>
 #include <aws/http/proxy.h>
+#include <aws/io/socks5.h>
+#include <aws/io/socks5_channel_handler.h>
 
 #include <aws/io/uri.h>
 
@@ -25,6 +27,8 @@ static char *s_host_name = "aws.amazon.com";
 static uint32_t s_port = 80;
 static char *s_proxy_host_name = "www.myproxy.hmm";
 static uint32_t s_proxy_port = 777;
+static char *s_socks5_proxy_host_name = "socks5.proxy.tester";
+static uint32_t s_socks5_proxy_port = 1080;
 
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_method, "GET");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_path, "/");
@@ -33,6 +37,17 @@ AWS_STATIC_STRING_FROM_LITERAL(s_expected_basic_auth_header_name, "Proxy-Authori
 AWS_STATIC_STRING_FROM_LITERAL(s_expected_basic_auth_header_value, "Basic U29tZVVzZXI6U3VwZXJTZWNyZXQ=");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_username, "SomeUser");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_password, "SuperSecret");
+
+static int s_test_aws_proxy_new_socket_channel(struct aws_socket_channel_bootstrap_options *channel_options);
+
+static int s_test_aws_socks5_new_socket_channel(struct aws_socket_channel_bootstrap_options *channel_options) {
+    tester.socks5_invocations++;
+    return s_test_aws_proxy_new_socket_channel(channel_options);
+}
+
+static struct aws_socks5_system_vtable s_proxy_socks5_vtable = {
+    .aws_client_bootstrap_new_socket_channel = s_test_aws_socks5_new_socket_channel,
+};
 
 /*
  * Request utility functions
@@ -155,6 +170,7 @@ static int s_test_aws_proxy_new_socket_channel(struct aws_socket_channel_bootstr
      * Record where we were trying to connect to
      */
     struct aws_byte_cursor host_cursor = aws_byte_cursor_from_c_str(channel_options->host_name);
+    aws_byte_buf_reset(&tester.connection_host_name, false);
     aws_byte_buf_append_dynamic(&tester.connection_host_name, &host_cursor);
 
     tester.connection_port = channel_options->port;
@@ -224,6 +240,9 @@ struct mocked_proxy_test_options {
     struct aws_byte_cursor legacy_basic_username;
     struct aws_byte_cursor legacy_basic_password;
 
+    const struct aws_socks5_proxy_options *socks5_proxy_options;
+    bool use_socks5_proxy;
+
     uint32_t mocked_response_count;
     struct aws_byte_cursor *mocked_responses;
 };
@@ -235,26 +254,43 @@ static int s_setup_proxy_test(struct aws_allocator *allocator, struct mocked_pro
 
     aws_http_connection_set_system_vtable(&s_proxy_connection_system_vtable);
     aws_http_proxy_system_set_vtable(&s_proxy_table_for_tls);
+    if (tester.connection_host_name.buffer) {
+        aws_byte_buf_reset(&tester.connection_host_name, false);
+    } else {
+        tester.connection_host_name.len = 0;
+        tester.connection_host_name.capacity = 0;
+    }
+    tester.socks5_invocations = 0;
+    if (config->socks5_proxy_options) {
+        aws_socks5_channel_handler_set_system_vtable(&s_proxy_socks5_vtable);
+    } else {
+        aws_socks5_channel_handler_set_system_vtable(NULL);
+    }
 
-    struct aws_http_proxy_options proxy_options = {
-        .connection_type = (config->test_mode == PTTM_HTTP_FORWARD) ? AWS_HPCT_HTTP_FORWARD : AWS_HPCT_HTTP_TUNNEL,
-        .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
-        .port = s_proxy_port,
-        .proxy_strategy = config->proxy_strategy,
-        .auth_type = config->auth_type,
-        .auth_username = config->legacy_basic_username,
-        .auth_password = config->legacy_basic_password,
-    };
+    struct aws_http_proxy_options proxy_options;
+    AWS_ZERO_STRUCT(proxy_options);
+    bool use_http_proxy = !config->use_socks5_proxy;
+    if (use_http_proxy) {
+        proxy_options.connection_type =
+            (config->test_mode == PTTM_HTTP_FORWARD) ? AWS_HPCT_HTTP_FORWARD : AWS_HPCT_HTTP_TUNNEL;
+        proxy_options.host = aws_byte_cursor_from_c_str(s_proxy_host_name);
+        proxy_options.port = s_proxy_port;
+        proxy_options.proxy_strategy = config->proxy_strategy;
+        proxy_options.auth_type = config->auth_type;
+        proxy_options.auth_username = config->legacy_basic_username;
+        proxy_options.auth_password = config->legacy_basic_password;
+    }
 
     struct proxy_tester_options options = {
         .alloc = allocator,
-        .proxy_options = &proxy_options,
+        .proxy_options = use_http_proxy ? &proxy_options : NULL,
         .host = aws_byte_cursor_from_c_str(s_host_name),
         .port = s_port,
         .test_mode = config->test_mode,
         .failure_type = config->failure_type,
         .desired_connect_response_count = config->mocked_response_count,
         .desired_connect_responses = config->mocked_responses,
+        .socks5_proxy_options = config->socks5_proxy_options,
     };
 
     ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
@@ -340,6 +376,39 @@ static int s_test_http_forwarding_proxy_connection_connect_failure(struct aws_al
 AWS_TEST_CASE(
     http_forwarding_proxy_connection_connect_failure,
     s_test_http_forwarding_proxy_connection_connect_failure);
+
+static int s_test_http_socks5_proxy_connection_channel_failure(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct aws_socks5_proxy_options socks5_options;
+    ASSERT_SUCCESS(aws_socks5_proxy_options_init(
+        &socks5_options,
+        allocator,
+        aws_byte_cursor_from_c_str(s_socks5_proxy_host_name),
+        s_socks5_proxy_port));
+    aws_socks5_proxy_options_set_host_resolution_mode(&socks5_options, AWS_SOCKS5_HOST_RESOLUTION_PROXY);
+
+    struct mocked_proxy_test_options options = {
+        .test_mode = PTTM_HTTP_FORWARD,
+        .failure_type = PTFT_CHANNEL,
+        .socks5_proxy_options = &socks5_options,
+        .use_socks5_proxy = true,
+    };
+
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, &options));
+
+    ASSERT_UINT_EQUALS(1, tester.socks5_invocations);
+    ASSERT_TRUE(tester.wait_result != AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(tester.client_connection == NULL);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+    aws_socks5_proxy_options_clean_up(&socks5_options);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_http_socks5_proxy_connection_channel_failure,
+    s_test_http_socks5_proxy_connection_channel_failure);
 
 /*
  * For tls-enabled tunneling proxy connections:
