@@ -23,7 +23,7 @@ enum proxy_tester_test_mode {
     PTTM_HTTP_FORWARD = 0,
     PTTM_HTTP_TUNNEL,
     PTTM_HTTPS_TUNNEL,
-    PTTM_NO_PROXY
+    PTTM_NO_PROXY,
 };
 
 enum proxy_tester_failure_type {

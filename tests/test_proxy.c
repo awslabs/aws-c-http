@@ -1176,8 +1176,8 @@ static int s_test_http_proxy_no_proxy_hosts_match(struct aws_allocator *allocato
     proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
 
     /* Should connect directly to target host, not proxy */
-    ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_target(
-        &tester, aws_byte_cursor_from_c_str(s_host_name), s_port));
+    ASSERT_SUCCESS(
+        proxy_tester_verify_connection_attempt_was_to_target(&tester, aws_byte_cursor_from_c_str(s_host_name), s_port));
 
     ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
