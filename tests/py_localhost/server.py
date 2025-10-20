@@ -130,7 +130,10 @@ class H2Protocol(asyncio.Protocol):
 
         path = request_data.headers[':path']
         method = request_data.headers[':method']
-        if method == "PUT" or method == "POST":
+        if path == '/expect500':
+            self.conn.send_headers(stream_id, [(':status', '500')])
+            asyncio.ensure_future(self.send_data(b"Internal Server Error", stream_id))
+        elif method == "PUT" or method == "POST":
             self.conn.send_headers(stream_id, [(':status', '200')])
             asyncio.ensure_future(self.send_data(
                 str(self.num_sentence_received[stream_id]).encode(), stream_id))
