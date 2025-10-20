@@ -1163,8 +1163,9 @@ static int s_proxy_uri_init_from_env_variable(
         if (aws_http_host_matches_no_proxy(allocator, host_cursor, no_proxy_str)) {
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION,
-                "Host \"" PRInSTR "\" found in NO_PROXY, bypassing proxy",
-                AWS_BYTE_CURSOR_PRI(host_cursor));
+                "Host \"" PRInSTR "\" found in no_proxy_hosts: \" %s \", bypassing proxy",
+                AWS_BYTE_CURSOR_PRI(options->host_name),
+                aws_string_c_str(no_proxy_str));
             aws_string_destroy(no_proxy_str);
             return AWS_OP_SUCCESS;
         }
@@ -1213,9 +1214,7 @@ static int s_connect_proxy(const struct aws_http_client_connection_options *opti
                 AWS_BYTE_CURSOR_PRI(options->host_name));
             aws_string_destroy(no_proxy_host_str);
 
-            // host matched no_proxy, connect without a proxy.
-            // TODO: We need this to be null to connect without proxy, but is this correct?
-            /* Fill in a new connection options with NULL proxy_options */
+            /* host matched no_proxy, connect without a proxy.: Fill in a new connection options with NULL proxy_options */
             struct aws_http_client_connection_options options_copy = *options;
             options_copy.proxy_options = NULL; 
             return aws_http_client_connect_internal(&options_copy, NULL);
