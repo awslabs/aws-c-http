@@ -1163,8 +1163,9 @@ static int s_proxy_uri_init_from_env_variable(
         if (aws_http_host_matches_no_proxy(allocator, host_cursor, no_proxy_str)) {
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION,
-                "Host \"" PRInSTR "\" found in NO_PROXY, bypassing proxy",
-                AWS_BYTE_CURSOR_PRI(host_cursor));
+                "Host \"" PRInSTR "\" found in no_proxy_hosts: \" %s \", bypassing proxy",
+                AWS_BYTE_CURSOR_PRI(options->host_name),
+                aws_string_c_str(no_proxy_str));
             aws_string_destroy(no_proxy_str);
             return AWS_OP_SUCCESS;
         }
@@ -1202,6 +1203,25 @@ static int s_proxy_uri_init_from_env_variable(
 static int s_connect_proxy(const struct aws_http_client_connection_options *options) {
     if (aws_http_options_validate_proxy_configuration(options)) {
         return AWS_OP_ERR;
+    }
+
+    if (options->proxy_options->no_proxy_hosts.len > 0) {
+        struct aws_string *no_proxy_host_str =
+            aws_string_new_from_cursor(options->allocator, &options->proxy_options->no_proxy_hosts);
+        if (aws_http_host_matches_no_proxy(options->allocator, options->host_name, no_proxy_host_str)) {
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_CONNECTION,
+                "Host \"" PRInSTR "\" found in NO_PROXY, bypassing proxy",
+                AWS_BYTE_CURSOR_PRI(options->host_name));
+            aws_string_destroy(no_proxy_host_str);
+
+            /* host matched no_proxy, connect without a proxy.: Fill in a new connection options with NULL proxy_options
+             */
+            struct aws_http_client_connection_options options_copy = *options;
+            options_copy.proxy_options = NULL;
+            return aws_http_client_connect_internal(&options_copy, NULL);
+        }
+        aws_string_destroy(no_proxy_host_str);
     }
 
     enum aws_http_proxy_connection_type proxy_connection_type =
@@ -1360,6 +1380,10 @@ static struct aws_http_proxy_config *s_aws_http_proxy_config_new(
         goto on_error;
     }
 
+    if (aws_byte_buf_init_copy_from_cursor(&config->no_proxy_hosts, allocator, proxy_options->no_proxy_hosts)) {
+        goto on_error;
+    }
+
     if (proxy_options->tls_options) {
         config->tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
         if (aws_tls_connection_options_copy(config->tls_options, proxy_options->tls_options)) {
@@ -1480,6 +1504,11 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_clone(
         goto on_error;
     }
 
+    if (aws_byte_buf_init_copy_from_cursor(
+            &config->no_proxy_hosts, allocator, aws_byte_cursor_from_buf(&proxy_config->no_proxy_hosts))) {
+        goto on_error;
+    }
+
     if (proxy_config->tls_options) {
         config->tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
         if (aws_tls_connection_options_copy(config->tls_options, proxy_config->tls_options)) {
@@ -1506,6 +1535,7 @@ void aws_http_proxy_config_destroy(struct aws_http_proxy_config *config) {
     }
 
     aws_byte_buf_clean_up(&config->host);
+    aws_byte_buf_clean_up(&config->no_proxy_hosts);
 
     if (config->tls_options) {
         aws_tls_connection_options_clean_up(config->tls_options);
@@ -1527,6 +1557,7 @@ void aws_http_proxy_options_init_from_config(
     options->port = config->port;
     options->tls_options = config->tls_options;
     options->proxy_strategy = config->proxy_strategy;
+    options->no_proxy_hosts = aws_byte_cursor_from_buf(&config->no_proxy_hosts);
 }
 
 int aws_http_options_validate_proxy_configuration(const struct aws_http_client_connection_options *options) {

@@ -1228,28 +1228,6 @@ TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
     return s_tester_clean_up();
 }
 
-/* Test that makes tons of real streams against real world */
-TEST_CASE(h2_sm_close_connection_on_server_error) {
-    (void)ctx;
-    /* page not exist. */
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://www.amazon.com/non-exists");
-    struct sm_tester_options options = {
-        .max_connections = 1,
-        .max_concurrent_streams_per_connection = 10,
-        .alloc = allocator,
-        .uri_cursor = &uri_cursor,
-        .close_connection_on_server_error = true,
-    };
-    ASSERT_SUCCESS(s_tester_init(&options));
-    int num_to_acquire = 50;
-    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
-    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
-    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
-    ASSERT_TRUE((int)s_tester.stream_200_count == 0);
-
-    return s_tester_clean_up();
-}
-
 static void s_sm_tester_on_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     if (s_tester.release_sm_during_connection_acquiring) {
         aws_http2_stream_manager_release(s_tester.stream_manager);
@@ -1285,6 +1263,27 @@ TEST_CASE(h2_sm_closing_before_connection_acquired) {
     /* all acquiring stream failed */
     ASSERT_INT_EQUALS(1, s_tester.acquiring_stream_errors);
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN, s_tester.error_code);
+    return s_tester_clean_up();
+}
+
+TEST_CASE(localhost_integ_h2_sm_close_connection_on_server_error) {
+    (void)ctx;
+    /* server that will return 500 status code all the time. */
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:3443/expect500");
+    struct sm_tester_options options = {
+        .max_connections = 1,
+        .max_concurrent_streams_per_connection = 10,
+        .alloc = allocator,
+        .uri_cursor = &uri_cursor,
+        .close_connection_on_server_error = true,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    int num_to_acquire = 50;
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
+    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
+    ASSERT_TRUE((int)s_tester.stream_200_count == 0);
+
     return s_tester_clean_up();
 }
 
