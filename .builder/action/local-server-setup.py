@@ -30,6 +30,10 @@ class LocalServerSetup(Builder.Action):
         # Okay to fail, and if it fails, you will know when you enable the localhost tests.
         # We don't need it to succeed on every platform we have.
         result = self.env.shell.exec(python_path,
+                                     '-m', 'pip', 'install', 'h11')
+        result = self.env.shell.exec(python_path,
+                                     '-m', 'pip', 'install', 'trio')
+        result = self.env.shell.exec(python_path,
                                      '-m', 'pip', 'install', 'h2')
         if result.returncode != 0:
             print(
@@ -38,11 +42,12 @@ class LocalServerSetup(Builder.Action):
             return
 
         base_dir = os.path.dirname(os.path.realpath(__file__))
-        dir = os.path.join(base_dir, "..", "..", "tests", "py_localhost")
+        dir = os.path.join(base_dir, "..", "..", "tests", "mock_server")
         os.chdir(dir)
 
-        p_server = subprocess.Popen([python_path, "server.py"])
-        p_non_tls_server = subprocess.Popen([python_path, "non_tls_server.py"])
+        p_server = subprocess.Popen([python_path, "h2tls_mock_server.py"])
+        p_non_tls_server = subprocess.Popen([python_path, "h2non_tls_server.py"])
+        p_h11_server = subprocess.Popen([python_path, "h11mock_server.py"])
 
         @atexit.register
         def close_local_server():

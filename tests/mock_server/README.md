@@ -1,4 +1,4 @@
-# Local server
+# HTTP2 Local server
 
 Local server based on [python-hyper/h2](https://github.com/python-hyper/h2).
 
@@ -39,6 +39,53 @@ Python 3.5+ required.
 
 ### Non-TLS server
 
-* The code is based the non-tls [example](http://python-hyper.org/projects/h2/en/stable/basic-usage.html) from hyper h2 server.
-* Run python. `python3 ./non_tls_server.py`.
-* To test the server runs correctly, you can do `curl -v --http2-prior-knowledge http://localhost:3280` and check the result.
+- The code is based the non-tls [example](http://python-hyper.org/projects/h2/en/stable/basic-usage.html) from hyper h2 server.
+- Run python. `python3 ./non_tls_server.py`.
+- To test the server runs correctly, you can do `curl -v --http2-prior-knowledge http://localhost:3280` and check the result.
+
+# HTTP1.1 Local server
+
+## Requirements
+
+Install the required Python dependencies:
+
+```bash
+pip install trio h11
+```
+
+Or using pip3:
+
+```bash
+pip3 install trio h11
+```
+
+## Running the Server
+
+### Basic Usage (HTTP + HTTPS)
+
+Run both HTTP (port 80) and HTTPS (port 443) servers:
+
+```bash
+sudo python3 mock_server.py
+```
+
+Note: `sudo` is required for ports 80 and 443 on most systems.
+
+### Test Mode (Custom Port)
+
+Run on a custom port without sudo:
+
+```bash
+TEST_PORT=8080 python3 mock_server.py
+```
+
+**Important**: Since this uses a self-signed certificate, clients must disable peer verification.
+
+## Endpoints
+
+- **Any path**: Echoes request body as JSON
+- **/response-headers?HeaderName=value**: Adds custom headers to the response based on query parameters
+
+## Stopping the Server
+
+Press `Ctrl+C` to gracefully shut down the server.
