@@ -94,12 +94,6 @@ class H2Protocol(asyncio.Protocol):
             int(2147483647/2), stream_id)
         self.raw_headers = headers
         headers = collections.OrderedDict(headers)
-        path = headers[':path']
-        method = headers[':method']
-        if method == "PUT" or method == "POST":
-            self.file_path = os.path.join(os.path.curdir, path[1:])
-            if os.path.exists(self.file_path):
-                os.remove(self.file_path)
 
         # Store off the request data.
         request_data = RequestData(headers, io.BytesIO())
@@ -107,15 +101,22 @@ class H2Protocol(asyncio.Protocol):
 
     def handle_request_echo(self, stream_id: int, request_data: RequestData):
         response_headers = [(':status', '200')]
+        # Filter out headers that shouldn't be echoed back
+        skip_headers = {'content-length', 'content-encoding', 'transfer-encoding'}
         for i in self.raw_headers:
-            # Response headers back and exclude pseudo headers
-            if i[0][0] != ':':
+            # Response headers back and exclude pseudo headers and problematic headers
+            if i[0][0] != ':' and i[0].lower() not in skip_headers:
                 response_headers.append(i)
+        
         body = request_data.data.getvalue().decode('utf-8')
         data = json.dumps(
             {"body": body}, indent=4
         ).encode("utf8")
-        self.conn.send_headers(stream_id, response_headers)
+        
+        # Add correct content-length for our response
+        response_headers.append(('content-length', str(len(data))))
+        
+        self.conn.send_headers(stream_id, response_headers, end_stream=False)
         asyncio.ensure_future(self.send_data(data, stream_id))
 
     def stream_complete(self, stream_id: int):
@@ -129,29 +130,10 @@ class H2Protocol(asyncio.Protocol):
             return
 
         path = request_data.headers[':path']
-        method = request_data.headers[':method']
-        if path == '/expect500':
-            self.conn.send_headers(stream_id, [(':status', '500')])
-            asyncio.ensure_future(self.send_data(b"Internal Server Error", stream_id))
-        elif method == "PUT" or method == "POST":
-            self.conn.send_headers(stream_id, [(':status', '200')])
-            asyncio.ensure_future(self.send_data(
-                str(self.num_sentence_received[stream_id]).encode(), stream_id))
-        elif path == '/echo':
+        if path == '/echo':
             self.handle_request_echo(stream_id, request_data)
-        elif path == '/downloadTest':
-            length = self.download_test_length
-            self.conn.send_headers(
-                stream_id, [(':status', '200'), ('content-length', str(length))])
-            asyncio.ensure_future(self.send_repeat_data(length, stream_id))
-        elif path == '/slowConnTest':
-            length = int(self.download_test_length/1000)
-            self.conn.send_headers(
-                stream_id, [(':status', '200'), ('content-length', str(length))])
-            asyncio.ensure_future(
-                self.send_slow_repeat_data(length, stream_id))
         else:
-            self.conn.send_headers(stream_id, [(':status', '404')])
+            self.conn.send_headers(stream_id, [(':status', '404')], end_stream=False)
             asyncio.ensure_future(self.send_data(b"Not Found", stream_id))
 
     def receive_data(self, data: bytes, stream_id: int, flow_controlled_length: int):
@@ -173,16 +155,7 @@ class H2Protocol(asyncio.Protocol):
                 stream_id, error_code=ErrorCodes.PROTOCOL_ERROR
             )
         else:
-            method = stream_data.headers[':method']
-            if method == "PUT" or method == "POST":
-                if stream_id in self.num_sentence_received:
-                    self.num_sentence_received[stream_id] = self.num_sentence_received[stream_id] + \
-                        len(data)
-                else:
-                    self.num_sentence_received[stream_id] = len(data)
-
-            else:
-                stream_data.data.write(data)
+            stream_data.data.write(data)
 
     def stream_reset(self, stream_id):
         """
