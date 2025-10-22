@@ -394,9 +394,13 @@ static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws
 
     (void)stream;
     (void)user_data;
-    struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.alloc, data);
-    s_tester.num_sen_received = (uint64_t)strtoull((const char *)content_length_header_str->bytes, NULL, 10);
-    aws_string_destroy(content_length_header_str);
+    /* Response is JSON: {"bytes": 2500000000} - extract the number */
+    const char *bytes_key = "\"bytes\": ";
+    const char *json_str = (const char *)data->ptr;
+    const char *bytes_pos = strstr(json_str, bytes_key);
+    if (bytes_pos != NULL) {
+        s_tester.num_sen_received = (uint64_t)strtoull(bytes_pos + strlen(bytes_key), NULL, 10);
+    }
 
     return AWS_OP_SUCCESS;
 }
@@ -425,7 +429,7 @@ static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, v
     struct aws_http_header request_headers_src[] = {
         DEFINE_HEADER(":method", "PUT"),
         DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":path", "/upload_test.txt"),
+        DEFINE_HEADER(":path", "/echo"),
         {
             .name = aws_byte_cursor_from_c_str(":authority"),
             .value = host_name,
@@ -434,6 +438,7 @@ static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, v
             .name = aws_byte_cursor_from_c_str("content_length"),
             .value = aws_byte_cursor_from_c_str(content_length_sprintf_buffer),
         },
+        DEFINE_HEADER("x-upload-test", "true"),
     };
     struct aws_http_message *request = aws_http2_message_new_request(allocator);
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
@@ -491,13 +496,20 @@ static int s_localhost_integ_h2_download_stress(struct aws_allocator *allocator,
     /* wait for connection connected */
     ASSERT_SUCCESS(s_wait_on_connection_connected(&s_tester));
 
+    char length_sprintf_buffer[128] = "";
+    snprintf(length_sprintf_buffer, sizeof(length_sprintf_buffer), "%zu", length);
+
     struct aws_http_header request_headers_src[] = {
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":path", "/downloadTest"),
+        DEFINE_HEADER(":path", "/echo"),
         {
             .name = aws_byte_cursor_from_c_str(":authority"),
             .value = host_name,
+        },
+        {
+            .name = aws_byte_cursor_from_c_str("x-repeat-data"),
+            .value = aws_byte_cursor_from_c_str(length_sprintf_buffer),
         },
     };
     struct aws_http_message *request = aws_http2_message_new_request(allocator);
