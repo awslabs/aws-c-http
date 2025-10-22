@@ -30,11 +30,7 @@ class LocalServerSetup(Builder.Action):
         # Okay to fail, and if it fails, you will know when you enable the localhost tests.
         # We don't need it to succeed on every platform we have.
         result = self.env.shell.exec(python_path,
-                                     '-m', 'pip', 'install', 'h11')
-        result = self.env.shell.exec(python_path,
-                                     '-m', 'pip', 'install', 'trio')
-        result = self.env.shell.exec(python_path,
-                                     '-m', 'pip', 'install', 'h2')
+                                     '-m', 'pip', 'install', 'h11', 'h2', 'trio', check=True)
         if result.returncode != 0:
             print(
                 "Could not install python HTTP/2 server." +

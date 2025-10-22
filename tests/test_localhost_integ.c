@@ -394,12 +394,15 @@ static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws
 
     (void)stream;
     (void)user_data;
-    /* Response is JSON: {"bytes": 2500000000} - extract the number */
-    const char *bytes_key = "\"bytes\": ";
-    const char *json_str = (const char *)data->ptr;
-    const char *bytes_pos = strstr(json_str, bytes_key);
-    if (bytes_pos != NULL) {
-        s_tester.num_sen_received = (uint64_t)strtoull(bytes_pos + strlen(bytes_key), NULL, 10);
+    /* Response is JSON as string: "{\n \"bytes\": 2500000000\n}" - extract the number */
+    struct aws_byte_cursor bytes_key = aws_byte_cursor_from_c_str("\"bytes\": ");
+    struct aws_byte_cursor found;
+
+    if (aws_byte_cursor_find_exact(data, &bytes_key, &found) == AWS_OP_SUCCESS) {
+        struct aws_byte_cursor value_cursor = *data;
+        value_cursor.ptr = found.ptr + bytes_key.len;
+        value_cursor.len = data->len - (size_t)(found.ptr - data->ptr) - bytes_key.len - 2;
+        aws_byte_cursor_utf8_parse_u64(value_cursor, &s_tester.num_sen_received);
     }
 
     return AWS_OP_SUCCESS;

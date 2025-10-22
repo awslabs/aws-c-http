@@ -122,6 +122,12 @@ class H2Protocol(asyncio.Protocol):
         Without special headers, echoes request headers and body as JSON.
         """
         headers_dict = dict(self.raw_headers)
+
+        expect_status = headers_dict.get('x-expect-status')
+        if expect_status:
+            response_headers = [(':status', expect_status)]
+            self.conn.send_headers(stream_id, response_headers, end_stream=True)
+            return
         
         # Check for x-repeat-data header
         repeat_data_header = headers_dict.get('x-repeat-data')

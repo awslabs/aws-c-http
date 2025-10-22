@@ -1269,7 +1269,7 @@ TEST_CASE(h2_sm_closing_before_connection_acquired) {
 TEST_CASE(localhost_integ_h2_sm_close_connection_on_server_error) {
     (void)ctx;
     /* server that will return 500 status code all the time. */
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:3443/expect500");
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:3443/echo");
     struct sm_tester_options options = {
         .max_connections = 1,
         .max_concurrent_streams_per_connection = 10,
@@ -1278,11 +1278,42 @@ TEST_CASE(localhost_integ_h2_sm_close_connection_on_server_error) {
         .close_connection_on_server_error = true,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
+
+    struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        {
+            .name = aws_byte_cursor_from_c_str(":scheme"),
+            .value = *aws_uri_scheme(&s_tester.endpoint),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":path"),
+            .value = s_normalize_path(*aws_uri_path(&s_tester.endpoint)),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = *aws_uri_host_name(&s_tester.endpoint),
+        },
+        DEFINE_HEADER("x-expect-status", "500"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .user_data = &s_tester,
+        .on_complete = s_sm_tester_on_stream_complete,
+        .on_destroy = s_sm_tester_on_stream_destroy,
+    };
     int num_to_acquire = 50;
-    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+    ASSERT_SUCCESS(s_sm_stream_acquiring_customize_request(num_to_acquire, &request_options));
+    aws_http_message_release(request);
+
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
-    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
-    ASSERT_TRUE((int)s_tester.stream_200_count == 0);
+    ASSERT_INT_EQUALS(0, (int)s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(0, (int)s_tester.stream_200_count);
+    ASSERT_INT_EQUALS(num_to_acquire, s_tester.stream_status_not_200_count);
 
     return s_tester_clean_up();
 }

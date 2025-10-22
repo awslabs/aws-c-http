@@ -14,7 +14,7 @@ Python 3.5+ required.
 * Have the cert/key ready. The script now using `../resources/unittests.crt`, you can either just run the script within this directory, which will find the certificates and key from the related path, or you can use your own and change the code coordinately.
 * Run python. `python3 ./server.py`.
 
-#### Endpoints
+#### Endpoint
 
 ##### `/echo` - Echo endpoint (default)
 
@@ -23,6 +23,7 @@ Echoes back request headers and body as JSON.
 ```bash
 curl -k -v -H "foo:bar" https://localhost:3443/echo
 ```
+#### Special headers
 
 ##### `/echo` with `x-repeat-data` header - Download test
 
@@ -49,6 +50,24 @@ Override default throughput with `x-throughput-bps` header.
 ```bash
 # Download 5MB at 500 bytes/sec
 curl -k -v -H "x-repeat-data: 5000000" -H "x-slow-response: true" -H "x-throughput-bps: 500" https://localhost:3443/echo
+```
+
+##### `/echo` with `x-upload-test` header - Upload test
+
+Returns the byte count of the uploaded body without echoing the body content.
+
+```bash
+# Upload data and get byte count
+curl -k -v -X PUT -H "x-upload-test: true" -d "test data" https://localhost:3443/echo
+```
+
+##### `/echo` with `x-expect-status` header - Custom status code
+
+Returns the specified HTTP status code.
+
+```bash
+# Get a 500 status code
+curl -k -v -H "x-expect-status: 500" https://localhost:3443/echo
 ```
 
 ##### Any other path
