@@ -14,28 +14,46 @@ Python 3.5+ required.
 * Have the cert/key ready. The script now using `../resources/unittests.crt`, you can either just run the script within this directory, which will find the certificates and key from the related path, or you can use your own and change the code coordinately.
 * Run python. `python3 ./server.py`.
 
-#### Echo
+#### Endpoints
 
-* Minor changed based on the example to response the headers of requests back within the headers from `/echo`.
-* To test the server runs correctly, you can do `curl -k -v -H "foo:bar" https://localhost:3443/echo` and check the result.
+##### `/echo` - Echo endpoint (default)
 
-#### Download test
+Echoes back request headers and body as JSON.
 
-* To test download, when `:path` is `/downloadTest`, server will response a repeated string with length `self.download_test_length`, which is 2,500,000,000 now. It will be repeats of sting "This is CRT HTTP test."
-* To test the server runs correctly, you can do `curl -k -v -H "foo:bar" https://localhost:3443/downloadTest` and check the result.
+```bash
+curl -k -v -H "foo:bar" https://localhost:3443/echo
+```
 
-#### Slow Connection Test
+##### `/echo` with `x-repeat-data` header - Download test
 
-* Simulate a slow connection when `:path` is `/slowConnTest`. The speed is controlled by `out_bytes_per_second`. Default speed is 900 B/s, which will send 900 bytes of data and wait a sec to send new 900 bytes of data.
+Sends repeated test pattern of specified size (in bytes).
 
-#### Upload test
+```bash
+# Download 1MB of repeated data
+curl -k -v -H "x-repeat-data: 1000000" https://localhost:3443/echo
+```
 
-* To test upload, when `:method` is `POST` or `PUT`, server will response the length received from response body
-* To test the server runs correctly, you can do `curl -k -X POST -F'data=@upload_test.txt' https://localhost:3443/upload_test` where `upload_test.txt` is file to upload.
+##### `/echo` with `x-repeat-data` + `x-slow-response` headers - Slow connection test
 
-#### expect500
+Sends repeated data throttled to ~900 bytes/sec (for timeout testing).
 
-* The server will always return `500` for `:status`, when the `:path` is `/expect500`
+```bash
+# Download 5MB slowly at default speed (900 bytes/sec)
+curl -k -v -H "x-repeat-data: 5000000" -H "x-slow-response: true" https://localhost:3443/echo
+```
+
+##### `/echo` with custom throughput - Custom speed test
+
+Override default throughput with `x-throughput-bps` header.
+
+```bash
+# Download 5MB at 500 bytes/sec
+curl -k -v -H "x-repeat-data: 5000000" -H "x-slow-response: true" -H "x-throughput-bps: 500" https://localhost:3443/echo
+```
+
+##### Any other path
+
+Returns 404 Not Found.
 
 ### Non-TLS server
 

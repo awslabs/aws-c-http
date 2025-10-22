@@ -8,9 +8,22 @@ asyncio-server.py
 
 A fully-functional HTTP/2 server using asyncio. Requires Python 3.5+.
 
-This example demonstrates handling requests with bodies, as well as handling
-those without. In particular, it demonstrates the fact that DataReceived may
-be called multiple times, and that applications must handle that possibility.
+Supported endpoints:
+
+1. GET /echo (default)
+   - Echoes back request headers and body as JSON
+
+2. GET /echo with x-repeat-data header
+   - x-repeat-data: <bytes> - Sends repeated test pattern of specified size
+   - Example: x-repeat-data: 1000000 (sends 1MB)
+
+3. GET /echo with x-repeat-data + x-slow-response headers
+   - x-slow-response: true - Throttles response to ~900 bytes/sec (for timeout testing)
+   - x-throughput-bps: <number> - Optional: Override throughput (default 900)
+   - Example: x-repeat-data: 5000000, x-slow-response: true, x-throughput-bps: 500
+
+4. Any other path
+   - Returns 404 Not Found
 """
 import asyncio
 import io
@@ -100,6 +113,47 @@ class H2Protocol(asyncio.Protocol):
         self.stream_data[stream_id] = request_data
 
     def handle_request_echo(self, stream_id: int, request_data: RequestData):
+        """
+        Handle /echo endpoint with optional special headers:
+        - x-repeat-data: <bytes> - Triggers send_repeat_data() with specified length
+        - x-slow-response: true - Triggers send_slow_repeat_data() instead (requires x-repeat-data)
+        - x-throughput-bps: <number> - Override throughput for slow response (default 900)
+        
+        Without special headers, echoes request headers and body as JSON.
+        """
+        headers_dict = dict(self.raw_headers)
+        
+        # Check for x-repeat-data header
+        repeat_data_header = headers_dict.get('x-repeat-data')
+        if repeat_data_header:
+            try:
+                length = int(repeat_data_header)
+                response_headers = [(':status', '200')]
+                self.conn.send_headers(stream_id, response_headers, end_stream=False)
+                
+                # Check for slow response
+                if headers_dict.get('x-slow-response') == 'true':
+                    # Check for custom throughput
+                    throughput_header = headers_dict.get('x-throughput-bps')
+                    if throughput_header:
+                        self.out_bytes_per_second = int(throughput_header)
+                    asyncio.ensure_future(self.send_slow_repeat_data(length, stream_id))
+                else:
+                    asyncio.ensure_future(self.send_repeat_data(length, stream_id))
+                return
+            except ValueError:
+                pass  # Fall through to echo behavior
+        
+        # Check for upload test (don't echo body, just return byte count)
+        if headers_dict.get('x-upload-test') == 'true':
+            body_bytes = request_data.data.getvalue()
+            data = json.dumps({"bytes": len(body_bytes)}, indent=4).encode("utf8")
+            response_headers = [(':status', '200'), ('content-length', str(len(data)))]
+            self.conn.send_headers(stream_id, response_headers, end_stream=False)
+            asyncio.ensure_future(self.send_data(data, stream_id))
+            return
+        
+        # Default echo behavior
         response_headers = [(':status', '200')]
         # Filter out headers that shouldn't be echoed back
         skip_headers = {'content-length', 'content-encoding', 'transfer-encoding'}
@@ -108,9 +162,12 @@ class H2Protocol(asyncio.Protocol):
             if i[0][0] != ':' and i[0].lower() not in skip_headers:
                 response_headers.append(i)
         
-        body = request_data.data.getvalue().decode('utf-8')
+        body_bytes = request_data.data.getvalue()
+        
+        body = body_bytes.decode('utf-8')
+
         data = json.dumps(
-            {"body": body}, indent=4
+            {"body": body, "bytes": len(body_bytes)}, indent=4,
         ).encode("utf8")
         
         # Add correct content-length for our response
@@ -198,7 +255,9 @@ class H2Protocol(asyncio.Protocol):
 
     async def send_repeat_data(self, length, stream_id):
         """
-        Send data with length according to the flow control rules.
+        Send repeated test pattern data of specified length.
+        Respects HTTP/2 flow control rules.
+        Triggered by x-repeat-data header on /echo endpoint.
         """
         while length > 0:
             while self.conn.local_flow_control_window(stream_id) < 1:
@@ -232,7 +291,9 @@ class H2Protocol(asyncio.Protocol):
 
     async def send_slow_repeat_data(self, length, stream_id):
         """
-        Send data with length slowly (less than 1000 bytes per second)
+        Send repeated test pattern data slowly (throttled to out_bytes_per_second, default 900).
+        Used for timeout and slow connection testing.
+        Triggered by x-repeat-data + x-slow-response headers on /echo endpoint.
         """
         while length > 0:
             while self.conn.local_flow_control_window(stream_id) < 1:
