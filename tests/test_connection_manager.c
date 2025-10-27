@@ -22,8 +22,8 @@
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
 #include <aws/io/socket.h>
-#include <aws/io/tls_channel_handler.h>
 #include <aws/io/socks5.h>
+#include <aws/io/tls_channel_handler.h>
 
 #ifdef _MSC_VER
 #    pragma warning(disable : 4232) /* function pointer to dll symbol */
@@ -860,11 +860,7 @@ static int s_aws_http_connection_manager_create_connection_validate(
         struct aws_byte_cursor expected_host = aws_byte_cursor_from_string(tester->verify_socks5_options->host);
         struct aws_byte_cursor actual_host = aws_byte_cursor_from_string(options->socks5_proxy_options->host);
         ASSERT_BIN_ARRAYS_EQUALS(
-            expected_host.ptr,
-            expected_host.len,
-            actual_host.ptr,
-            actual_host.len,
-            "Socks5 proxy host mismatch");
+            expected_host.ptr, expected_host.len, actual_host.ptr, actual_host.len, "Socks5 proxy host mismatch");
         ASSERT_UINT_EQUALS(tester->verify_socks5_options->port, options->socks5_proxy_options->port);
         tester->socks5_invocations++;
     } else {
@@ -1248,10 +1244,7 @@ static int s_test_connection_manager_socks5_proxy_connection(struct aws_allocato
 
     struct aws_socks5_proxy_options socks5_options;
     ASSERT_SUCCESS(aws_socks5_proxy_options_init(
-        &socks5_options,
-        allocator,
-        aws_byte_cursor_from_c_str(s_cm_socks5_proxy_host_name),
-        s_cm_socks5_proxy_port));
+        &socks5_options, allocator, aws_byte_cursor_from_c_str(s_cm_socks5_proxy_host_name), s_cm_socks5_proxy_port));
     aws_socks5_proxy_options_set_host_resolution_mode(&socks5_options, AWS_SOCKS5_HOST_RESOLUTION_PROXY);
 
     struct cm_tester_options options = {

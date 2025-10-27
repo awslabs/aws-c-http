@@ -15,9 +15,9 @@
 #include <aws/io/event_loop.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
+#include <aws/io/socks5.h>
 #include <aws/io/tls_channel_handler.h>
 #include <aws/io/uri.h>
-#include <aws/io/socks5.h>
 
 #include <aws/common/clock.h>
 #include <aws/common/hash_table.h>
