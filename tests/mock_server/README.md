@@ -100,20 +100,18 @@ pip3 install trio h11
 
 ### Basic Usage (HTTP + HTTPS)
 
-Run both HTTP (port 80) and HTTPS (port 443) servers:
+Run both HTTP (port 8081) and HTTPS (port 8082) servers:
 
 ```bash
-sudo python3 mock_server.py
+python3 mock_server.py
 ```
 
-Note: `sudo` is required for ports 80 and 443 on most systems.
-
-### Test Mode (Custom Port)
+### Custom Ports
 
 Run on a custom port without sudo:
 
 ```bash
-TEST_PORT=8080 python3 mock_server.py
+HTTP_PORT=8080 HTTPS_PORT=8443 python3 mock_server.py
 ```
 
 **Important**: Since this uses a self-signed certificate, clients must disable peer verification.

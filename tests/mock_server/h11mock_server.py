@@ -247,15 +247,12 @@ async def serve_ssl(port, cert_file=os.path.join(os.path.dirname(__file__),
 
 
 async def main():
-    test_port = os.environ.get('TEST_PORT')
+    http_port = os.environ.get('HTTP_PORT')
+    https_port = os.environ.get('HTTPS_PORT')
     
-    if test_port:
-        print(f"Running in test mode on port {test_port}")
-        await serve(int(test_port))
-    else:
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(serve, 80)
-            nursery.start_soon(serve_ssl, 443)
+    async with trio.open_nursery() as nursery:
+        nursery.start_soon(serve, 8081 if not http_port else int(http_port))
+        nursery.start_soon(serve_ssl, 8082 if not https_port else int(https_port))
 
 
 if __name__ == "__main__":

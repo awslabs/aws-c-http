@@ -56,6 +56,6 @@ cmake --build aws-c-http/build --target install
 
 To run some of the integration tests (start with localhost_integ_*), you need to set up a localhost that echo the request headers from `/echo` back first.
 
-To do that, check [localhost](./tests/py_localhost/) script we have.
+To do that, check [localhost](./tests/mock_server/) script we have.
 
 After that, configure and build your cmake project with `-DENABLE_LOCALHOST_INTEGRATION_TESTS=true` to build the tests with localhost and run them from `ctest --output-on-failure -R localhost_integ_*`.
