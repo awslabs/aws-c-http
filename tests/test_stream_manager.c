@@ -1228,28 +1228,6 @@ TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
     return s_tester_clean_up();
 }
 
-/* Test that makes tons of real streams against real world */
-TEST_CASE(h2_sm_close_connection_on_server_error) {
-    (void)ctx;
-    /* server that will return 500 status code all the time. */
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://postman-echo.com/status/500");
-    struct sm_tester_options options = {
-        .max_connections = 1,
-        .max_concurrent_streams_per_connection = 10,
-        .alloc = allocator,
-        .uri_cursor = &uri_cursor,
-        .close_connection_on_server_error = true,
-    };
-    ASSERT_SUCCESS(s_tester_init(&options));
-    int num_to_acquire = 50;
-    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
-    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
-    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
-    ASSERT_TRUE((int)s_tester.stream_200_count == 0);
-
-    return s_tester_clean_up();
-}
-
 static void s_sm_tester_on_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     if (s_tester.release_sm_during_connection_acquiring) {
         aws_http2_stream_manager_release(s_tester.stream_manager);
@@ -1285,6 +1263,58 @@ TEST_CASE(h2_sm_closing_before_connection_acquired) {
     /* all acquiring stream failed */
     ASSERT_INT_EQUALS(1, s_tester.acquiring_stream_errors);
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN, s_tester.error_code);
+    return s_tester_clean_up();
+}
+
+TEST_CASE(localhost_integ_h2_sm_close_connection_on_server_error) {
+    (void)ctx;
+    /* server that will return 500 status code all the time. */
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:3443/echo");
+    struct sm_tester_options options = {
+        .max_connections = 1,
+        .max_concurrent_streams_per_connection = 10,
+        .alloc = allocator,
+        .uri_cursor = &uri_cursor,
+        .close_connection_on_server_error = true,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+
+    struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        {
+            .name = aws_byte_cursor_from_c_str(":scheme"),
+            .value = *aws_uri_scheme(&s_tester.endpoint),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":path"),
+            .value = s_normalize_path(*aws_uri_path(&s_tester.endpoint)),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = *aws_uri_host_name(&s_tester.endpoint),
+        },
+        DEFINE_HEADER("x-expect-status", "500"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .user_data = &s_tester,
+        .on_complete = s_sm_tester_on_stream_complete,
+        .on_destroy = s_sm_tester_on_stream_destroy,
+    };
+    int num_to_acquire = 50;
+    ASSERT_SUCCESS(s_sm_stream_acquiring_customize_request(num_to_acquire, &request_options));
+    aws_http_message_release(request);
+
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
+    ASSERT_INT_EQUALS(0, (int)s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(0, (int)s_tester.stream_200_count);
+    ASSERT_INT_EQUALS(num_to_acquire, s_tester.stream_status_not_200_count);
+
     return s_tester_clean_up();
 }
 
@@ -1340,10 +1370,13 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
 static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
     (void)user_data;
     (void)stream;
-    struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.allocator, data);
-    size_t num_received = (uint32_t)atoi((const char *)content_length_header_str->bytes);
+    /* Response is JSON: {"bytes": 2000} - extract the number */
+    const char *bytes_key = "\"bytes\": ";
+    const char *json_str = (const char *)data->ptr;
+    const char *bytes_pos = strstr(json_str, bytes_key);
+    AWS_FATAL_ASSERT(bytes_pos != NULL);
+    size_t num_received = (size_t)atoll(bytes_pos + strlen(bytes_key));
     AWS_FATAL_ASSERT(s_tester.length_sent == num_received);
-    aws_string_destroy(content_length_header_str);
 
     return AWS_OP_SUCCESS;
 }
@@ -1370,6 +1403,7 @@ static int s_sm_stream_acquiring_with_body(int num_streams) {
             .name = aws_byte_cursor_from_c_str("content_length"),
             .value = aws_byte_cursor_from_c_str(content_length_sprintf_buffer),
         },
+        DEFINE_HEADER("x-upload-test", "true"),
     };
     for (int i = 0; i < num_streams; ++i) {
         /* TODO: Test the callback will always be fired asynced, as now the CM cannot ensure the callback happens
@@ -1401,7 +1435,7 @@ static int s_sm_stream_acquiring_with_body(int num_streams) {
 /* Test that makes tons of real streams with body against local host */
 TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
     (void)ctx;
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:3443/upload_test");
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:3443/echo");
     enum aws_log_level log_level = AWS_LOG_LEVEL_DEBUG;
     struct sm_tester_options options = {
         .max_connections = 100,
@@ -1426,7 +1460,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
 /* Test that connection monitor works properly with HTTP/2 stream manager */
 TEST_CASE(localhost_integ_h2_sm_connection_monitor_kill_slow_connection) {
     (void)ctx;
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:3443/slowConnTest");
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:3443/echo");
     struct aws_http_connection_monitoring_options monitor_opt = {
         .allowable_throughput_failure_interval_seconds = 1,
         .minimum_throughput_bytes_per_second = 1000,
@@ -1440,7 +1474,42 @@ TEST_CASE(localhost_integ_h2_sm_connection_monitor_kill_slow_connection) {
     };
     ASSERT_SUCCESS(s_tester_init(&options));
 
-    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        {
+            .name = aws_byte_cursor_from_c_str(":scheme"),
+            .value = *aws_uri_scheme(&s_tester.endpoint),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":path"),
+            .value = s_normalize_path(*aws_uri_path(&s_tester.endpoint)),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = *aws_uri_host_name(&s_tester.endpoint),
+        },
+        DEFINE_HEADER("x-repeat-data", "5000000"),
+        DEFINE_HEADER("x-slow-response", "true"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .user_data = &s_tester,
+        .on_complete = s_sm_tester_on_stream_complete,
+        .on_destroy = s_sm_tester_on_stream_destroy,
+    };
+    struct aws_http2_stream_manager_acquire_stream_options acquire_stream_option = {
+        .options = &request_options,
+        .callback = s_sm_tester_on_stream_acquired,
+        .user_data = &s_tester,
+    };
+    aws_http2_stream_manager_acquire_stream(s_tester.stream_manager, &acquire_stream_option);
+    aws_http_message_release(request);
+
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
     /* Check the connection closed by connection monitor and the stream should completed with corresponding error */
     ASSERT_UINT_EQUALS(s_tester.stream_completed_error_code, AWS_ERROR_HTTP_CONNECTION_CLOSED);
