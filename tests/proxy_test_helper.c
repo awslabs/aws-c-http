@@ -21,6 +21,7 @@
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
+#include <aws/io/socks5_channel_handler.h>
 #include <aws/testing/aws_test_harness.h>
 #include <aws/testing/io_testing_channel.h>
 
@@ -120,7 +121,13 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
 
     tester->host = options->host;
     tester->port = options->port;
-    tester->proxy_options = *options->proxy_options;
+    if (options->proxy_options) {
+        tester->proxy_options = *options->proxy_options;
+    } else {
+        AWS_ZERO_STRUCT(tester->proxy_options);
+    }
+    tester->socks5_proxy_options = options->socks5_proxy_options;
+    tester->socks5_invocations = 0;
     tester->test_mode = options->test_mode;
     tester->failure_type = options->failure_type;
 
@@ -193,6 +200,9 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
     client_options.on_shutdown = proxy_tester_on_client_connection_shutdown;
     if (options->proxy_options) {
         client_options.proxy_options = options->proxy_options;
+    }
+    if (options->socks5_proxy_options) {
+        client_options.socks5_proxy_options = options->socks5_proxy_options;
     }
 
     aws_http_client_connect(&client_options);
@@ -274,6 +284,8 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
     aws_http_library_clean_up();
 
     aws_byte_buf_clean_up(&tester->connection_host_name);
+
+    aws_socks5_channel_handler_set_system_vtable(NULL);
 
     return AWS_OP_SUCCESS;
 }
