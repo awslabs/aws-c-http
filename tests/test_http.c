@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-#include <aws/testing/aws_test_harness.h>
 #include <aws/http/http.h>
+#include <aws/testing/aws_test_harness.h>
 
-static int s_test_http_error_code_is_transient(struct aws_allocator* allocator, void *ctx) {
+static int s_test_http_error_code_is_transient(struct aws_allocator *allocator, void *ctx) {
     (void)allocator;
     (void)ctx;
 

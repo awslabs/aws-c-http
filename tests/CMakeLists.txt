@@ -18,6 +18,8 @@ macro(add_h2_decoder_test_set NAME)
     add_test_case("${NAME}_one_byte_at_a_time")
 endmacro()
 
+add_test_case(test_http_error_code_is_transient)
+
 add_test_case(headers_add)
 add_test_case(headers_add_array)
 add_test_case(headers_set)

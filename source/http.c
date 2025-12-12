@@ -8,8 +8,8 @@
 #include <aws/http/private/hpack.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/status_code.h>
-#include <aws/io/logging.h>
 #include <aws/io/io.h>
+#include <aws/io/logging.h>
 
 #include <ctype.h>
 
