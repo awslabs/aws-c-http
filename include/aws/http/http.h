@@ -124,6 +124,13 @@ AWS_HTTP_API
 void aws_http_library_clean_up(void);
 
 /**
+ * Helper used downstream to check if the HTTP error codes can be classified
+ * as transient errors.
+ */
+AWS_HTTP_API
+bool aws_http_error_code_is_transient(int error_code);
+
+/**
  * Returns the description of common status codes.
  * Ex: 404 -> "Not Found"
  * An empty string is returned if the status code is not recognized.
