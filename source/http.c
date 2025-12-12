@@ -9,6 +9,7 @@
 #include <aws/http/private/http_impl.h>
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
+#include <aws/io/io.h>
 
 #include <ctype.h>
 
@@ -554,6 +555,15 @@ void aws_http_fatal_assert_library_initialized(void) {
 
         AWS_FATAL_ASSERT(s_library_initialized);
     }
+}
+
+bool aws_http_error_code_is_transient(int error_code) {
+    switch (error_code) {
+        case AWS_ERROR_HTTP_CONNECTION_CLOSED:
+        case AWS_ERROR_HTTP_SERVER_CLOSED:
+            return true;
+    }
+    return aws_io_error_code_is_transient(error_code);
 }
 
 const struct aws_byte_cursor aws_http_method_get = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET");

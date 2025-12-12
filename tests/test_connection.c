@@ -7,6 +7,7 @@
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/proxy.h>
 #include <aws/http/server.h>
+#include <aws/http/http.h>
 
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
