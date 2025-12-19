@@ -128,7 +128,7 @@ void aws_http_library_clean_up(void);
  * as transient errors.
  */
 AWS_HTTP_API
-bool aws_http_error_code_is_transient(int error_code);
+bool aws_http_error_code_is_retryable(int error_code);
 
 /**
  * Returns the description of common status codes.
