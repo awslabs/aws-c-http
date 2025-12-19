@@ -344,6 +344,9 @@ AWS_TEST_CASE(
 /*
  * For tls-enabled tunneling proxy connections:
  * Test the happy path by verifying CONNECT request, tls upgrade attempt
+ * TODO: This test is temporarily disabled on Apple platforms following a breaking change
+ * due to migration to the new Apple Network Framework. Investigations underway for rethinking
+ * proxy implementation on Apple platforms. Test should be re-enabled post-fix on CMakeLists.txt.
  */
 static int s_test_https_tunnel_proxy_connection_success(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
