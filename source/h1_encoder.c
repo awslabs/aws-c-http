@@ -363,6 +363,8 @@ int aws_h1_encoder_message_init_from_response(
 
     struct aws_byte_cursor status_text = aws_byte_cursor_from_c_str(aws_http_status_text(status_int));
 
+    message->is_switching_protocols = status_int == AWS_HTTP_STATUS_CODE_101_SWITCHING_PROTOCOLS;
+
     /**
      * Calculate total size needed for outgoing_head_buffer, then write to buffer.
      */
