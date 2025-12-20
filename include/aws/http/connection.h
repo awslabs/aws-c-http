@@ -315,6 +315,15 @@ struct aws_http_client_connection_options {
      */
     const struct aws_http_proxy_options *proxy_options;
 
+    /**
+     * Optional
+     * Configuration options for SOCKS5 proxy.
+     * Used for SOCKS5 proxy connections which operate at the socket level.
+     * If this is set, proxy_options will be ignored as they are mutually exclusive.
+     * Relevant fields are copied internally.
+     */
+    const struct aws_socks5_proxy_options *socks5_proxy_options;
+
     /*
      * Optional.
      * Configuration for using proxy from environment variable.
