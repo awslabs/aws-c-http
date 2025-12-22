@@ -1,12 +1,16 @@
 name: Certificate Renewal
 
+# on:
+#   schedule:
+#     # Run on the 1st of every month at 00:00 UTC
+#     # GitHub Actions doesn't support "every 800 days" directly,
+#     # so we check monthly if renewal is needed
+#     - cron: '0 0 1 * *'
+#   workflow_dispatch: # Allow manual triggering
 on:
-  schedule:
-    # Run on the 1st of every month at 00:00 UTC
-    # GitHub Actions doesn't support "every 800 days" directly,
-    # so we check monthly if renewal is needed
-    - cron: '0 0 1 * *'
-  workflow_dispatch: # Allow manual triggering
+  push:
+    branches-ignore:
+      - 'main'
 
 permissions:
   contents: write
