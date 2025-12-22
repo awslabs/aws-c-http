@@ -13,4 +13,7 @@ Apple won't trust any certificate whose lifetime is over 825 days.
 Once it expires unit tests will start failing and it will need to be updated like so:
 
 $ openssl req -x509 -new -key unittests.key -config unittests.conf -out unittests.crt -days 824
-$ openssl pkcs12 -export -out unittests.p12 -inkey unittests.key -in unittests.crt -password pass:1234
+$ openssl pkcs12 -export -out unittests.p12 -inkey unittests.key -in unittests.crt -password pass:1234 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+
+Note: The PKCS#12 command uses SHA1 and 3DES encryption for macOS compatibility.
+Modern OpenSSL 3.x defaults to algorithms that macOS Security Framework cannot import.
