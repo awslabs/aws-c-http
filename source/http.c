@@ -556,6 +556,9 @@ void aws_http_fatal_assert_library_initialized(void) {
     }
 }
 
+/*
+ * This might need to get updated with more http error codes based on consensus.
+ */
 bool aws_http_error_code_is_retryable(int error_code) {
     switch (error_code) {
         case AWS_ERROR_HTTP_CONNECTION_CLOSED:
