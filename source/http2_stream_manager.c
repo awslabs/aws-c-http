@@ -294,6 +294,7 @@ static void s_finish_pending_stream_acquisitions_task(struct aws_task *task, voi
         stream_manager, &pending_stream_acquisitions, AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN);
     aws_mem_release(stream_manager->allocator, task);
     s_aws_http2_stream_manager_execute_transaction(&work);
+    aws_event_loop_group_release_from_event_loop(stream_manager->finish_pending_stream_acquisitions_task_event_loop);
 }
 
 /* helper function for building the transaction: how many new connections we should request */
@@ -378,6 +379,10 @@ static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2
             /* schedule a task to finish the pending acquisitions if there doesn't have one and needed */
             stream_manager->finish_pending_stream_acquisitions_task_event_loop =
                 aws_event_loop_group_get_next_loop(stream_manager->bootstrap->event_loop_group);
+            /* Acquire a refcount for the task , released when task finished
+             * s_finish_pending_stream_acquisitions_task */
+            aws_event_loop_group_acquire_from_event_loop(
+                stream_manager->finish_pending_stream_acquisitions_task_event_loop);
             struct aws_task *finish_pending_stream_acquisitions_task =
                 aws_mem_calloc(stream_manager->allocator, 1, sizeof(struct aws_task));
             aws_task_init(
