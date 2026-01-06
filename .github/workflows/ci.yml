@@ -206,6 +206,8 @@ jobs:
     runs-on: macos-14
     strategy:
       fail-fast: false
+      matrix:
+        eventloop: ["kqueue", "dispatch_queue"]
     steps:
     - uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -248,6 +250,8 @@ jobs:
     runs-on: macos-14
     strategy:
       fail-fast: false
+      matrix:
+        eventloop: ["kqueue", "dispatch_queue"]
     steps:
     - uses: aws-actions/configure-aws-credentials@v4
       with:
