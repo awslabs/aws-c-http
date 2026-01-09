@@ -21,6 +21,7 @@
 #include <aws/io/socket.h>
 #include <aws/io/socket_channel_handler.h>
 #include <aws/io/tls_channel_handler.h>
+#include <aws/io/socks5_channel_handler.h>
 
 #ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
@@ -36,6 +37,19 @@ static const struct aws_http_connection_system_vtable *s_system_vtable_ptr = &s_
 void aws_http_client_bootstrap_destroy(struct aws_http_client_bootstrap *bootstrap) {
     /* During allocating, the underlying stuctures should be allocated with the bootstrap by aws_mem_acquire_many. Thus,
      * we only need to clean up the first pointer which is the bootstrap */
+    if (!bootstrap) {
+        return;
+    }
+
+    if (aws_atomic_exchange_int(&bootstrap->destroyed, 1)) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Ignoring duplicate destroy for http client bootstrap %p",
+            (void *)bootstrap);
+        return;
+    }
+
+    AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION, "static: Destroying http client bootstrap %p", (void *)bootstrap);
     if (bootstrap->alpn_string_map) {
         aws_hash_table_clean_up(bootstrap->alpn_string_map);
     }
@@ -811,6 +825,13 @@ static void s_client_bootstrap_on_channel_setup(
     (void)channel_bootstrap;
     AWS_ASSERT(user_data);
     struct aws_http_client_bootstrap *http_bootstrap = user_data;
+    AWS_LOGF_DEBUG(
+        AWS_LS_HTTP_CONNECTION,
+        "static: channel shutdown for http bootstrap %p (on_setup=%p on_shutdown=%p error=%d)",
+        (void *)http_bootstrap,
+        (void *)(uintptr_t)http_bootstrap->on_setup,
+        (void *)(uintptr_t)http_bootstrap->on_shutdown,
+        error_code);
 
     /* Contract for setup callbacks is: channel is NULL if error_code is non-zero. */
     AWS_FATAL_ASSERT((error_code != 0) == (channel == NULL));
@@ -1101,6 +1122,7 @@ int aws_http_client_connect_internal(
         sizeof(struct aws_hash_table));
 
     AWS_ZERO_STRUCT(*http_bootstrap);
+    aws_atomic_init_int(&http_bootstrap->destroyed, 0);
 
     http_bootstrap->alloc = options.allocator;
     http_bootstrap->is_using_tls = options.tls_options != NULL;
@@ -1155,7 +1177,12 @@ int aws_http_client_connect_internal(
         .host_resolution_override_config = options.host_resolution_config,
     };
 
-    err = s_system_vtable_ptr->aws_client_bootstrap_new_socket_channel(&channel_options);
+    if (options.socks5_proxy_options != NULL) {
+        err = aws_client_bootstrap_new_socket_channel_with_socks5(
+            options.allocator, &channel_options, options.socks5_proxy_options);
+    } else {
+        err = s_system_vtable_ptr->aws_client_bootstrap_new_socket_channel(&channel_options);
+    }
 
     if (err) {
         AWS_LOGF_ERROR(
