@@ -515,7 +515,10 @@ static int s_test_connection_setup_shutdown_tls(struct aws_allocator *allocator,
 
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
-    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
+    int rc = s_tester_wait(&tester, s_tester_connection_shutdown_pred);
+    aws_thread_current_sleep(1000000000);
+    fprintf(stderr, "============ got rc %d", rc);
+    ASSERT_SUCCESS(rc);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
