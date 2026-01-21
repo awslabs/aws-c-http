@@ -511,11 +511,14 @@ static int s_test_connection_setup_shutdown_tls(struct aws_allocator *allocator,
         .tls = true,
     };
     struct tester tester;
-    ASSERT_SUCCESS(s_tester_init(&tester, &options));
+    int rc = s_tester_init(&tester, &options);
+    aws_thread_current_sleep(1000000000);
+    fprintf(stderr, "============ got rc %d", rc);
+    ASSERT_SUCCESS(rc);
 
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
-    int rc = s_tester_wait(&tester, s_tester_connection_shutdown_pred);
+    rc = s_tester_wait(&tester, s_tester_connection_shutdown_pred);
     aws_thread_current_sleep(1000000000);
     fprintf(stderr, "============ got rc %d", rc);
     ASSERT_SUCCESS(rc);
