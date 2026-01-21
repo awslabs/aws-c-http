@@ -137,6 +137,8 @@ static void s_tester_on_server_connection_setup(
     struct tester *tester = user_data;
     AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
 
+    AWS_LOGF_INFO(AWS_LS_HTTP_GENERAL, "=== s_tester_on_server_connection_setup: error code is %d", error_code);
+
     if (error_code) {
         tester->server_wait_result = error_code;
         goto done;
@@ -148,6 +150,10 @@ static void s_tester_on_server_connection_setup(
     options.on_shutdown = s_tester_on_server_connection_shutdown;
 
     int err = aws_http_connection_configure_server(connection, &options);
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_GENERAL,
+        "=== s_tester_on_server_connection_setup: aws_http_connection_configure_server returned %d",
+        err);
     if (err) {
         tester->server_wait_result = aws_last_error();
         goto done;
@@ -220,6 +226,16 @@ static int s_tester_wait(struct tester *tester, bool (*pred)(void *user_data)) {
 
 static bool s_tester_connection_setup_pred(void *user_data) {
     struct tester *tester = user_data;
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_GENERAL,
+        "=== s_tester_connection_setup_pred: %d or %d or %d == %d or %d == %d",
+        tester->server_wait_result,
+        tester->client_wait_result,
+        tester->client_connection_num,
+        tester->wait_client_connection_num,
+        tester->server_connection_num,
+        tester->wait_server_connection_num);
+
     return (tester->server_wait_result || tester->client_wait_result) ||
            (tester->client_connection_num == tester->wait_client_connection_num &&
             tester->server_connection_num == tester->wait_server_connection_num);
@@ -513,14 +529,12 @@ static int s_test_connection_setup_shutdown_tls(struct aws_allocator *allocator,
     struct tester tester;
     int rc = s_tester_init(&tester, &options);
     aws_thread_current_sleep(1000000000);
-    fprintf(stderr, "============ got rc %d", rc);
     ASSERT_SUCCESS(rc);
 
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
     rc = s_tester_wait(&tester, s_tester_connection_shutdown_pred);
     aws_thread_current_sleep(1000000000);
-    fprintf(stderr, "============ got rc %d", rc);
     ASSERT_SUCCESS(rc);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
