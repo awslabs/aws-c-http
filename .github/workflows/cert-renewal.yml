@@ -1,0 +1,145 @@
+name: Certificate Renewal
+
+on:
+  schedule:
+    # Run on the 1st of every month at 00:00 UTC
+    # GitHub Actions doesn't support "every 800 days" directly,
+    # so we check monthly if renewal is needed
+    - cron: '0 0 1 * *'
+  workflow_dispatch: # Allow manual triggering
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-and-renew-certificates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check certificate expiration
+        id: check-cert
+        run: |
+          # Get the expiration date of the current certificate
+          CERT_FILE="tests/resources/unittests.crt"
+
+          if [ ! -f "$CERT_FILE" ]; then
+            echo "Certificate file not found!"
+            echo "needs_renewal=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Get certificate expiration date in seconds since epoch
+          EXPIRY_DATE=$(openssl x509 -enddate -noout -in "$CERT_FILE" | cut -d= -f2)
+          EXPIRY_EPOCH=$(date -d "$EXPIRY_DATE" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$EXPIRY_DATE" +%s)
+
+          # Get current date in seconds since epoch
+          CURRENT_EPOCH=$(date +%s)
+
+          # Calculate days until expiration
+          DAYS_UNTIL_EXPIRY=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+
+          echo "Certificate expires in $DAYS_UNTIL_EXPIRY days"
+
+          # Renew if less than 30 days until expiration
+          # This gives us buffer time before the 825-day Apple limit
+          if [ $DAYS_UNTIL_EXPIRY -lt 30 ]; then
+            echo "Certificate needs renewal (less than 30 days until expiration)"
+            echo "needs_renewal=true" >> $GITHUB_OUTPUT
+          else
+            echo "Certificate is still valid"
+            echo "needs_renewal=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install OpenSSL
+        if: steps.check-cert.outputs.needs_renewal == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssl
+
+      - name: Regenerate certificates
+        if: steps.check-cert.outputs.needs_renewal == 'true'
+        working-directory: tests/resources
+        run: |
+          # Regenerate the certificate (824 days to stay under Apple's 825-day limit)
+          openssl req -x509 -new -key unittests.key -config unittests.conf -out unittests.crt -days 824
+
+          # Regenerate the PKCS#12 bundle with macOS-compatible encryption
+          # Using SHA1 and 3DES instead of modern algorithms that macOS Security Framework doesn't support
+          openssl pkcs12 -export -out unittests.p12 -inkey unittests.key -in unittests.crt -password pass:1234 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+
+          # Verify the new certificate
+          echo "New certificate details:"
+          openssl x509 -in unittests.crt -noout -dates -subject
+
+      - name: Check for changes
+        if: steps.check-cert.outputs.needs_renewal == 'true'
+        id: check-changes
+        run: |
+          if git diff --quiet tests/resources/unittests.crt tests/resources/unittests.p12; then
+            echo "No changes detected"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: steps.check-cert.outputs.needs_renewal == 'true' && steps.check-changes.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create branch
+          BRANCH_NAME="cert-renewal-${{ github.run_number }}"
+          git checkout -b "$BRANCH_NAME"
+
+          # Stage and commit changes
+          git add tests/resources/unittests.crt tests/resources/unittests.p12
+          git commit -m "chore: renew test certificates for 824 days
+
+          Automatically regenerated test certificates to comply with Apple's
+          825-day certificate lifetime requirement.
+
+          Generated using:
+          - openssl req -x509 -new -key unittests.key -config unittests.conf -out unittests.crt -days 824
+          - openssl pkcs12 -export -out unittests.p12 -inkey unittests.key -in unittests.crt -password pass:1234 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+
+          🤖 Assisted by GenAI"
+
+          # Push branch
+          git push origin "$BRANCH_NAME"
+
+          # Create pull request using GitHub CLI
+          gh pr create \
+            --title "chore: renew test certificates" \
+            --body "## Certificate Renewal
+
+          This PR automatically renews the test certificates in \`tests/resources/\`.
+
+          ### Changes
+          - Updated \`tests/resources/unittests.crt\` (renewed for 824 days)
+          - Updated \`tests/resources/unittests.p12\` (PKCS#12 bundle)
+
+          ### Background
+          Apple requires that certificate lifetimes be 825 days or less. These certificates are used in unit tests that create TLS connections between localhost server and client.
+
+          ### Verification
+          The certificates were regenerated using the commands documented in \`tests/resources/unittests.readme\`:
+          \`\`\`bash
+          openssl req -x509 -new -key unittests.key -config unittests.conf -out unittests.crt -days 824
+          openssl pkcs12 -export -out unittests.p12 -inkey unittests.key -in unittests.crt -password pass:1234 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+          \`\`\`
+
+          ### Testing
+          Please verify that the unit tests pass with the new certificates before merging.
+
+          ---
+          🤖 This PR was automatically generated by the certificate renewal workflow." \
+            --base main \
+            --head "$BRANCH_NAME"

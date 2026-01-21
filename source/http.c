@@ -568,6 +568,19 @@ void aws_http_fatal_assert_library_initialized(void) {
     }
 }
 
+/*
+ * This might need to get updated with more http error codes based on consensus.
+ */
+bool aws_http_error_code_is_retryable(int error_code) {
+    switch (error_code) {
+        case AWS_ERROR_HTTP_CONNECTION_CLOSED:
+        case AWS_ERROR_HTTP_SERVER_CLOSED:
+        case AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE:
+            return true;
+    }
+    return aws_io_error_code_is_retryable(error_code);
+}
+
 const struct aws_byte_cursor aws_http_method_get = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET");
 const struct aws_byte_cursor aws_http_method_head = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HEAD");
 const struct aws_byte_cursor aws_http_method_post = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST");
