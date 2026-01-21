@@ -524,7 +524,7 @@ static int s_test_connection_setup_shutdown_tls(struct aws_allocator *allocator,
     ASSERT_SUCCESS(rc);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
-    return AWS_OP_SUCCESS;
+    return AWS_OP_ERR;
 }
 AWS_TEST_CASE(connection_setup_shutdown_tls, s_test_connection_setup_shutdown_tls);
 
