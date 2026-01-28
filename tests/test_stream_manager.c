@@ -55,6 +55,10 @@ struct sm_tester_options {
     bool close_connection_on_server_error;
     size_t connection_ping_period_ms;
     size_t connection_ping_timeout_ms;
+
+    /* HTTP/2 initial settings */
+    const struct aws_http2_setting *initial_settings_array;
+    size_t num_initial_settings;
 };
 
 static struct aws_logger s_logger;
@@ -290,6 +294,8 @@ static int s_tester_init(struct sm_tester_options *options) {
         .connection_ping_period_ms = options->connection_ping_period_ms,
         .connection_ping_timeout_ms = options->connection_ping_timeout_ms,
         .http2_prior_knowledge = options->prior_knowledge,
+        .initial_settings_array = options->initial_settings_array,
+        .num_initial_settings = options->num_initial_settings,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
@@ -1513,6 +1519,48 @@ TEST_CASE(localhost_integ_h2_sm_connection_monitor_kill_slow_connection) {
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
     /* Check the connection closed by connection monitor and the stream should completed with corresponding error */
     ASSERT_UINT_EQUALS(s_tester.stream_completed_error_code, AWS_ERROR_HTTP_CONNECTION_CLOSED);
+
+    return s_tester_clean_up();
+}
+
+/* Test that stream manager can be created with initial_settings_array configured */
+TEST_CASE(h2_sm_with_initial_settings) {
+    (void)ctx;
+    /* TODO: VALIDATE from the peer that those settings received. */
+    /* Configure custom HTTP/2 initial settings */
+    struct aws_http2_setting initial_settings[] = {
+        {
+            .id = AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE,
+            .value = 8192,
+        },
+        {
+            .id = AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS,
+            .value = 128,
+        },
+        {
+            .id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE,
+            .value = 65536,
+        },
+    };
+
+    struct sm_tester_options options = {
+        .max_connections = 5,
+        .alloc = allocator,
+        .initial_settings_array = initial_settings,
+        .num_initial_settings = AWS_ARRAY_SIZE(initial_settings),
+    };
+
+    ASSERT_SUCCESS(s_tester_init(&options));
+    ASSERT_NOT_NULL(s_tester.stream_manager);
+
+    /* Verify stream manager works with initial settings */
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    int num_to_acquire = 1;
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(num_to_acquire));
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
 
     return s_tester_clean_up();
 }

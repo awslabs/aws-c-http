@@ -982,6 +982,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
             manager->initial_settings->data,
             options->initial_settings_array,
             options->num_initial_settings * sizeof(struct aws_http2_setting));
+        manager->initial_settings->length = options->num_initial_settings;
     }
     manager->max_closed_streams = options->max_closed_streams;
     manager->http2_conn_manual_window_management = options->http2_conn_manual_window_management;

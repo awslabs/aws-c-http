@@ -692,6 +692,7 @@ add_net_test_case(h2_sm_mock_ideal_num_streams)
 add_net_test_case(h2_sm_mock_large_ideal_num_streams)
 add_net_test_case(h2_sm_mock_goaway)
 add_net_test_case(h2_sm_connection_ping)
+add_net_test_case(h2_sm_with_initial_settings)
 
 # Tests against real world server
 add_net_test_case(h2_sm_acquire_stream)
