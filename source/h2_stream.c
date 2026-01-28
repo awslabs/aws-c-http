@@ -750,6 +750,19 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
             connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] / 2;
     }
 
+    /* Log the headers that we are sending out. */
+    size_t header_count = aws_http_headers_count(h2_headers);
+    for (size_t i = 0; i < header_count; i++) {
+        struct aws_http_header header;
+        aws_http_headers_get_index(h2_headers, i, &header);
+        AWS_H2_STREAM_LOGF(
+            TRACE,
+            stream,
+            "id=%p: Sending header: " PRInSTR ": " PRInSTR,
+            AWS_BYTE_CURSOR_PRI(header.name),
+            AWS_BYTE_CURSOR_PRI(header.value));
+    }
+
     if (with_data) {
         /* If stream has DATA to send, put it in the outgoing_streams_list, and we'll send data later */
         stream->thread_data.state = AWS_H2_STREAM_STATE_OPEN;
