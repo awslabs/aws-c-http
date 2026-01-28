@@ -59,6 +59,9 @@ struct sm_tester_options {
     /* HTTP/2 initial settings */
     const struct aws_http2_setting *initial_settings_array;
     size_t num_initial_settings;
+
+    bool manual_window;
+    size_t initial_window_size;
 };
 
 static struct aws_logger s_logger;
@@ -296,6 +299,8 @@ static int s_tester_init(struct sm_tester_options *options) {
         .http2_prior_knowledge = options->prior_knowledge,
         .initial_settings_array = options->initial_settings_array,
         .num_initial_settings = options->num_initial_settings,
+        .initial_window_size = options->initial_window_size,
+        .enable_read_back_pressure = options->manual_window,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
@@ -336,7 +341,8 @@ static int s_fake_connection_get_stream_received(struct sm_fake_connection *fake
 /* complete first num_streams_to_complete. If num_streams_to_complete is zero, complete all the streams. */
 static void s_fake_connection_complete_streams(
     struct sm_fake_connection *fake_connection,
-    int num_streams_to_complete) {
+    int num_streams_to_complete,
+    bool with_data) {
     if (!fake_connection->connection) {
         return;
     }
@@ -356,8 +362,16 @@ static void s_fake_connection_complete_streams(
         struct h2_decoded_frame *frame = h2_decode_tester_get_frame(&fake_connection->peer.decode, i);
         if (frame->end_stream) {
             struct aws_h2_frame *response_frame = aws_h2_frame_new_headers(
-                s_tester.allocator, frame->stream_id, response_headers, true /*end_stream*/, 0, NULL);
+                s_tester.allocator, frame->stream_id, response_headers, !with_data /*end_stream*/, 0, NULL);
             AWS_FATAL_ASSERT(h2_fake_peer_send_frame(&fake_connection->peer, response_frame) == AWS_OP_SUCCESS);
+            if (with_data) {
+                AWS_FATAL_ASSERT(
+                    h2_fake_peer_send_data_frame(
+                        &fake_connection->peer,
+                        frame->stream_id,
+                        aws_byte_cursor_from_c_str("tests"),
+                        true /*end_stream*/) == AWS_OP_SUCCESS);
+            }
             if (num_streams_to_complete && ++streams_completed >= num_streams_to_complete) {
                 break;
             }
@@ -401,16 +415,24 @@ static void s_release_fake_connections(void) {
     s_drain_all_fake_connection_testing_channel();
 }
 
-static int s_complete_all_fake_connection_streams(void) {
+static int s_complete_all_fake_connection_streams_impl(bool with_data) {
     size_t count = aws_array_list_length(&s_tester.fake_connections);
     for (size_t i = 0; i < count; ++i) {
         struct sm_fake_connection *fake_connection = NULL;
         ASSERT_SUCCESS(aws_array_list_get_at(&s_tester.fake_connections, &fake_connection, i));
         /* complete all the streams from the fake connection */
-        s_fake_connection_complete_streams(fake_connection, 0 /*all streams*/);
+        s_fake_connection_complete_streams(fake_connection, 0 /*all streams*/, with_data);
         testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
     }
     return AWS_OP_SUCCESS;
+}
+
+static int s_complete_all_fake_connection_streams(void) {
+    return s_complete_all_fake_connection_streams_impl(false);
+}
+
+static int s_complete_all_fake_connection_streams_with_data(void) {
+    return s_complete_all_fake_connection_streams_impl(true);
 }
 
 static int s_tester_clean_up(void) {
@@ -958,7 +980,7 @@ TEST_CASE(h2_sm_mock_complete_stream) {
     /* Fake peer send settings that only allow 2 concurrent streams */
     struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&fake_connection->peer));
-    s_fake_connection_complete_streams(fake_connection, 1);
+    s_fake_connection_complete_streams(fake_connection, 1, false);
 
     /* Acquire a new streams */
     ASSERT_SUCCESS(s_sm_stream_acquiring(1));
@@ -1166,7 +1188,7 @@ TEST_CASE(h2_sm_connection_ping) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&fake_connection_1->peer, peer_frame));
     testing_channel_drain_queued_tasks(&fake_connection_1->testing_channel);
     s_fake_connection_complete_streams(
-        fake_connection_1, 0 /*all streams*/); /* Make sure the streams completed successfully */
+        fake_connection_1, 0 /*all streams*/, false); /* Make sure the streams completed successfully */
 
     /* Check fake connection 2 received PING */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&fake_connection_2->peer));
@@ -1190,6 +1212,83 @@ TEST_CASE(h2_sm_connection_ping) {
     /* The streams on second and third connection should failed to complete */
     ASSERT_INT_EQUALS(4, s_tester.stream_complete_errors);
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, s_tester.stream_completed_error_code);
+
+    return s_tester_clean_up();
+}
+
+/* Test that stream manager with flow control error if the server didn't respect the window */
+TEST_CASE(h2_sm_with_flow_control_err) {
+    (void)ctx;
+
+    struct sm_tester_options options = {
+        .max_connections = 5,
+        .alloc = allocator,
+        .manual_window = true,
+        .initial_window_size = 0,
+    };
+
+    ASSERT_SUCCESS(s_tester_init(&options));
+    ASSERT_NOT_NULL(s_tester.stream_manager);
+
+    /* Verify stream manager works with initial settings */
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    int num_to_acquire = 1;
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(num_to_acquire));
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams_with_data());
+    ASSERT_INT_EQUALS(1, s_tester.stream_complete_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, s_tester.stream_completed_error_code);
+
+    return s_tester_clean_up();
+}
+
+/* Test that stream manager can be created with initial_settings_array configured */
+TEST_CASE(h2_sm_with_initial_settings) {
+    (void)ctx;
+    /* TODO: VALIDATE from the peer that those settings received. For now we test this with settings to override the
+     * initial window. */
+    /* Configure custom HTTP/2 initial settings */
+    struct aws_http2_setting initial_settings[] = {
+        {
+            .id = AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE,
+            .value = 8192,
+        },
+        {
+            .id = AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS,
+            .value = 128,
+        },
+        {
+            .id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE,
+            .value = 65536,
+        },
+    };
+
+    struct sm_tester_options options = {
+        .max_connections = 5,
+        .alloc = allocator,
+        .initial_settings_array = initial_settings,
+        .num_initial_settings = AWS_ARRAY_SIZE(initial_settings),
+        .manual_window = true,
+        /* Set initial window size to 0, but the settings should override it to keep the data flow. */
+        .initial_window_size = 0,
+    };
+
+    ASSERT_SUCCESS(s_tester_init(&options));
+    ASSERT_NOT_NULL(s_tester.stream_manager);
+
+    /* Verify stream manager works with initial settings */
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    int num_to_acquire = 1;
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(num_to_acquire));
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams_with_data());
+    /* Should complete without error */
+    ASSERT_INT_EQUALS(0, s_tester.stream_complete_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.stream_completed_error_code);
 
     return s_tester_clean_up();
 }
@@ -1519,48 +1618,6 @@ TEST_CASE(localhost_integ_h2_sm_connection_monitor_kill_slow_connection) {
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
     /* Check the connection closed by connection monitor and the stream should completed with corresponding error */
     ASSERT_UINT_EQUALS(s_tester.stream_completed_error_code, AWS_ERROR_HTTP_CONNECTION_CLOSED);
-
-    return s_tester_clean_up();
-}
-
-/* Test that stream manager can be created with initial_settings_array configured */
-TEST_CASE(h2_sm_with_initial_settings) {
-    (void)ctx;
-    /* TODO: VALIDATE from the peer that those settings received. */
-    /* Configure custom HTTP/2 initial settings */
-    struct aws_http2_setting initial_settings[] = {
-        {
-            .id = AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE,
-            .value = 8192,
-        },
-        {
-            .id = AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS,
-            .value = 128,
-        },
-        {
-            .id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE,
-            .value = 65536,
-        },
-    };
-
-    struct sm_tester_options options = {
-        .max_connections = 5,
-        .alloc = allocator,
-        .initial_settings_array = initial_settings,
-        .num_initial_settings = AWS_ARRAY_SIZE(initial_settings),
-    };
-
-    ASSERT_SUCCESS(s_tester_init(&options));
-    ASSERT_NOT_NULL(s_tester.stream_manager);
-
-    /* Verify stream manager works with initial settings */
-    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
-    int num_to_acquire = 1;
-    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
-    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
-    s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(num_to_acquire));
-    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
 
     return s_tester_clean_up();
 }
