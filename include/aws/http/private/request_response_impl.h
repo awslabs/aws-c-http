@@ -18,6 +18,7 @@ struct aws_http_stream_vtable {
     void (*update_window)(struct aws_http_stream *stream, size_t increment_size);
     int (*activate)(struct aws_http_stream *stream);
     void (*cancel)(struct aws_http_stream *stream, int error_code);
+    int (*write_data)(struct aws_http_stream *http2_stream, const struct aws_http_stream_write_data_options *options);
 
     int (*http1_write_chunk)(struct aws_http_stream *http1_stream, const struct aws_http1_chunk_options *options);
     int (*http1_add_trailer)(struct aws_http_stream *http1_stream, const struct aws_http_headers *trailing_headers);
@@ -25,9 +26,6 @@ struct aws_http_stream_vtable {
     int (*http2_reset_stream)(struct aws_http_stream *http2_stream, uint32_t http2_error);
     int (*http2_get_received_error_code)(struct aws_http_stream *http2_stream, uint32_t *http2_error);
     int (*http2_get_sent_error_code)(struct aws_http_stream *http2_stream, uint32_t *http2_error);
-    int (*http2_write_data)(
-        struct aws_http_stream *http2_stream,
-        const struct aws_http2_stream_write_data_options *options);
 };
 
 /**

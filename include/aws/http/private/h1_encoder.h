@@ -19,6 +19,18 @@ struct aws_h1_chunk {
     struct aws_byte_buf chunk_line;
 };
 
+/**
+ * Data write for incremental Content-Length streaming.
+ */
+struct aws_h1_data_write {
+    struct aws_allocator *allocator;
+    struct aws_input_stream *data;
+    aws_http1_stream_write_data_complete_fn *on_complete;
+    void *user_data;
+    struct aws_linked_list_node node;
+    bool is_end_stream;
+};
+
 struct aws_h1_trailer {
     struct aws_allocator *allocator;
     struct aws_byte_buf trailer_data;
@@ -64,6 +76,9 @@ enum aws_h1_encoder_state {
     AWS_H1_ENCODER_STATE_CHUNK_BODY,
     AWS_H1_ENCODER_STATE_CHUNK_END,
     AWS_H1_ENCODER_STATE_CHUNK_TRAILER,
+    /* The _DATA_WRITE_ states support the write_data() API (incremental Content-Length) */
+    AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT,
+    AWS_H1_ENCODER_STATE_DATA_WRITE_BODY,
     AWS_H1_ENCODER_STATE_DONE,
 };
 
@@ -77,6 +92,8 @@ struct aws_h1_encoder {
     uint64_t progress_bytes;
     /* Current chunk */
     struct aws_h1_chunk *current_chunk;
+    /* Current data write for incremental Content-Length */
+    struct aws_h1_data_write *current_data_write;
     /* Number of chunks sent, just used for logging */
     uint64_t chunk_count;
     /* Encoder logs with this stream ptr as the ID, and passes this ptr to the chunk_complete callback */
@@ -96,6 +113,26 @@ void aws_h1_chunk_destroy(struct aws_h1_chunk *chunk);
 /* Destroy chunk and fire its completion callback */
 void aws_h1_chunk_complete_and_destroy(struct aws_h1_chunk *chunk, struct aws_http_stream *http_stream, int error_code);
 
+/**
+ * Create a new data write structure for incremental Content-Length streaming.
+ */
+struct aws_h1_data_write *aws_h1_data_write_new(
+    struct aws_allocator *allocator,
+    const struct aws_http_stream_write_data_options *options);
+
+/**
+ * Destroy a data write structure without firing its completion callback.
+ */
+void aws_h1_data_write_destroy(struct aws_h1_data_write *data_write);
+
+/**
+ * Destroy a data write structure and fire its completion callback.
+ */
+void aws_h1_data_write_complete_and_destroy(
+    struct aws_h1_data_write *data_write,
+    struct aws_http_stream *http_stream,
+    int error_code);
+
 AWS_EXTERN_C_BEGIN
 
 /* Validate request and cache any info the encoder will need later in the "encoder message". */
@@ -104,7 +141,8 @@ int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *request,
-    struct aws_linked_list *pending_chunk_list);
+    struct aws_linked_list *pending_chunk_list,
+    bool use_manual_data_writes);
 
 int aws_h1_encoder_message_init_from_response(
     struct aws_h1_encoder_message *message,

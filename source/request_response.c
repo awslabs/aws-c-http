@@ -799,12 +799,17 @@ int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, const str
 int aws_http2_stream_write_data(
     struct aws_http_stream *http2_stream,
     const struct aws_http2_stream_write_data_options *options) {
-    AWS_PRECONDITION(http2_stream);
-    AWS_PRECONDITION(http2_stream->vtable);
-    AWS_PRECONDITION(http2_stream->vtable->http2_write_data);
+    /* aws_http2_stream_write_data_options is now a typedef of aws_http_stream_write_data_options */
+    return aws_http_stream_write_data(http2_stream, (struct aws_http_stream_write_data_options *)options);
+}
+int aws_http_stream_write_data(
+    struct aws_http_stream *http_stream,
+    const struct aws_http_stream_write_data_options *options) {
+    AWS_PRECONDITION(http_stream);
+    AWS_PRECONDITION(http_stream->vtable);
+    AWS_PRECONDITION(http_stream->vtable->write_data);
     AWS_PRECONDITION(options);
-
-    return http2_stream->vtable->http2_write_data(http2_stream, options);
+    return http_stream->vtable->write_data(http_stream, options);
 }
 
 int aws_http1_stream_add_chunked_trailer(

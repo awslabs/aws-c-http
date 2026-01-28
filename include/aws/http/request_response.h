@@ -303,8 +303,26 @@ struct aws_http_make_request_options {
     /**
      * When using HTTP/2, request body data will be provided over time. The stream will only be polled for writing
      * when data has been supplied via `aws_http2_stream_write_data`
+     *
+     * @deprecated Use use_manual_data_writes instead
      */
     bool http2_use_manual_data_writes;
+
+    /**
+     * When true, request body data will be provided over time via protocol-specific write functions:
+     * - For HTTP/1.1: aws_http1_stream_write_chunk
+     * - For HTTP/2: aws_http2_stream_write_data
+     *
+     * For HTTP/1.1 connections:
+     * 1. The request must have either Content-Length header set or Transfer-Encoding header set to chunk.
+     * 2. The request must not have a body stream set (aws_http_message_get_body_stream must return NULL).
+     *
+     * For HTTP/2 connections:
+     * This behaves the same as http2_use_manual_data_writes
+     *
+     * This flag takes precedence over http2_use_manual_data_writes when both are set.
+     */
+    bool use_manual_data_writes;
 
     /**
      * Optional (ignored if 0).
@@ -401,6 +419,20 @@ typedef void aws_http_stream_write_complete_fn(struct aws_http_stream *stream, i
 typedef aws_http_stream_write_complete_fn aws_http1_stream_write_chunk_complete_fn;
 
 /**
+ * Invoked when the data of an outgoing HTTP/1.1 data write is no longer in use.
+ * This is always invoked on the HTTP connection's event-loop thread.
+ *
+ * @param stream        HTTP-stream this data write was submitted to.
+ * @param error_code    If error_code is AWS_ERROR_SUCCESS (0), the data was successfully sent.
+ *                      Any other error_code indicates that the HTTP-stream is in the process of terminating.
+ *                      If the error_code is AWS_ERROR_HTTP_STREAM_HAS_COMPLETED,
+ *                      the stream's termination has nothing to do with this data write.
+ *                      Any other non-zero error code indicates a problem with this particular data write's data.
+ * @param user_data     User data for this data write.
+ */
+typedef aws_http_stream_write_complete_fn aws_http1_stream_write_data_complete_fn;
+
+/**
  * HTTP/1.1 chunk extension for chunked encoding.
  * Note that the underlying strings are not owned by the byte cursors.
  */
@@ -471,33 +503,49 @@ struct aws_http1_chunk_options {
 typedef aws_http_stream_write_complete_fn aws_http2_stream_write_data_complete_fn;
 
 /**
- * Encoding options for manual H2 data frame writes
+ * Common fields for stream write data options structures.
+ * This macro ensures both HTTP/1.1 and HTTP/2 structures remain identical.
+ */
+#define AWS_HTTP_STREAM_WRITE_DATA_OPTIONS_FIELDS                                                                      \
+    /**                                                                                                                \
+     * The data to be sent.                                                                                            \
+     * Optional.                                                                                                       \
+     * If not set, input stream with length 0 will be used.                                                            \
+     */                                                                                                                \
+    struct aws_input_stream *data;                                                                                     \
+                                                                                                                       \
+    /**                                                                                                                \
+     * Set true when it's the last chunk to be sent.                                                                   \
+     * After a write with end_stream, no more data write will be accepted.                                             \
+     */                                                                                                                \
+    bool end_stream;                                                                                                   \
+                                                                                                                       \
+    /**                                                                                                                \
+     * Invoked when the data stream is no longer in use, whether or not it was successfully sent.                      \
+     * Optional.                                                                                                       \
+     * See `aws_http_stream_write_complete_fn`.                                                                        \
+     */                                                                                                                \
+    aws_http_stream_write_complete_fn *on_complete;                                                                    \
+                                                                                                                       \
+    /**                                                                                                                \
+     * User provided data passed to the on_complete callback on its invocation.                                        \
+     */                                                                                                                \
+    void *user_data;
+
+/**
+ * Encoding options for manual data frame writes for both HTTP/1.1 and HTTP/2
+ */
+struct aws_http_stream_write_data_options {
+    AWS_HTTP_STREAM_WRITE_DATA_OPTIONS_FIELDS
+};
+
+/**
+ * Encoding options for manual H2 data frame writes.
+ * This structure is intentionally identical to aws_http_stream_write_data_options
+ * to maintain backward compatibility while providing HTTP/2-specific naming.
  */
 struct aws_http2_stream_write_data_options {
-    /**
-     * The data to be sent.
-     * Optional.
-     * If not set, input stream with length 0 will be used.
-     */
-    struct aws_input_stream *data;
-
-    /**
-     * Set true when it's the last chunk to be sent.
-     * After a write with end_stream, no more data write will be accepted.
-     */
-    bool end_stream;
-
-    /**
-     * Invoked when the data stream is no longer in use, whether or not it was successfully sent.
-     * Optional.
-     * See `aws_http2_stream_write_data_complete_fn`.
-     */
-    aws_http2_stream_write_data_complete_fn *on_complete;
-
-    /**
-     * User provided data passed to the on_complete callback on its invocation.
-     */
-    void *user_data;
+    AWS_HTTP_STREAM_WRITE_DATA_OPTIONS_FIELDS
 };
 
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
@@ -903,35 +951,6 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
     const struct aws_http1_chunk_options *options);
 
 /**
- * The stream must have specified `http2_use_manual_data_writes` during request creation.
- * For client streams, activate() must be called before any frames are submitted.
- * For server streams, the response headers must be submitted before any frames.
- * A write with options that has end_stream set to be true will end the stream and prevent any further write.
- *
- * @return AWS_OP_SUCCESS if the write was queued
- *         AWS_OP_ERROR indicating the attempt raised an error code.
- *              AWS_ERROR_INVALID_STATE will be raised for invalid usage.
- *              AWS_ERROR_HTTP_STREAM_HAS_COMPLETED will be raised if the stream ended for reasons behind the scenes.
- *
- * Typical usage will be something like:
- * options.http2_use_manual_data_writes = true;
- * stream = aws_http_connection_make_request(connection, &options);
- * aws_http_stream_activate(stream);
- * ...
- * struct aws_http2_stream_write_data_options write;
- * aws_http2_stream_write_data(stream, &write);
- * ...
- * struct aws_http2_stream_write_data_options last_write;
- * last_write.end_stream = true;
- * aws_http2_stream_write_data(stream, &write);
- * ...
- * aws_http_stream_release(stream);
- */
-AWS_HTTP_API int aws_http2_stream_write_data(
-    struct aws_http_stream *http2_stream,
-    const struct aws_http2_stream_write_data_options *options);
-
-/**
  * Add a list of headers to be added as trailing headers sent after the last chunk is sent.
  * a "Trailer" header field which indicates the fields present in the trailer.
  *
@@ -950,6 +969,74 @@ AWS_HTTP_API int aws_http2_stream_write_data(
 AWS_HTTP_API int aws_http1_stream_add_chunked_trailer(
     struct aws_http_stream *http1_stream,
     const struct aws_http_headers *trailing_headers);
+
+/**
+ * The stream must have specified `use_manual_data_writes` during request creation.
+ * For client streams, activate() must be called before any frames are submitted.
+ * For server streams, the response headers must be submitted before any frames.
+ * A write with options that has end_stream set to be true will end the stream and prevent any further write.
+ *
+ * @return AWS_OP_SUCCESS if the write was queued
+ *         AWS_OP_ERROR indicating the attempt raised an error code.
+ *              AWS_ERROR_INVALID_STATE will be raised for invalid usage.
+ *              AWS_ERROR_HTTP_STREAM_HAS_COMPLETED will be raised if the stream ended for reasons behind the scenes.
+ *
+ * Typical usage will be something like:
+ * options.use_manual_data_writes = true;
+ * stream = aws_http_connection_make_request(connection, &options);
+ * aws_http_stream_activate(stream);
+ * ...
+ * struct aws_http2_stream_write_data_options write;
+ * aws_http2_stream_write_data(stream, &write);
+ * ...
+ * struct aws_http2_stream_write_data_options last_write;
+ * last_write.end_stream = true;
+ * aws_http2_stream_write_data(stream, &write);
+ * ...
+ * aws_http_stream_release(stream);
+ */
+AWS_HTTP_API int aws_http2_stream_write_data(
+    struct aws_http_stream *http2_stream,
+    const struct aws_http2_stream_write_data_options *options);
+
+/**
+ * Provides a generic API for writing data to a stream for both HTTP/1.1 and HTTP/2.
+ * The stream must have specified `use_manual_data_writes` during request creation to use this function.
+ * For client streams, activate() must be called before any frames are submitted.
+ * For server streams, the response headers must be submitted before any frames.
+ * A write with options that has end_stream set to be true will end the stream and prevent any further write.
+ *
+ * When the stream is HTTP/2, this is the same as `aws_http2_stream_write_data`
+ * When the stream is HTTP/1.1, there are couple cases:
+ * - If the request has Content-Length header set, error out if the data provided doesn't match the content-length set.
+ * - It's optional to set end_stream when content-length provided.
+ * - If the request has `Transfer-Encoding: chunked` set, this will be similar to `aws_http1_stream_write_chunk`.
+ * - If the request has neither, `Transfer-Encoding: chunked` will be added.
+ * - If the request has both, it's an invalid request.
+ *
+ * @return AWS_OP_SUCCESS if the write was queued
+ *         AWS_OP_ERROR indicating the attempt raised an error code.
+ *              AWS_ERROR_INVALID_STATE will be raised for invalid usage.
+ *              AWS_ERROR_HTTP_STREAM_HAS_COMPLETED will be raised if the stream ended for reasons behind the scenes.
+ *
+ * Typical usage will be something like:
+ * options.use_manual_data_writes = true;
+ * stream = aws_http_connection_make_request(connection, &options);
+ * aws_http_stream_activate(stream);
+ * ...
+ * struct aws_http_stream_write_data_options write;
+ * aws_http_stream_write_data(stream, &write);
+ * ...
+ * struct aws_http_stream_write_data_options last_write;
+ * // Optional for HTTP/1.1 when content-length provided.
+ * last_write.end_stream = true;
+ * aws_http_stream_write_data(stream, &write);
+ * ...
+ * aws_http_stream_release(stream);
+ */
+AWS_HTTP_API int aws_http_stream_write_data(
+    struct aws_http_stream *http_stream,
+    const struct aws_http_stream_write_data_options *options);
 
 /**
  *

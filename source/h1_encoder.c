@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 #include <aws/http/private/h1_encoder.h>
+#include <aws/http/private/h1_stream.h>
 #include <aws/http/private/strutil.h>
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
@@ -16,6 +17,9 @@
 
 #define MAX_ASCII_HEX_CHUNK_STR_SIZE (sizeof(uint64_t) * 2 + 1)
 #define CRLF_SIZE 2
+
+/* Type definition for encoder state functions */
+typedef int(state_fn)(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst);
 
 /**
  * Scan headers to detect errors and determine anything we'll need to know later (ex: total length).
@@ -242,7 +246,8 @@ int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *request,
-    struct aws_linked_list *pending_chunk_list) {
+    struct aws_linked_list *pending_chunk_list,
+    bool use_manual_data_writes) {
 
     AWS_PRECONDITION(aws_linked_list_is_valid(pending_chunk_list));
 
@@ -289,6 +294,19 @@ int aws_h1_encoder_message_init_from_request(
         message, request, &header_lines_len, false /*body_headers_ignored*/, false /*body_headers_forbidden*/);
     if (err) {
         goto error;
+    }
+
+    /* Validate manual data writes configuration */
+    if (use_manual_data_writes) {
+        /* When using manual data writes, either Content-Length or Transfer-Encoding must be set */
+        if (message->content_length == 0 && !message->has_chunked_encoding_header) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=static: When use_manual_data_writes is true, either 'Content-Length' or "
+                "'Transfer-Encoding: chunked' header must be set");
+            aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
+            goto error;
+        }
     }
 
     /* request-line: "{method} {uri} {version}\r\n" */
@@ -425,6 +443,112 @@ void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message) {
     aws_byte_buf_clean_up(&message->outgoing_head_buf);
     aws_h1_trailer_destroy(message->trailer);
     AWS_ZERO_STRUCT(*message);
+}
+
+/* Forward declarations of encoder state functions */
+static int s_state_fn_data_write_next(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst);
+static int s_state_fn_data_write_body(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst);
+
+/* Forward declaration of s_encode_stream from h1_encoder.c */
+static int s_encode_stream(
+    struct aws_h1_encoder *encoder,
+    struct aws_byte_buf *dst,
+    struct aws_input_stream *stream,
+    uint64_t total_length,
+    bool *out_done);
+
+/* Switch state.
+ * The only reason this returns a value is so it can be called with `return` to conclude a state function */
+static int s_switch_state(struct aws_h1_encoder *encoder, enum aws_h1_encoder_state state) {
+    encoder->state = state;
+    encoder->progress_bytes = 0;
+    return AWS_OP_SUCCESS;
+}
+
+/* Clean up current data write and switch to next state */
+static void s_clean_up_current_data_write(struct aws_h1_encoder *encoder, int error_code) {
+    AWS_PRECONDITION(encoder->current_data_write);
+
+    aws_linked_list_remove(&encoder->current_data_write->node);
+    aws_h1_data_write_complete_and_destroy(encoder->current_data_write, encoder->current_stream, error_code);
+    encoder->current_data_write = NULL;
+}
+
+/**
+ * State function for handling the next data write.
+ * This state checks if there are any data writes in the queue and processes them.
+ */
+static int s_state_fn_data_write_next(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
+    (void)dst;
+
+    /* If there's no current data write, get the next one from the queue */
+    if (!encoder->current_data_write) {
+        struct aws_h1_stream *stream = AWS_CONTAINER_OF(encoder->current_stream, struct aws_h1_stream, base);
+
+        if (aws_linked_list_empty(&stream->thread_data.pending_data_write_list)) {
+            /* No more data writes, we're done */
+            if (stream->synced_data.has_final_data_write) {
+                /* If we've received the final data write, we're done with the message */
+                return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
+            }
+
+            /* Otherwise, wait for more data writes */
+            return AWS_OP_SUCCESS;
+        }
+
+        /* Get the next data write from the queue */
+        struct aws_linked_list_node *node = aws_linked_list_front(&stream->thread_data.pending_data_write_list);
+        encoder->current_data_write = AWS_CONTAINER_OF(node, struct aws_h1_data_write, node);
+    }
+
+    /* Switch to the data write body state */
+    return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_BODY);
+}
+
+/**
+ * State function for writing the body of a data write.
+ * This state writes the data from the current data write to the output buffer.
+ */
+static int s_state_fn_data_write_body(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
+    AWS_PRECONDITION(encoder->current_data_write);
+
+    /* Write as much of the data as possible */
+    bool done = false;
+    int err = s_encode_stream(
+        encoder,
+        dst,
+        encoder->current_data_write->data,
+        UINT64_MAX, /* We don't know the exact size, so use max value */
+        &done);
+
+    if (err) {
+        s_clean_up_current_data_write(encoder, aws_last_error());
+        return AWS_OP_ERR;
+    }
+
+    /* If we're done with this data write, clean it up and move to the next one */
+    if (done) {
+        /* Update the incremental content written counter */
+        struct aws_h1_stream *stream = AWS_CONTAINER_OF(encoder->current_stream, struct aws_h1_stream, base);
+        stream->synced_data.incremental_content_written += encoder->progress_bytes;
+
+        /* Check if this was the final data write */
+        bool is_end_stream = encoder->current_data_write->is_end_stream;
+
+        /* Clean up the current data write */
+        s_clean_up_current_data_write(encoder, AWS_ERROR_SUCCESS);
+
+        /* If this was the final data write, we're done with the message */
+        if (is_end_stream) {
+            return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
+        }
+
+        /* Otherwise, move to the next data write */
+        return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT);
+    }
+
+    /* Not done with this data write yet, remain in this state */
+    return AWS_OP_SUCCESS;
 }
 
 void aws_h1_encoder_init(struct aws_h1_encoder *encoder, struct aws_allocator *allocator) {
@@ -685,14 +809,6 @@ static int s_encode_stream(
  *    space to write into, waiting for more chunks, etc). */
 typedef int encoder_state_fn(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst);
 
-/* Switch state.
- * The only reason this returns a value is so it can be called with `return` to conclude a state function */
-static int s_switch_state(struct aws_h1_encoder *encoder, enum aws_h1_encoder_state state) {
-    encoder->state = state;
-    encoder->progress_bytes = 0;
-    return AWS_OP_SUCCESS;
-}
-
 /* Initial state. Waits until a new message is set */
 static int s_state_fn_init(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
     (void)dst;
@@ -720,7 +836,13 @@ static int s_state_fn_head(struct aws_h1_encoder *encoder, struct aws_byte_buf *
     aws_byte_buf_clean_up(&encoder->message->outgoing_head_buf);
 
     /* Pick next state */
-    if (encoder->message->body && encoder->message->content_length) {
+    struct aws_h1_stream *stream = AWS_CONTAINER_OF(encoder->current_stream, struct aws_h1_stream, base);
+
+    if (stream->synced_data.using_manual_data_writes) {
+        /* If using manual data writes, switch to the data write state */
+        return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT);
+
+    } else if (encoder->message->body && encoder->message->content_length) {
         return s_switch_state(encoder, AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM);
 
     } else if (encoder->message->body && encoder->message->has_chunked_encoding_header) {
@@ -990,6 +1112,9 @@ struct encoder_state_def {
     const char *name;
 };
 
+/* Forward declarations for data write state functions */
+extern void aws_h1_encoder_register_data_write_states(struct aws_h1_encoder *encoder, state_fn **state_functions);
+
 static struct encoder_state_def s_encoder_states[] = {
     [AWS_H1_ENCODER_STATE_INIT] = {.fn = s_state_fn_init, .name = "INIT"},
     [AWS_H1_ENCODER_STATE_HEAD] = {.fn = s_state_fn_head, .name = "HEAD"},
@@ -1002,6 +1127,8 @@ static struct encoder_state_def s_encoder_states[] = {
     [AWS_H1_ENCODER_STATE_CHUNK_BODY] = {.fn = s_state_fn_chunk_body, .name = "CHUNK_BODY"},
     [AWS_H1_ENCODER_STATE_CHUNK_END] = {.fn = s_state_fn_chunk_end, .name = "CHUNK_END"},
     [AWS_H1_ENCODER_STATE_CHUNK_TRAILER] = {.fn = s_state_fn_chunk_trailer, .name = "CHUNK_TRAILER"},
+    [AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT] = {.fn = s_state_fn_data_write_next, .name = "DATA_WRITE_NEXT"},
+    [AWS_H1_ENCODER_STATE_DATA_WRITE_BODY] = {.fn = s_state_fn_data_write_body, .name = "DATA_WRITE_BODY"},
     [AWS_H1_ENCODER_STATE_DONE] = {.fn = s_state_fn_done, .name = "DONE"},
 };
 
@@ -1032,6 +1159,79 @@ bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder)
 }
 
 bool aws_h1_encoder_is_waiting_for_chunks(const struct aws_h1_encoder *encoder) {
-    return encoder->state == AWS_H1_ENCODER_STATE_CHUNK_NEXT &&
-           aws_linked_list_empty(encoder->message->pending_chunk_list);
+    /* Check if we're waiting for chunks */
+    if (encoder->state == AWS_H1_ENCODER_STATE_CHUNK_NEXT &&
+        aws_linked_list_empty(encoder->message->pending_chunk_list)) {
+        return true;
+    }
+
+    /* Check if we're waiting for data writes */
+    struct aws_h1_stream *stream = AWS_CONTAINER_OF(encoder->current_stream, struct aws_h1_stream, base);
+    if (encoder->state == AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT &&
+        aws_linked_list_empty(&stream->thread_data.pending_data_write_list) &&
+        !stream->synced_data.has_final_data_write) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Create a new data write structure for incremental Content-Length streaming.
+ */
+struct aws_h1_data_write *aws_h1_data_write_new(
+    struct aws_allocator *allocator,
+    const struct aws_http_stream_write_data_options *options) {
+
+    AWS_PRECONDITION(allocator);
+    AWS_PRECONDITION(options);
+    AWS_PRECONDITION(options->data);
+
+    struct aws_h1_data_write *data_write = aws_mem_calloc(allocator, 1, sizeof(struct aws_h1_data_write));
+    if (!data_write) {
+        return NULL;
+    }
+
+    data_write->allocator = allocator;
+    data_write->data = aws_input_stream_acquire(options->data);
+    data_write->on_complete = options->on_complete;
+    data_write->user_data = options->user_data;
+    data_write->is_end_stream = options->end_stream;
+
+    return data_write;
+}
+
+/**
+ * Destroy a data write structure without firing its completion callback.
+ */
+void aws_h1_data_write_destroy(struct aws_h1_data_write *data_write) {
+    if (!data_write) {
+        return;
+    }
+
+    aws_input_stream_release(data_write->data);
+    aws_mem_release(data_write->allocator, data_write);
+}
+
+/**
+ * Destroy a data write structure and fire its completion callback.
+ */
+void aws_h1_data_write_complete_and_destroy(
+    struct aws_h1_data_write *data_write,
+    struct aws_http_stream *http_stream,
+    int error_code) {
+
+    if (!data_write) {
+        return;
+    }
+
+    aws_http1_stream_write_data_complete_fn *on_complete = data_write->on_complete;
+    void *user_data = data_write->user_data;
+
+    /* Clean up before firing callback */
+    aws_h1_data_write_destroy(data_write);
+
+    if (on_complete) {
+        on_complete(http_stream, error_code, user_data);
+    }
 }

@@ -59,6 +59,10 @@ struct aws_h1_stream {
         /* List of `struct aws_h1_chunk`, used for chunked encoding.
          * Encoder completes/frees/pops front chunk when it's done sending. */
         struct aws_linked_list pending_chunk_list;
+        
+        /* List of `struct aws_h1_data_write`, used for incremental Content-Length.
+         * Encoder completes/frees/pops front data write when it's done sending. */
+        struct aws_linked_list pending_data_write_list;
 
         struct aws_h1_encoder_message message;
 
@@ -107,6 +111,19 @@ struct aws_h1_stream {
 
         /* Whether the chunked trailer has already been sent */
         bool has_added_trailer : 1;
+        
+        /* Whether the stream is using incremental Content-Length data writes */
+        bool using_manual_data_writes : 1;
+        
+        /* Whether the final data write has been received */
+        bool has_final_data_write : 1;
+        
+        /* List of `struct aws_h1_data_write` which have been submitted by user,
+         * but haven't yet been processed by the encoder */
+        struct aws_linked_list pending_data_write_list;
+        
+        /* Amount of data written so far for incremental Content-Length */
+        uint64_t incremental_content_written;
     } synced_data;
 };
 

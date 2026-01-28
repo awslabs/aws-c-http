@@ -1,0 +1,59 @@
+Curl Streaming Examples - Content-Length vs Chunked
+===================================================
+Target URL: http://httpbin.org/post
+
+=== Example 1: Streaming Upload with Content-Length ===
+Total upload size: 120 bytes
+Uploading chunk: This is the first chunk of data
+Uploading chunk: This is the second chunk of data
+Uploading chunk: This is the third chunk of data
+Uploading chunk: This is the final chunk of data
+Received 487 bytes: {
+  "args": {}, 
+  "data": "This is the first chunk of data\nThis is the second chunk of data\nThis is the third chunk of data\nThis is the final chunk of data\n", 
+  "files": {}, 
+  "form": {}, 
+  "headers": {
+    "Accept": "*/*", 
+    "Content-Type": "text/plain", 
+    "Host": "httpbin.org", 
+    "Transfer-Encoding": "chunked", 
+    "X-Amzn-Trace-Id": "Root=1-695da5f9-091f2aba737d2b98659501b5"
+  }, 
+  "json": null, 
+  "origin": "15.248.7.64", 
+  "url": "http://httpbin.org/post"
+}
+
+Download progress: 487/487 bytes (100.0%)
+Download progress: 487/487 bytes (100.0%)
+Download progress: 487/487 bytes (100.0%)
+Download progress: 487/487 bytes (100.0%)
+Upload completed successfully
+Server response: {
+  "args": {}, 
+  "data": "This is the first chunk of data\nThis is the second chunk of data\nThis is the third chunk of data\nThis is the final chunk of data\n", 
+  "files": {}, 
+  "form": {}, 
+  "headers": {
+    "Accept": "*/*", 
+    "Content-Type": "text/plain", 
+    "Host": "httpbin.org", 
+    "Transfer-Encoding": "chunked", 
+    "X-Amzn-Trace-Id": "Root=1-695da5f9-091f2aba737d2b98659501b5"
+  }, 
+  "json": null, 
+  "origin": "15.248.7.64", 
+  "url": "http://httpbin.org/post"
+}
+
+
+=== Summary ===
+All examples completed with result: 0
+
+Key Takeaways:
+1. Content-Length requires knowing total size upfront
+2. Both approaches use the same read_callback mechanism
+3. Data is provided incrementally in both cases
+4. Content-Length has less protocol overhead
+5. Chunked is more flexible when size is unknown

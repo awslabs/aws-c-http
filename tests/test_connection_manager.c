@@ -1073,7 +1073,7 @@ static int s_test_connection_manager_acquisition_timeout(struct aws_allocator *a
         .allocator = allocator,
         .max_connections = num_connections,
         .mock_table = &s_synchronous_mocks,
-        .connection_acquisition_timeout_ms = 1000,
+        .connection_acquisition_timeout_ms = 1,
         .starting_mock_time = 0,
     };
 
@@ -1085,7 +1085,7 @@ static int s_test_connection_manager_acquisition_timeout(struct aws_allocator *a
     /* advance fake time enough to cause the acquire connections to timeout, also sleep for real to give the cull task
      * a chance to run in the real event loop
      */
-    uint64_t one_sec_in_nanos = aws_timestamp_convert(1, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL);
+    uint64_t one_sec_in_nanos = aws_timestamp_convert(1, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
     s_tester_set_mock_time(2 * one_sec_in_nanos);
     aws_thread_current_sleep(2 * one_sec_in_nanos);
 
