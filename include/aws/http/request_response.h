@@ -12,6 +12,7 @@
 
 AWS_PUSH_SANE_WARNING_LEVEL
 
+struct aws_async_input_stream;
 struct aws_http_connection;
 struct aws_input_stream;
 
@@ -873,6 +874,24 @@ struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_
  */
 AWS_HTTP_API
 void aws_http_message_set_body_stream(struct aws_http_message *message, struct aws_input_stream *body_stream);
+
+/**
+ * Get the async body stream.
+ * Returns NULL if no async body stream is set.
+ */
+AWS_HTTP_API
+struct aws_async_input_stream *aws_http_message_get_body_stream_async(const struct aws_http_message *message);
+
+/**
+ * Set the async body stream.
+ * NULL is an acceptable value for messages with no body.
+ * Setting an async body stream clears any previously set sync body stream.
+ * Note: The message acquires a reference to the async stream.
+ */
+AWS_HTTP_API
+void aws_http_message_set_body_stream_async(
+    struct aws_http_message *message,
+    struct aws_async_input_stream *body_stream);
 
 /**
  * aws_future<aws_http_message*>

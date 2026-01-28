@@ -8,6 +8,9 @@
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
 
+struct aws_async_input_stream;
+struct aws_future_bool;
+
 struct aws_h1_chunk {
     struct aws_allocator *allocator;
     struct aws_input_stream *data;
@@ -31,8 +34,10 @@ struct aws_h1_trailer {
 struct aws_h1_encoder_message {
     /* Upon creation, the "head" (everything preceding body) is buffered here. */
     struct aws_byte_buf outgoing_head_buf;
-    /* Single stream used for unchunked body */
+    /* Single stream used for unchunked body (sync) */
     struct aws_input_stream *body;
+    /* Async body stream (mutually exclusive with sync body) */
+    struct aws_async_input_stream *body_async;
 
     /* Pointer to list of `struct aws_h1_chunk`, used for chunked encoding.
      * List is owned by aws_h1_stream.
@@ -58,6 +63,9 @@ enum aws_h1_encoder_state {
     /* Write streaming body, with chunked encoding, because Content-Length is unknown */
     AWS_H1_ENCODER_STATE_CHUNKED_BODY_STREAM,
     AWS_H1_ENCODER_STATE_CHUNKED_BODY_STREAM_LAST_CHUNK,
+    /* Async body stream states */
+    AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM_ASYNC,
+    AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM_ASYNC_WAITING,
     /* The rest of the _CHUNK_ states support the write_chunk() API (body stream not provided up front) */
     AWS_H1_ENCODER_STATE_CHUNK_NEXT,
     AWS_H1_ENCODER_STATE_CHUNK_LINE,
@@ -81,6 +89,11 @@ struct aws_h1_encoder {
     uint64_t chunk_count;
     /* Encoder logs with this stream ptr as the ID, and passes this ptr to the chunk_complete callback */
     struct aws_http_stream *current_stream;
+
+    /* Async body reading state */
+    struct aws_future_bool *pending_async_read;
+    struct aws_byte_buf async_read_buf;
+    bool async_body_eof;
 };
 
 struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const struct aws_http1_chunk_options *options);
@@ -137,6 +150,18 @@ bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder)
 /* Return true if the encoder is stuck waiting for more chunks to be added to the current message */
 AWS_HTTP_API
 bool aws_h1_encoder_is_waiting_for_chunks(const struct aws_h1_encoder *encoder);
+
+/* Return true if the encoder is waiting for async body data */
+AWS_HTTP_API
+bool aws_h1_encoder_is_waiting_for_async_read(const struct aws_h1_encoder *encoder);
+
+/* Get the pending async read future (NULL if not waiting) */
+AWS_HTTP_API
+struct aws_future_bool *aws_h1_encoder_get_pending_async_read(const struct aws_h1_encoder *encoder);
+
+/* Called when async read completes to resume encoding */
+AWS_HTTP_API
+int aws_h1_encoder_on_async_read_complete(struct aws_h1_encoder *encoder);
 
 AWS_EXTERN_C_END
 

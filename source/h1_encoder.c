@@ -5,6 +5,8 @@
 #include <aws/http/private/h1_encoder.h>
 #include <aws/http/private/strutil.h>
 #include <aws/http/status_code.h>
+#include <aws/io/async_stream.h>
+#include <aws/io/future.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
 
@@ -28,7 +30,8 @@ static int s_scan_outgoing_headers(
     bool body_headers_forbidden) {
 
     size_t total = 0;
-    bool has_body_stream = aws_http_message_get_body_stream(message);
+    bool has_body_stream =
+        aws_http_message_get_body_stream(message) || aws_http_message_get_body_stream_async(message);
     bool has_content_length_header = false;
     bool has_transfer_encoding_header = false;
 
@@ -249,6 +252,7 @@ int aws_h1_encoder_message_init_from_request(
     AWS_ZERO_STRUCT(*message);
 
     message->body = aws_input_stream_acquire(aws_http_message_get_body_stream(request));
+    message->body_async = aws_async_input_stream_acquire(aws_http_message_get_body_stream_async(request));
     message->pending_chunk_list = pending_chunk_list;
 
     struct aws_byte_cursor method;
@@ -345,6 +349,7 @@ int aws_h1_encoder_message_init_from_response(
     AWS_ZERO_STRUCT(*message);
 
     message->body = aws_input_stream_acquire(aws_http_message_get_body_stream(response));
+    message->body_async = aws_async_input_stream_acquire(aws_http_message_get_body_stream_async(response));
     message->pending_chunk_list = pending_chunk_list;
 
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
@@ -422,6 +427,7 @@ error:
 
 void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message) {
     aws_input_stream_release(message->body);
+    aws_async_input_stream_release(message->body_async);
     aws_byte_buf_clean_up(&message->outgoing_head_buf);
     aws_h1_trailer_destroy(message->trailer);
     AWS_ZERO_STRUCT(*message);
@@ -433,6 +439,8 @@ void aws_h1_encoder_init(struct aws_h1_encoder *encoder, struct aws_allocator *a
 }
 
 void aws_h1_encoder_clean_up(struct aws_h1_encoder *encoder) {
+    aws_future_bool_release(encoder->pending_async_read);
+    aws_byte_buf_clean_up(&encoder->async_read_buf);
     AWS_ZERO_STRUCT(*encoder);
 }
 
@@ -719,8 +727,11 @@ static int s_state_fn_head(struct aws_h1_encoder *encoder, struct aws_byte_buf *
     /* Don't NEED to free this buffer now, but we don't need it anymore, so why not */
     aws_byte_buf_clean_up(&encoder->message->outgoing_head_buf);
 
-    /* Pick next state */
-    if (encoder->message->body && encoder->message->content_length) {
+    /* Pick next state - check async body first */
+    if (encoder->message->body_async && encoder->message->content_length) {
+        return s_switch_state(encoder, AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM_ASYNC);
+
+    } else if (encoder->message->body && encoder->message->content_length) {
         return s_switch_state(encoder, AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM);
 
     } else if (encoder->message->body && encoder->message->has_chunked_encoding_header) {
@@ -748,6 +759,57 @@ static int s_state_fn_unchunked_body_stream(struct aws_h1_encoder *encoder, stru
 
     /* Message is done */
     return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
+}
+
+/* Async body stream: initiate read and transition to waiting state */
+static int s_state_fn_unchunked_body_stream_async(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
+    (void)dst;
+
+    /* If we have buffered data from previous async read, write it out first */
+    if (encoder->async_read_buf.len > 0) {
+        bool done = s_encode_buf(encoder, dst, &encoder->async_read_buf);
+        if (!done) {
+            /* Remain in this state until buffer is drained */
+            return AWS_OP_SUCCESS;
+        }
+        /* Buffer drained, reset for next read */
+        encoder->async_read_buf.len = 0;
+    }
+
+    /* Check if we've sent all the content */
+    if (encoder->progress_bytes >= encoder->message->content_length) {
+        aws_byte_buf_clean_up(&encoder->async_read_buf);
+        return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
+    }
+
+    /* Check if EOF was reached */
+    if (encoder->async_body_eof) {
+        ENCODER_LOG(ERROR, encoder, "Async body stream ended before Content-Length was reached");
+        return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+    }
+
+    /* Initialize async read buffer if needed */
+    if (encoder->async_read_buf.capacity == 0) {
+        size_t buf_size = 16 * 1024; /* 16KB read buffer */
+        uint64_t remaining = encoder->message->content_length - encoder->progress_bytes;
+        if (remaining < buf_size) {
+            buf_size = (size_t)remaining;
+        }
+        aws_byte_buf_init(&encoder->async_read_buf, encoder->allocator, buf_size);
+    }
+
+    /* Start async read */
+    encoder->pending_async_read =
+        aws_async_input_stream_read(encoder->message->body_async, &encoder->async_read_buf);
+
+    return s_switch_state(encoder, AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM_ASYNC_WAITING);
+}
+
+/* Waiting for async read to complete - encoder is paused in this state */
+static int s_state_fn_unchunked_body_stream_async_waiting(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
+    (void)dst;
+    /* Remain in this state until async read completes and aws_h1_encoder_on_async_read_complete is called */
+    return AWS_OP_SUCCESS;
 }
 
 /* Write out body (of unknown Content-Length) using chunked encoding.
@@ -997,6 +1059,10 @@ static struct encoder_state_def s_encoder_states[] = {
     [AWS_H1_ENCODER_STATE_CHUNKED_BODY_STREAM] = {.fn = s_state_fn_chunked_body_stream, .name = "CHUNKED_BODY_STREAM"},
     [AWS_H1_ENCODER_STATE_CHUNKED_BODY_STREAM_LAST_CHUNK] =
         {.fn = s_state_fn_chunked_body_stream_last_chunk, .name = "LAST_CHUNK"},
+    [AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM_ASYNC] =
+        {.fn = s_state_fn_unchunked_body_stream_async, .name = "BODY_ASYNC"},
+    [AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM_ASYNC_WAITING] =
+        {.fn = s_state_fn_unchunked_body_stream_async_waiting, .name = "BODY_ASYNC_WAITING"},
     [AWS_H1_ENCODER_STATE_CHUNK_NEXT] = {.fn = s_state_fn_chunk_next, .name = "CHUNK_NEXT"},
     [AWS_H1_ENCODER_STATE_CHUNK_LINE] = {.fn = s_state_fn_chunk_line, .name = "CHUNK_LINE"},
     [AWS_H1_ENCODER_STATE_CHUNK_BODY] = {.fn = s_state_fn_chunk_body, .name = "CHUNK_BODY"},
@@ -1034,4 +1100,40 @@ bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder)
 bool aws_h1_encoder_is_waiting_for_chunks(const struct aws_h1_encoder *encoder) {
     return encoder->state == AWS_H1_ENCODER_STATE_CHUNK_NEXT &&
            aws_linked_list_empty(encoder->message->pending_chunk_list);
+}
+
+bool aws_h1_encoder_is_waiting_for_async_read(const struct aws_h1_encoder *encoder) {
+    return encoder->state == AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM_ASYNC_WAITING;
+}
+
+struct aws_future_bool *aws_h1_encoder_get_pending_async_read(const struct aws_h1_encoder *encoder) {
+    return encoder->pending_async_read;
+}
+
+int aws_h1_encoder_on_async_read_complete(struct aws_h1_encoder *encoder) {
+    if (encoder->state != AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM_ASYNC_WAITING) {
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    /* Check for read error */
+    int error_code = aws_future_bool_get_error(encoder->pending_async_read);
+    if (error_code) {
+        ENCODER_LOGF(ERROR, encoder, "Async body read failed with error %d (%s)", error_code, aws_error_name(error_code));
+        aws_future_bool_release(encoder->pending_async_read);
+        encoder->pending_async_read = NULL;
+        return aws_raise_error(error_code);
+    }
+
+    /* Get EOF status */
+    encoder->async_body_eof = aws_future_bool_get_result(encoder->pending_async_read);
+
+    /* Update progress */
+    encoder->progress_bytes += encoder->async_read_buf.len;
+
+    /* Release the future */
+    aws_future_bool_release(encoder->pending_async_read);
+    encoder->pending_async_read = NULL;
+
+    /* Transition back to async body state to write buffered data */
+    return s_switch_state(encoder, AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM_ASYNC);
 }

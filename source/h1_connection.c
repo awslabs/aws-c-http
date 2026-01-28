@@ -11,7 +11,9 @@
 #include <aws/http/private/h1_stream.h>
 #include <aws/http/private/request_response_impl.h>
 #include <aws/http/status_code.h>
+#include <aws/io/async_stream.h>
 #include <aws/io/event_loop.h>
+#include <aws/io/future.h>
 #include <aws/io/logging.h>
 
 #include <inttypes.h>
@@ -60,6 +62,7 @@ static void s_connection_close(struct aws_http_connection *connection_base);
 static void s_connection_stop_new_request(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
+static void s_on_async_body_read_complete(void *user_data);
 static int s_decoder_on_request(
     enum aws_http_method method_enum,
     const struct aws_byte_cursor *method_str,
@@ -1033,6 +1036,14 @@ static void s_on_channel_write_complete(
     aws_channel_schedule_task_now(channel, &connection->outgoing_stream_task);
 }
 
+/* Callback invoked when async body read completes */
+static void s_on_async_body_read_complete(void *user_data) {
+    struct aws_h1_connection *connection = user_data;
+
+    /* Schedule task on the connection's event loop to process the completed read */
+    aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
+}
+
 static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
     (void)task;
     if (status != AWS_TASK_STATUS_RUN_READY) {
@@ -1066,6 +1077,14 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
     /* Just stop if we're no longer writing stream data */
     if (connection->thread_data.is_writing_stopped || connection->thread_data.has_switched_protocols) {
         return;
+    }
+
+    /* If encoder was waiting for async read, process the completed read first */
+    if (aws_h1_encoder_is_waiting_for_async_read(&connection->thread_data.encoder)) {
+        if (aws_h1_encoder_on_async_read_complete(&connection->thread_data.encoder) != AWS_OP_SUCCESS) {
+            s_shutdown_due_to_error(connection, aws_last_error());
+            return;
+        }
     }
 
     /* Determine whether we have data available to send, and end task immediately if there's not.
@@ -1111,6 +1130,29 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
     if (AWS_OP_SUCCESS != aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
         /* Error sending data, abandon ship */
         goto error;
+    }
+
+    /* Check if encoder is waiting for async body read */
+    if (aws_h1_encoder_is_waiting_for_async_read(&connection->thread_data.encoder)) {
+        struct aws_future_bool *pending_read =
+            aws_h1_encoder_get_pending_async_read(&connection->thread_data.encoder);
+        if (pending_read) {
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Encoder waiting for async body read, registering callback.",
+                (void *)&connection->base);
+
+            /* Register callback to resume when async read completes */
+            aws_future_bool_register_event_loop_callback(
+                pending_read,
+                aws_channel_get_event_loop(connection->base.channel_slot->channel),
+                s_on_async_body_read_complete,
+                connection);
+
+            /* Release the message since we're not sending it yet */
+            aws_mem_release(msg->allocator, msg);
+            return;
+        }
     }
 
     if (msg->message_data.len > 0) {

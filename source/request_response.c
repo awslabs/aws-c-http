@@ -13,6 +13,7 @@
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
+#include <aws/io/async_stream.h>
 
 #ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
@@ -453,6 +454,7 @@ struct aws_http_message {
     struct aws_allocator *allocator;
     struct aws_http_headers *headers;
     struct aws_input_stream *body_stream;
+    struct aws_async_input_stream *body_stream_async;
     struct aws_atomic_var refcount;
     enum aws_http_version http_version;
 
@@ -598,6 +600,7 @@ struct aws_http_message *aws_http_message_release(struct aws_http_message *messa
 
         aws_http_headers_release(message->headers);
         aws_input_stream_release(message->body_stream);
+        aws_async_input_stream_release(message->body_stream_async);
         aws_mem_release(message->allocator, message);
     } else {
         AWS_ASSERT(prev_refcount != 0);
@@ -779,6 +782,27 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
     if (message->body_stream) {
         aws_input_stream_acquire(message->body_stream);
     }
+    /* Setting sync stream clears async stream */
+    aws_async_input_stream_release(message->body_stream_async);
+    message->body_stream_async = NULL;
+}
+
+struct aws_async_input_stream *aws_http_message_get_body_stream_async(const struct aws_http_message *message) {
+    AWS_PRECONDITION(message);
+    return message->body_stream_async;
+}
+
+void aws_http_message_set_body_stream_async(
+    struct aws_http_message *message,
+    struct aws_async_input_stream *body_stream) {
+    AWS_PRECONDITION(message);
+    /* release previous async stream, if any */
+    aws_async_input_stream_release(message->body_stream_async);
+
+    message->body_stream_async = aws_async_input_stream_acquire(body_stream);
+    /* Setting async stream clears sync stream */
+    aws_input_stream_release(message->body_stream);
+    message->body_stream = NULL;
 }
 
 int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, const struct aws_http1_chunk_options *options) {
