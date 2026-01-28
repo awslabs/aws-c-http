@@ -758,7 +758,7 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
         AWS_H2_STREAM_LOGF(
             TRACE,
             stream,
-            "id=%p: Sending header: " PRInSTR ": " PRInSTR,
+            "Sending header: " PRInSTR ": " PRInSTR "",
             AWS_BYTE_CURSOR_PRI(header.name),
             AWS_BYTE_CURSOR_PRI(header.value));
     }
