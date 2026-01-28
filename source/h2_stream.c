@@ -1109,6 +1109,14 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
         return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR));
     }
     stream->thread_data.window_size_self -= payload_len;
+    if (stream->thread_data.window_size_self == 0) {
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "DATA length=%" PRIu32 " exceeds flow-control window=%" PRIi32,
+            payload_len,
+            stream->thread_data.window_size_self);
+    }
 
     /* If stream isn't over, we may need to send automatic window updates to keep data flowing */
     if (!end_stream) {

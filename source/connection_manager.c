@@ -978,10 +978,13 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         manager->initial_settings = aws_mem_calloc(allocator, 1, sizeof(struct aws_array_list));
         aws_array_list_init_dynamic(
             manager->initial_settings, allocator, options->num_initial_settings, sizeof(struct aws_http2_setting));
+        /* Copy the initial_settings_array to the internal structure */
         memcpy(
             manager->initial_settings->data,
             options->initial_settings_array,
             options->num_initial_settings * sizeof(struct aws_http2_setting));
+        /* Update the length of the array as the memcpy only copies the data, but the length remains 0. */
+        manager->initial_settings->length = options->num_initial_settings;
     }
     manager->max_closed_streams = options->max_closed_streams;
     manager->http2_conn_manual_window_management = options->http2_conn_manual_window_management;
