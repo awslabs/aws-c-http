@@ -1036,6 +1036,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         struct aws_byte_cursor lower_name_cursor = aws_byte_cursor_from_buf(&lower_name_buf);
         enum aws_http_header_name name_enum = aws_http_lowercase_str_to_header_name(lower_name_cursor);
         switch (name_enum) {
+            case AWS_HTTP_HEADER_CONNECTION:
             case AWS_HTTP_HEADER_TRANSFER_ENCODING:
             case AWS_HTTP_HEADER_UPGRADE:
             case AWS_HTTP_HEADER_KEEP_ALIVE:
