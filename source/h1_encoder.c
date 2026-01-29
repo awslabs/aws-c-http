@@ -430,6 +430,7 @@ error:
 
 void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message) {
     aws_input_stream_release(message->body);
+    aws_async_input_stream_release(message->async_body);
     aws_byte_buf_clean_up(&message->outgoing_head_buf);
     aws_h1_trailer_destroy(message->trailer);
     AWS_ZERO_STRUCT(*message);
@@ -714,10 +715,13 @@ static void s_on_async_body_read_complete(void *user_data) {
 
     bool eof = !error && aws_future_bool_get_result(encoder->pending_async_future);
 
+    ENCODER_LOGF(DEBUG, encoder, "Async body read complete. error=%d eof=%d", error, eof);
+
     aws_future_bool_release(encoder->pending_async_future);
     encoder->pending_async_future = NULL;
 
     if (eof) {
+        ENCODER_LOG(DEBUG, encoder, "EOF reached, switching to DONE state");
         s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
     } else {
         ENCODER_LOG(DEBUG, encoder, "Error occurred or buffer was full but eof not reached. We have to initiate a new encode request with a new buffer.");

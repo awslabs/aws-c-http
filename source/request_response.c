@@ -600,6 +600,7 @@ struct aws_http_message *aws_http_message_release(struct aws_http_message *messa
 
         aws_http_headers_release(message->headers);
         aws_input_stream_release(message->body_stream);
+        aws_async_input_stream_release(message->async_body_stream);
         aws_mem_release(message->allocator, message);
     } else {
         AWS_ASSERT(prev_refcount != 0);

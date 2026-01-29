@@ -1100,15 +1100,21 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
         AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Outgoing stream task has begun.", (void *)&connection->base);
     }
 
-    struct aws_io_message *msg = aws_channel_slot_acquire_max_message_for_write(connection->base.channel_slot);
-    if (!msg) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Failed to acquire message from pool, error %d (%s). Closing connection.",
-            (void *)&connection->base,
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
-        goto error;
+    struct aws_io_message *msg = NULL;
+    if (connection->thread_data.pending_async_message) {
+        msg = connection->thread_data.pending_async_message;
+        connection->thread_data.pending_async_message = NULL;
+    } else {
+        msg = aws_channel_slot_acquire_max_message_for_write(connection->base.channel_slot);
+        if (!msg) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Failed to acquire message from pool, error %d (%s). Closing connection.",
+                (void *)&connection->base,
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
+            goto error;
+        }
     }
 
     /* Set up callback so we can send another message when this one completes */
@@ -1133,7 +1139,7 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
         return;
     }
 
-    if (msg->message_data.len > 0) {
+    if (msg->message_data.len > 0 && connection->thread_data.encoder.state != AWS_H1_ENCODER_STATE_ASYNC_WAITING) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Outgoing stream task is sending message of size %zu.",
@@ -1155,7 +1161,16 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Outgoing async stream task is either complete or waiting on future. Never reschedule task.",
             (void *)&connection->base);
-        aws_mem_release(msg->allocator, msg);
+
+        if (connection->thread_data.encoder.state == AWS_H1_ENCODER_STATE_ASYNC_WAITING){
+            connection->thread_data.pending_async_message = msg;
+        } else {
+            if (msg->message_data.len > 0) {
+                aws_channel_slot_send_message(connection->base.channel_slot, msg, AWS_CHANNEL_DIR_WRITE);
+            } else {
+                aws_mem_release(msg->allocator, msg);
+            }
+        }
         connection->thread_data.is_outgoing_stream_task_active = false;
     } else {
         /* If message is empty, warn that no work is being done
@@ -1672,17 +1687,22 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     struct aws_h1_connection *connection = handler->impl;
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Destroying connection.", (void *)&connection->base);
+    AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Hello darkness my old friend.", (void *)&connection->base);
 
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stream_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.new_client_stream_list));
 
     /* Clean up any buffered read messages. */
     while (!aws_linked_list_empty(&connection->thread_data.read_buffer.messages)) {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Destroying Linked List.", (void *)&connection->base);
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.read_buffer.messages);
         struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
         aws_mem_release(msg->allocator, msg);
     }
 
+
+    AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Hello darkness my old friend.", (void *)&connection->base);
+    
     aws_h1_decoder_destroy(connection->thread_data.incoming_stream_decoder);
     aws_h1_encoder_clean_up(&connection->thread_data.encoder);
     aws_mutex_clean_up(&connection->synced_data.lock);
