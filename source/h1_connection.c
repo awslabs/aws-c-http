@@ -1687,20 +1687,16 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     struct aws_h1_connection *connection = handler->impl;
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Destroying connection.", (void *)&connection->base);
-    AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Hello darkness my old friend.", (void *)&connection->base);
 
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stream_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.new_client_stream_list));
 
     /* Clean up any buffered read messages. */
     while (!aws_linked_list_empty(&connection->thread_data.read_buffer.messages)) {
-        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Destroying Linked List.", (void *)&connection->base);
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.read_buffer.messages);
         struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
         aws_mem_release(msg->allocator, msg);
     }
-
-    AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Hello darkness my old friend.", (void *)&connection->base);
 
     aws_h1_decoder_destroy(connection->thread_data.incoming_stream_decoder);
     aws_h1_encoder_clean_up(&connection->thread_data.encoder);
