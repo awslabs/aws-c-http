@@ -751,16 +751,42 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
     }
 
     /* Log the headers that we are sending out. */
-    size_t header_count = aws_http_headers_count(h2_headers);
-    for (size_t i = 0; i < header_count; i++) {
+    for (size_t i = 0; i < aws_http_headers_count(h2_headers); i++) {
         struct aws_http_header header;
         aws_http_headers_get_index(h2_headers, i, &header);
-        AWS_H2_STREAM_LOGF(
-            TRACE,
-            stream,
-            "Sending header: " PRInSTR ": " PRInSTR "",
-            AWS_BYTE_CURSOR_PRI(header.name),
-            AWS_BYTE_CURSOR_PRI(header.value));
+        enum aws_http_header_name name_enum = aws_http_str_to_header_name(header.name);
+        switch (name_enum) {
+            case AWS_HTTP_HEADER_CONNECTION:
+            case AWS_HTTP_HEADER_TRANSFER_ENCODING:
+            case AWS_HTTP_HEADER_UPGRADE:
+            case AWS_HTTP_HEADER_KEEP_ALIVE:
+            case AWS_HTTP_HEADER_PROXY_CONNECTION:
+            case AWS_HTTP_HEADER_HOST:
+                /**
+                 * An endpoint MUST NOT generate an HTTP/2 message containing connection-specific header fields.
+                 */
+                AWS_H2_STREAM_LOGF(
+                    TRACE,
+                    stream,
+                    "Found connection-specific header that is allowed in HTTP/2. : " PRInSTR ": " PRInSTR "",
+                    AWS_BYTE_CURSOR_PRI(header.name),
+                    AWS_BYTE_CURSOR_PRI(header.value));
+                aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
+                goto error;
+            case AWS_HTTP_HEADER_AUTHORIZATION:
+                /* Sensitive header, do not log the value of the header */
+                AWS_H2_STREAM_LOGF(TRACE, stream, "Sending header: " PRInSTR ": ***", AWS_BYTE_CURSOR_PRI(header.name));
+                break;
+            default:
+                /* Log the headers we are sending out */
+                AWS_H2_STREAM_LOGF(
+                    TRACE,
+                    stream,
+                    "Sending header: " PRInSTR ": " PRInSTR "",
+                    AWS_BYTE_CURSOR_PRI(header.name),
+                    AWS_BYTE_CURSOR_PRI(header.value));
+                break;
+        }
     }
 
     if (with_data) {
