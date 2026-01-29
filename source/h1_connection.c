@@ -1113,6 +1113,15 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
         goto error;
     }
 
+    if (connection->thread_data.encoder.async_error) {
+        /* Error receiving data asynchronously. Need to note when this is happening, but for now, abandon ship */
+        if (msg) {
+            aws_mem_release(msg->allocator, msg);
+        }
+        s_shutdown_due_to_error(connection, connection->thread_data.encoder.async_error);
+        return;
+    }
+
     if (msg->message_data.len > 0) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
@@ -1130,7 +1139,13 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
 
             goto error;
         }
-
+    } else if(connection->thread_data.encoder.message->async_body) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Outgoing async stream task is either complete or waiting on future. Never reschedule task.",
+            (void *)&connection->base);
+        aws_mem_release(msg->allocator, msg);
+        connection->thread_data.is_outgoing_stream_task_active = false;
     } else {
         /* If message is empty, warn that no work is being done
          * and reschedule the task to try again next tick.
@@ -1551,6 +1566,9 @@ static struct aws_h1_connection *s_connection_new(
     }
 
     aws_h1_encoder_init(&connection->thread_data.encoder, alloc);
+
+    /* hacking around with adding connection to encoder. there should be a better way to do it */
+    connection->thread_data.encoder.connection = connection;
 
     aws_channel_task_init(
         &connection->outgoing_stream_task, s_outgoing_stream_task, connection, "http1_connection_outgoing_stream");

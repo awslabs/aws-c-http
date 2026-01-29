@@ -866,6 +866,13 @@ AWS_HTTP_API
 struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_message *message);
 
 /**
+ * Get the async body stream.
+ * Returns NULL if no async body stream is set.
+ */
+AWS_HTTP_API
+struct aws_async_input_stream *aws_http_message_get_async_body_stream(const struct aws_http_message *message);
+
+/**
  * Set the body stream.
  * NULL is an acceptable value for messages with no body.
  * Note: The message does NOT take ownership of the body stream.
@@ -873,6 +880,15 @@ struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_
  */
 AWS_HTTP_API
 void aws_http_message_set_body_stream(struct aws_http_message *message, struct aws_input_stream *body_stream);
+
+/**
+ * Set the async body stream.
+ * NULL is an acceptable value for messages with no body.
+ * Note: The message does NOT take ownership of the body stream.
+ * The stream must not be destroyed until the message is complete.
+ */
+AWS_HTTP_API
+void aws_http_message_set_async_body_stream(struct aws_http_message *message, struct aws_async_input_stream *async_body_stream);
 
 /**
  * aws_future<aws_http_message*>

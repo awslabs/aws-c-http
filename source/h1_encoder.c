@@ -2,11 +2,15 @@
  * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0.
  */
+#include <aws/common/error.h>
+#include <aws/io/future.h>
 #include <aws/http/private/h1_encoder.h>
+#include <aws/http/private/h1_connection.h>
 #include <aws/http/private/strutil.h>
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
+#include <aws/io/async_stream.h>
 
 #include <inttypes.h>
 
@@ -249,6 +253,7 @@ int aws_h1_encoder_message_init_from_request(
     AWS_ZERO_STRUCT(*message);
 
     message->body = aws_input_stream_acquire(aws_http_message_get_body_stream(request));
+    message->async_body = aws_async_input_stream_acquire(aws_http_message_get_async_body_stream(request));
     message->pending_chunk_list = pending_chunk_list;
 
     struct aws_byte_cursor method;
@@ -693,6 +698,57 @@ static int s_switch_state(struct aws_h1_encoder *encoder, enum aws_h1_encoder_st
     return AWS_OP_SUCCESS;
 }
 
+static void s_on_async_body_read_complete(void *user_data) {
+    struct aws_h1_encoder *encoder = user_data;
+
+    struct aws_h1_connection *connection = encoder->connection;
+
+    int error = aws_future_bool_get_error(encoder->pending_async_future);
+    if (error) {
+        ENCODER_LOG(ERROR, encoder, "Encountered error after future was complete. Setting async_error, should be caught in the connection event loop.");
+        encoder->async_error = error;
+    }
+
+    bool eof = !error && aws_future_bool_get_result(encoder->pending_async_future);
+
+    aws_future_bool_release(encoder->pending_async_future);
+    encoder->pending_async_future = NULL;
+
+    if (eof) {
+        s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
+    } else {
+        ENCODER_LOG(DEBUG, encoder, "Error occurred or buffer was full but eof not reached. We have to initiate a new encode request with a new buffer.");
+        s_switch_state(encoder, AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM);
+    }
+
+    aws_h1_connection_try_write_outgoing_stream(connection);
+}
+
+static int s_encode_stream_async(
+    struct aws_h1_encoder *encoder,
+    struct aws_byte_buf *dst,
+    struct aws_async_input_stream *stream) {
+
+    if (dst->capacity == dst->len) {
+        return AWS_OP_ERR;
+    }
+
+    ENCODER_LOG(TRACE, encoder, "Reading from async body stream.");
+
+    encoder->pending_async_future = aws_async_input_stream_read_to_fill(stream, dst);
+
+    if (aws_future_bool_is_done(encoder->pending_async_future)) {
+        s_on_async_body_read_complete(encoder);
+        return encoder->async_error;
+    }
+
+    aws_future_bool_register_callback(encoder->pending_async_future, s_on_async_body_read_complete, encoder);
+
+    s_switch_state(encoder, AWS_H1_ENCODER_STATE_ASYNC_WAITING);
+
+    return AWS_OP_SUCCESS;
+}
+
 /* Initial state. Waits until a new message is set */
 static int s_state_fn_init(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
     (void)dst;
@@ -720,7 +776,8 @@ static int s_state_fn_head(struct aws_h1_encoder *encoder, struct aws_byte_buf *
     aws_byte_buf_clean_up(&encoder->message->outgoing_head_buf);
 
     /* Pick next state */
-    if (encoder->message->body && encoder->message->content_length) {
+    /* Experimentally supporting async streams for unchunked requests.*/
+    if ((encoder->message->body || encoder->message->async_body) && encoder->message->content_length) {
         return s_switch_state(encoder, AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM);
 
     } else if (encoder->message->body && encoder->message->has_chunked_encoding_header) {
@@ -736,6 +793,9 @@ static int s_state_fn_head(struct aws_h1_encoder *encoder, struct aws_byte_buf *
 
 /* Write out body with known Content-Length (not using chunked encoding). */
 static int s_state_fn_unchunked_body_stream(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
+    if (encoder->message->async_body) {
+        return s_encode_stream_async(encoder, dst, encoder->message->async_body);
+    }
     bool done;
     if (s_encode_stream(encoder, dst, encoder->message->body, encoder->message->content_length, &done)) {
         return AWS_OP_ERR;
@@ -748,6 +808,13 @@ static int s_state_fn_unchunked_body_stream(struct aws_h1_encoder *encoder, stru
 
     /* Message is done */
     return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
+}
+
+static int s_state_fn_async_waiting(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
+    (void) dst;
+    ENCODER_LOG(ERROR, encoder, "This point should never be reached. We should come back to the encoder only after the state has changed from ASYNC WAITING");
+
+    return AWS_OP_ERR;
 }
 
 /* Write out body (of unknown Content-Length) using chunked encoding.
@@ -994,6 +1061,7 @@ static struct encoder_state_def s_encoder_states[] = {
     [AWS_H1_ENCODER_STATE_INIT] = {.fn = s_state_fn_init, .name = "INIT"},
     [AWS_H1_ENCODER_STATE_HEAD] = {.fn = s_state_fn_head, .name = "HEAD"},
     [AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM] = {.fn = s_state_fn_unchunked_body_stream, .name = "BODY"},
+    [AWS_H1_ENCODER_STATE_ASYNC_WAITING] = {.fn = s_state_fn_async_waiting, .name = "WAITING"},
     [AWS_H1_ENCODER_STATE_CHUNKED_BODY_STREAM] = {.fn = s_state_fn_chunked_body_stream, .name = "CHUNKED_BODY_STREAM"},
     [AWS_H1_ENCODER_STATE_CHUNKED_BODY_STREAM_LAST_CHUNK] =
         {.fn = s_state_fn_chunked_body_stream_last_chunk, .name = "LAST_CHUNK"},

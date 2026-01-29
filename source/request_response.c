@@ -13,6 +13,7 @@
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
+#include <aws/io/async_stream.h>
 
 #ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
@@ -453,6 +454,7 @@ struct aws_http_message {
     struct aws_allocator *allocator;
     struct aws_http_headers *headers;
     struct aws_input_stream *body_stream;
+    struct aws_async_input_stream *async_body_stream;
     struct aws_atomic_var refcount;
     enum aws_http_version http_version;
 
@@ -781,6 +783,17 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
     }
 }
 
+void aws_http_message_set_async_body_stream(struct aws_http_message *message, struct aws_async_input_stream *async_body_stream) {
+    AWS_PRECONDITION(message);
+    /* release previous stream, if any */
+    aws_async_input_stream_release(message->async_body_stream);
+
+    message->async_body_stream = async_body_stream;
+    if (message->async_body_stream) {
+        aws_async_input_stream_acquire(message->async_body_stream);
+    }
+}
+
 int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, const struct aws_http1_chunk_options *options) {
     AWS_PRECONDITION(http1_stream);
     AWS_PRECONDITION(http1_stream->vtable);
@@ -827,6 +840,11 @@ int aws_http1_stream_add_chunked_trailer(
 struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_message *message) {
     AWS_PRECONDITION(message);
     return message->body_stream;
+}
+
+struct aws_async_input_stream *aws_http_message_get_async_body_stream(const struct aws_http_message *message) {
+    AWS_PRECONDITION(message);
+    return message->async_body_stream;
 }
 
 struct aws_http_headers *aws_http_message_get_headers(const struct aws_http_message *message) {
