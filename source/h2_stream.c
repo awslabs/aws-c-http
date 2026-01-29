@@ -763,6 +763,7 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
             case AWS_HTTP_HEADER_PROXY_CONNECTION:
                 /**
                  * An endpoint MUST NOT generate an HTTP/2 message containing connection-specific header fields.
+                 * (RFC=9113 8.2.2)
                  */
                 AWS_H2_STREAM_LOGF(
                     TRACE,
