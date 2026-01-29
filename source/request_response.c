@@ -11,9 +11,9 @@
 #include <aws/http/private/strutil.h>
 #include <aws/http/server.h>
 #include <aws/http/status_code.h>
+#include <aws/io/async_stream.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
-#include <aws/io/async_stream.h>
 
 #ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
@@ -784,7 +784,9 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
     }
 }
 
-void aws_http_message_set_async_body_stream(struct aws_http_message *message, struct aws_async_input_stream *async_body_stream) {
+void aws_http_message_set_async_body_stream(
+    struct aws_http_message *message,
+    struct aws_async_input_stream *async_body_stream) {
     AWS_PRECONDITION(message);
     /* release previous stream, if any */
     aws_async_input_stream_release(message->async_body_stream);

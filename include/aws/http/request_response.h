@@ -888,7 +888,9 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
  * The stream must not be destroyed until the message is complete.
  */
 AWS_HTTP_API
-void aws_http_message_set_async_body_stream(struct aws_http_message *message, struct aws_async_input_stream *async_body_stream);
+void aws_http_message_set_async_body_stream(
+    struct aws_http_message *message,
+    struct aws_async_input_stream *async_body_stream);
 
 /**
  * aws_future<aws_http_message*>

@@ -3,14 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 #include <aws/common/error.h>
-#include <aws/io/future.h>
-#include <aws/http/private/h1_encoder.h>
 #include <aws/http/private/h1_connection.h>
+#include <aws/http/private/h1_encoder.h>
 #include <aws/http/private/strutil.h>
 #include <aws/http/status_code.h>
+#include <aws/io/async_stream.h>
+#include <aws/io/future.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
-#include <aws/io/async_stream.h>
 
 #include <inttypes.h>
 
@@ -709,7 +709,11 @@ static void s_on_async_body_read_complete(void *user_data) {
 
     int error = aws_future_bool_get_error(encoder->pending_async_future);
     if (error) {
-        ENCODER_LOG(ERROR, encoder, "Encountered error after future was complete. Setting async_error, should be caught in the connection event loop.");
+        ENCODER_LOG(
+            ERROR,
+            encoder,
+            "Encountered error after future was complete. Setting async_error, should be caught in the connection "
+            "event loop.");
         encoder->async_error = error;
     }
 
@@ -724,7 +728,11 @@ static void s_on_async_body_read_complete(void *user_data) {
         ENCODER_LOG(DEBUG, encoder, "EOF reached, switching to DONE state");
         s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
     } else {
-        ENCODER_LOG(DEBUG, encoder, "Error occurred or buffer was full but eof not reached. We have to initiate a new encode request with a new buffer.");
+        ENCODER_LOG(
+            DEBUG,
+            encoder,
+            "Error occurred or buffer was full but eof not reached. We have to initiate a new encode request with a "
+            "new buffer.");
         s_switch_state(encoder, AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM);
     }
 
@@ -818,8 +826,12 @@ static int s_state_fn_unchunked_body_stream(struct aws_h1_encoder *encoder, stru
 }
 
 static int s_state_fn_async_waiting(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
-    (void) dst;
-    ENCODER_LOG(ERROR, encoder, "This point should never be reached. We should come back to the encoder only after the state has changed from ASYNC WAITING");
+    (void)dst;
+    ENCODER_LOG(
+        ERROR,
+        encoder,
+        "This point should never be reached. We should come back to the encoder only after the state has changed from "
+        "ASYNC WAITING");
 
     return AWS_OP_ERR;
 }

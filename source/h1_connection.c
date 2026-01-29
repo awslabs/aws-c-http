@@ -1156,13 +1156,13 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
 
             goto error;
         }
-    } else if(connection->thread_data.encoder.message && connection->thread_data.encoder.message->async_body) {
+    } else if (connection->thread_data.encoder.message && connection->thread_data.encoder.message->async_body) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Outgoing async stream task is either complete or waiting on future. Never reschedule task.",
             (void *)&connection->base);
 
-        if (connection->thread_data.encoder.state == AWS_H1_ENCODER_STATE_ASYNC_WAITING){
+        if (connection->thread_data.encoder.state == AWS_H1_ENCODER_STATE_ASYNC_WAITING) {
             connection->thread_data.pending_async_message = msg;
         } else {
             if (msg->message_data.len > 0) {
@@ -1700,9 +1700,8 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
         aws_mem_release(msg->allocator, msg);
     }
 
-
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Hello darkness my old friend.", (void *)&connection->base);
-    
+
     aws_h1_decoder_destroy(connection->thread_data.incoming_stream_decoder);
     aws_h1_encoder_clean_up(&connection->thread_data.encoder);
     aws_mutex_clean_up(&connection->synced_data.lock);
