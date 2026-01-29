@@ -120,6 +120,8 @@ struct aws_h1_connection {
         bool is_outgoing_stream_task_active : 1;
 
         bool is_processing_read_messages : 1;
+
+        struct aws_io_message *pending_async_message;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
