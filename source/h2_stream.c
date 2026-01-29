@@ -761,7 +761,6 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
             case AWS_HTTP_HEADER_UPGRADE:
             case AWS_HTTP_HEADER_KEEP_ALIVE:
             case AWS_HTTP_HEADER_PROXY_CONNECTION:
-            case AWS_HTTP_HEADER_HOST:
                 /**
                  * An endpoint MUST NOT generate an HTTP/2 message containing connection-specific header fields.
                  */
