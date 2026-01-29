@@ -1030,6 +1030,17 @@ static void s_on_channel_write_complete(
      * to run again instead of calling the function directly.
      * This way, if the message completes synchronously,
      * we're not hogging the network by writing message after message in a tight loop */
+
+    /* If encoder is waiting for async body read, don't reschedule - the async callback will do it */
+    if (connection->thread_data.encoder.state == AWS_H1_ENCODER_STATE_ASYNC_WAITING) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Encoder waiting for async body, not rescheduling task.",
+            (void *)&connection->base);
+        connection->thread_data.is_outgoing_stream_task_active = false;
+        return;
+    }
+
     aws_channel_schedule_task_now(channel, &connection->outgoing_stream_task);
 }
 
@@ -1139,7 +1150,7 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
 
             goto error;
         }
-    } else if(connection->thread_data.encoder.message->async_body) {
+    } else if(connection->thread_data.encoder.message && connection->thread_data.encoder.message->async_body) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Outgoing async stream task is either complete or waiting on future. Never reschedule task.",

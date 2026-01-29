@@ -33,6 +33,9 @@ static int s_scan_outgoing_headers(
 
     size_t total = 0;
     bool has_body_stream = aws_http_message_get_body_stream(message);
+    if (!has_body_stream) {
+        has_body_stream = aws_http_message_get_async_body_stream(message);
+    }
     bool has_content_length_header = false;
     bool has_transfer_encoding_header = false;
 
@@ -1087,6 +1090,12 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
     enum aws_h1_encoder_state prev_state;
     do {
         prev_state = encoder->state;
+
+        /* Exit if waiting for async read - callback will resume encoding */
+        if (encoder->state == AWS_H1_ENCODER_STATE_ASYNC_WAITING) {
+            return AWS_OP_SUCCESS;
+        }
+
         if (s_encoder_states[encoder->state].fn(encoder, out_buf)) {
             return AWS_OP_ERR;
         }
