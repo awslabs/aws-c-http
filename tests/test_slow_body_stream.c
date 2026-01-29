@@ -104,7 +104,6 @@ TEST_CASE(slow_body_stream_sync_polling) {
         .max_bytes_per_read = 1,
     };
     struct aws_input_stream *slow_stream = aws_input_stream_new_tester(allocator, &opts);
-    struct aws_input_stream_tester *stream_impl = (struct aws_input_stream_tester *)slow_stream->impl;
 
     /* Override vtable to add delay */
     s_slow_sync_delay_ns = DELAY_NS;
@@ -183,17 +182,17 @@ TEST_CASE(slow_body_stream_async_no_polling) {
     ASSERT_NOT_NULL(stream);
     aws_http_stream_activate(stream);
 
-    /* Wait for async completion */
+    /* Wait for message to be written */
     uint64_t start_time;
     uint64_t now;
     aws_high_res_clock_get_ticks(&start_time);
 
-    while (stream_impl->total_bytes_read < body_cursor.len) {
+    while (aws_linked_list_empty(testing_channel_get_written_message_queue(&tester.testing_channel))) {
         testing_channel_drain_queued_tasks(&tester.testing_channel);
         aws_thread_current_sleep(1000000); /* 1ms */
         aws_high_res_clock_get_ticks(&now);
+        ASSERT_TRUE(now - start_time < 5000000000ULL); /* 5s timeout */
     }
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     const char *expected = "PUT /test HTTP/1.1\r\nContent-Length: 4\r\n\r\nABCD";
     ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
