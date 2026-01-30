@@ -773,9 +773,18 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
                     AWS_BYTE_CURSOR_PRI(header.value));
                 aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
                 goto error;
+            case AWS_HTTP_HEADER_AUTHORIZATION:
+                /* Sensitive header, do not log the value of the header */
+                AWS_H2_STREAM_LOGF(TRACE, stream, "Sending header: " PRInSTR ": ***", AWS_BYTE_CURSOR_PRI(header.name));
+                break;
             default:
                 /* Log the headers we are sending out */
-                AWS_H2_STREAM_LOGF(TRACE, stream, "Sending header: " PRInSTR ": ***", AWS_BYTE_CURSOR_PRI(header.name));
+                AWS_H2_STREAM_LOGF(
+                    TRACE,
+                    stream,
+                    "Sending header: " PRInSTR ": " PRInSTR "",
+                    AWS_BYTE_CURSOR_PRI(header.name),
+                    AWS_BYTE_CURSOR_PRI(header.value));
                 break;
         }
     }
