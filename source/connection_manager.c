@@ -741,6 +741,8 @@ static void s_aws_http_connection_manager_finish_destroy(void *user_data) {
         aws_mem_release(manager->allocator, manager->cull_task);
     }
 
+    aws_event_loop_group_release_from_event_loop(manager->cull_event_loop);
+
     aws_mutex_clean_up(&manager->lock);
 
     aws_client_bootstrap_release(manager->bootstrap);
@@ -853,6 +855,8 @@ static void s_schedule_culling(struct aws_http_connection_manager *manager) {
 
     if (manager->cull_event_loop == NULL) {
         manager->cull_event_loop = aws_event_loop_group_get_next_loop(manager->bootstrap->event_loop_group);
+        // Acquire the event loop group to make sure it doesn't get destroyed while we are using the event loop.
+        aws_event_loop_group_acquire_from_event_loop(manager->cull_event_loop);
     }
     AWS_FATAL_ASSERT(manager->cull_event_loop != NULL);
 
