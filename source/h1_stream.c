@@ -440,6 +440,9 @@ struct aws_h1_stream *aws_h1_stream_new_request(
         enum aws_http_header_name name_enum = aws_http_str_to_header_name(header.name);
         switch (name_enum) {
             case AWS_HTTP_HEADER_AUTHORIZATION:
+            case AWS_HTTP_HEADER_SIGNING_SECURITY_TOKEN:
+            case AWS_HTTP_HEADER_SIGNING_S3SESSION_TOKEN:
+                /* TODO: move the filter to SDKs, not the http client. */
                 /* Sensitive header, do not log the value of the header */
                 AWS_LOGF_TRACE(
                     AWS_LS_HTTP_STREAM,
