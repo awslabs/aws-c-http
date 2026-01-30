@@ -339,6 +339,8 @@ static void s_headers_init(struct aws_allocator *alloc) {
     s_header_enum_to_str[AWS_HTTP_HEADER_UPGRADE] = aws_byte_cursor_from_c_str("upgrade");
     s_header_enum_to_str[AWS_HTTP_HEADER_KEEP_ALIVE] = aws_byte_cursor_from_c_str("keep-alive");
     s_header_enum_to_str[AWS_HTTP_HEADER_PROXY_CONNECTION] = aws_byte_cursor_from_c_str("proxy-connection");
+    s_header_enum_to_str[AWS_HTTP_HEADER_SIGNING_SECURITY_TOKEN] = aws_byte_cursor_from_c_str("x-amz-security-token");
+    s_header_enum_to_str[AWS_HTTP_HEADER_SIGNING_S3SESSION_TOKEN] = aws_byte_cursor_from_c_str("x-amz-s3session-token");
 
     s_init_str_to_enum_hash_table(
         &s_header_str_to_enum,

@@ -431,6 +431,37 @@ struct aws_h1_stream *aws_h1_stream_new_request(
         stream->thread_data.is_final_stream = true;
     }
 
+    struct aws_http_headers *headers = aws_http_message_get_headers(options->request);
+
+    /* Log the headers that we are sending out. */
+    for (size_t i = 0; i < aws_http_headers_count(headers); i++) {
+        struct aws_http_header header;
+        aws_http_headers_get_index(headers, i, &header);
+        enum aws_http_header_name name_enum = aws_http_str_to_header_name(header.name);
+        switch (name_enum) {
+            case AWS_HTTP_HEADER_AUTHORIZATION:
+            case AWS_HTTP_HEADER_SIGNING_SECURITY_TOKEN:
+            case AWS_HTTP_HEADER_SIGNING_S3SESSION_TOKEN:
+                /* TODO: move the filter to SDKs, not the http client. */
+                /* Sensitive header, do not log the value of the header */
+                AWS_LOGF_TRACE(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Sending header: " PRInSTR ": ***",
+                    (void *)&stream->base,
+                    AWS_BYTE_CURSOR_PRI(header.name));
+                break;
+            default:
+                /* Log the headers we are sending out */
+                AWS_LOGF_TRACE(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Sending header: " PRInSTR ": " PRInSTR "",
+                    (void *)&stream->base,
+                    AWS_BYTE_CURSOR_PRI(header.name),
+                    AWS_BYTE_CURSOR_PRI(header.value));
+                break;
+        }
+    }
+
     stream->synced_data.using_chunked_encoding = stream->thread_data.encoder_message.has_chunked_encoding_header;
 
     return stream;
