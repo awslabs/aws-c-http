@@ -69,6 +69,12 @@ static bool s_header_eq(const void *a, const void *b) {
     return aws_byte_cursor_eq(&left->value, &right->value);
 }
 
+static bool s_header_name_eq(const void *a, const void *b) {
+    const struct aws_byte_cursor *a_cursor = a;
+    const struct aws_byte_cursor *b_cursor = b;
+    return aws_byte_cursor_eq(a_cursor, b_cursor);
+}
+
 void aws_hpack_static_table_init(struct aws_allocator *allocator) {
 
     int result = aws_hash_table_init(
@@ -86,7 +92,7 @@ void aws_hpack_static_table_init(struct aws_allocator *allocator) {
         allocator,
         s_static_header_table_size - 1,
         aws_hash_byte_cursor_ptr,
-        (aws_hash_callback_eq_fn *)aws_byte_cursor_eq,
+        s_header_name_eq,
         NULL,
         NULL);
     AWS_FATAL_ASSERT(AWS_OP_SUCCESS == result);
@@ -143,7 +149,7 @@ void aws_hpack_context_init(
         allocator,
         s_hpack_dynamic_table_initial_elements,
         aws_hash_byte_cursor_ptr,
-        (aws_hash_callback_eq_fn *)aws_byte_cursor_eq,
+        s_header_name_eq,
         NULL,
         NULL);
 }
