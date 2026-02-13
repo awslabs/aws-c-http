@@ -139,6 +139,8 @@ struct aws_http_client_bootstrap {
     struct aws_http2_connection_options http2_options; /* allocated with bootstrap */
     struct aws_hash_table *alpn_string_map;            /* allocated with bootstrap */
     struct aws_http_connection *connection;
+
+    struct aws_atomic_var destroyed;
 };
 
 AWS_EXTERN_C_BEGIN

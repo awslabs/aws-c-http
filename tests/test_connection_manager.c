@@ -22,6 +22,7 @@
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
 #include <aws/io/socket.h>
+#include <aws/io/socks5.h>
 #include <aws/io/tls_channel_handler.h>
 
 #ifdef _MSC_VER
@@ -32,6 +33,9 @@ AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var, "HTTP_PROXY");
 AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var_low, "http_proxy");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var, "HTTPS_PROXY");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var_low, "https_proxy");
+
+static const char *s_cm_socks5_proxy_host_name = "socks5.cm.proxy";
+static const uint16_t s_cm_socks5_proxy_port = 1080;
 
 enum new_connection_result_type {
     AWS_NCRT_SUCCESS,
@@ -48,6 +52,7 @@ struct cm_tester_options {
     struct aws_allocator *allocator;
     struct aws_http_connection_manager_system_vtable *mock_table;
     struct aws_http_proxy_options *proxy_options;
+    const struct aws_socks5_proxy_options *socks5_proxy_options;
     bool use_proxy_env;
     bool use_tls;
     struct aws_tls_connection_options *env_configured_tls;
@@ -80,6 +85,7 @@ struct cm_tester {
     struct aws_http_proxy_options *verify_proxy_options;
     const struct aws_byte_cursor *verify_network_interface_names_array;
     size_t num_network_interface_names;
+    const struct aws_socks5_proxy_options *verify_socks5_options;
 
     struct aws_mutex lock;
     struct aws_condition_variable signal;
@@ -105,6 +111,7 @@ struct cm_tester {
     struct proxy_env_var_settings proxy_ev_settings;
     bool proxy_request_complete;
     bool proxy_request_successful;
+    size_t socks5_invocations;
     bool self_lib_init;
 };
 
@@ -202,6 +209,8 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     aws_tls_connection_options_set_server_name(&tester->tls_connection_options, options->allocator, &server_name);
 
     tester->verify_proxy_options = options->proxy_options;
+    tester->verify_socks5_options = options->socks5_proxy_options;
+    tester->socks5_invocations = 0;
     tester->proxy_ev_settings.env_var_type = options->use_proxy_env ? AWS_HPEV_ENABLE : AWS_HPEV_DISABLE;
     struct aws_tls_connection_options default_tls_connection_options;
     AWS_ZERO_STRUCT(default_tls_connection_options);
@@ -216,6 +225,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         .socket_options = &socket_options,
         .tls_connection_options = options->use_tls ? &tester->tls_connection_options : NULL,
         .proxy_options = options->proxy_options,
+        .socks5_proxy_options = options->socks5_proxy_options,
         .proxy_ev_settings = &tester->proxy_ev_settings,
         .host = server_name,
         .port = options->use_tls ? 443 : 80,
@@ -844,9 +854,22 @@ static int s_aws_http_connection_manager_create_connection_validate(
         ASSERT_TRUE(options->proxy_options->port == tester->verify_proxy_options->port);
         ASSERT_UINT_EQUALS(options->proxy_options->connection_type, tester->verify_proxy_options->connection_type);
     }
+    /* Verify that any SOCKS5 proxy options have been propagated to the connection attempt */
+    if (tester->verify_socks5_options) {
+        ASSERT_NOT_NULL(options->socks5_proxy_options);
+        struct aws_byte_cursor expected_host = aws_byte_cursor_from_string(tester->verify_socks5_options->host);
+        struct aws_byte_cursor actual_host = aws_byte_cursor_from_string(options->socks5_proxy_options->host);
+        ASSERT_BIN_ARRAYS_EQUALS(
+            expected_host.ptr, expected_host.len, actual_host.ptr, actual_host.len, "Socks5 proxy host mismatch");
+        ASSERT_UINT_EQUALS(tester->verify_socks5_options->port, options->socks5_proxy_options->port);
+        tester->socks5_invocations++;
+    } else {
+        ASSERT_NULL(options->socks5_proxy_options);
+    }
 
     return AWS_OP_SUCCESS;
 }
+
 static int s_aws_http_connection_manager_create_connection_sync_mock(
     const struct aws_http_client_connection_options *options) {
     s_aws_http_connection_manager_create_connection_validate(options);
@@ -1215,6 +1238,37 @@ static int s_test_connection_manager_connect_immediate_failure(struct aws_alloca
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(connection_manager_connect_immediate_failure, s_test_connection_manager_connect_immediate_failure);
+
+static int s_test_connection_manager_socks5_proxy_connection(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct aws_socks5_proxy_options socks5_options;
+    ASSERT_SUCCESS(aws_socks5_proxy_options_init(
+        &socks5_options, allocator, aws_byte_cursor_from_c_str(s_cm_socks5_proxy_host_name), s_cm_socks5_proxy_port));
+    aws_socks5_proxy_options_set_host_resolution_mode(&socks5_options, AWS_SOCKS5_HOST_RESOLUTION_PROXY);
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 1,
+        .mock_table = &s_synchronous_mocks,
+        .socks5_proxy_options = &socks5_options,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_add_mock_connections(1, AWS_NCRT_SUCCESS, false);
+    s_acquire_connections(1);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
+    ASSERT_UINT_EQUALS(1, s_tester.socks5_invocations);
+
+    ASSERT_SUCCESS(s_release_connections(1, false));
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+    aws_socks5_proxy_options_clean_up(&socks5_options);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_socks5_proxy_connection, s_test_connection_manager_socks5_proxy_connection);
 
 static int s_test_connection_manager_proxy_setup_shutdown(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;

@@ -13,6 +13,7 @@
 #include <aws/io/event_loop.h>
 #include <aws/io/logging.h>
 #include <aws/io/tls_channel_handler.h>
+#include <aws/io/socks5.h>
 
 struct aws_http_client_bootstrap;
 struct testing_channel;
@@ -38,6 +39,7 @@ enum proxy_tester_failure_type {
 struct proxy_tester_options {
     struct aws_allocator *alloc;
     struct aws_http_proxy_options *proxy_options;
+    const struct aws_socks5_proxy_options *socks5_proxy_options;
     struct aws_byte_cursor host;
     uint32_t port;
     enum proxy_tester_test_mode test_mode;
@@ -85,6 +87,9 @@ struct proxy_tester {
     uint32_t connection_port;
 
     struct aws_array_list connect_requests;
+
+    const struct aws_socks5_proxy_options *socks5_proxy_options;
+    size_t socks5_invocations;
 
     uint32_t current_response_index;
     struct aws_array_list desired_connect_responses;

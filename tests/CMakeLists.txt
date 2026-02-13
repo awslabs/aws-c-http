@@ -560,6 +560,7 @@ add_net_test_case(connection_manager_close_and_release)
 add_net_test_case(connection_manager_acquire_release_mix)
 add_net_test_case(connection_manager_max_pending_acquisitions)
 add_net_test_case(connection_manager_max_pending_acquisitions_with_vended_connections)
+add_net_test_case(test_connection_manager_socks5_proxy_connection)
 
 # Integration test that requires proxy envrionment in us-east-1 region.
 # TODO: test the server name validation properly
@@ -626,6 +627,7 @@ add_test_case(h1_server_close_from_on_thread_makes_not_open)
 add_test_case(http_forwarding_proxy_connection_proxy_target)
 add_test_case(http_forwarding_proxy_connection_channel_failure)
 add_test_case(http_forwarding_proxy_connection_connect_failure)
+add_test_case(test_http_socks5_proxy_connection_channel_failure)
 add_test_case(http_forwarding_proxy_request_transform)
 add_test_case(http_forwarding_proxy_request_transform_basic_auth)
 add_test_case(http_forwarding_proxy_request_transform_legacy_basic_auth)
@@ -658,6 +660,8 @@ add_test_case(https_tunnel_proxy_connection_success)
 add_test_case(http_tunnel_proxy_connection_failure_connect)
 add_test_case(https_tunnel_proxy_connection_failure_connect)
 add_test_case(https_tunnel_proxy_connection_failure_tls)
+
+add_test_case(test_http_socks5_proxy_connection_channel_failure)
 
 add_test_case(http_connection_monitor_options_is_valid)
 add_test_case(http_connection_monitor_rw_above)
