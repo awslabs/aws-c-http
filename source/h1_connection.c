@@ -621,7 +621,8 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
      * If this is the end of a successful CONNECT request, mark ourselves as pass-through since the proxy layer
      * will be tacking on a new http handler (and possibly a tls handler in-between).
      */
-    if (error_code == AWS_ERROR_SUCCESS && s_aws_http_stream_was_successful_connect(stream)) {
+    if (error_code == AWS_ERROR_SUCCESS &&
+        (s_aws_http_stream_was_successful_connect(stream) || stream->encoder_message.is_switching_protocols)) {
         if (s_aws_http1_switch_protocols(connection)) {
             error_code = AWS_ERROR_HTTP_PROTOCOL_SWITCH_FAILURE;
             s_shutdown_due_to_error(connection, error_code);
