@@ -708,6 +708,9 @@ if(ENABLE_LOCALHOST_INTEGRATION_TESTS)
     add_net_test_case(localhost_integ_h2_sm_connection_monitor_kill_slow_connection)
 endif()
 
+add_test_case(slow_body_stream_sync_polling)
+add_test_case(slow_body_stream_async_no_polling)
+
 add_test_case(random_access_set_sanitize)
 add_test_case(random_access_set_insert)
 add_test_case(random_access_set_get_random)
