@@ -140,10 +140,6 @@ static int s_scan_outgoing_headers(
         encoder_message->has_chunked_encoding_header = false;
     }
 
-    if (encoder_message->content_length > 0 && !has_body_stream) {
-        return aws_raise_error(AWS_ERROR_HTTP_MISSING_BODY_STREAM);
-    }
-
     *out_header_lines_len = total;
     return AWS_OP_SUCCESS;
 }
@@ -552,6 +548,39 @@ void aws_h1_chunk_destroy(struct aws_h1_chunk *chunk) {
     aws_mem_release(chunk->allocator, chunk);
 }
 
+struct aws_h1_data *aws_h1_data_new(
+    struct aws_allocator *allocator,
+    const struct aws_http1_stream_write_data_options *options) {
+    struct aws_h1_data *data = aws_mem_calloc(allocator, 1, sizeof(struct aws_h1_data));
+    if (!data) {
+        return NULL;
+    }
+    data->allocator = allocator;
+    data->data = options->data ? aws_input_stream_acquire(options->data) : NULL;
+    data->end_stream = options->end_stream;
+    data->on_complete = options->on_complete;
+    data->user_data = options->user_data;
+    return data;
+}
+
+void aws_h1_data_destroy(struct aws_h1_data *data) {
+    AWS_PRECONDITION(data);
+    if (data->data) {
+        aws_input_stream_release(data->data);
+    }
+    aws_mem_release(data->allocator, data);
+}
+
+void aws_h1_data_complete_and_destroy(struct aws_h1_data *data, struct aws_http_stream *http_stream, int error_code) {
+    AWS_PRECONDITION(data);
+    aws_http_stream_write_complete_fn *on_complete = data->on_complete;
+    void *user_data = data->user_data;
+    aws_h1_data_destroy(data);
+    if (on_complete) {
+        on_complete(http_stream, error_code, user_data);
+    }
+}
+
 void aws_h1_chunk_complete_and_destroy(
     struct aws_h1_chunk *chunk,
     struct aws_http_stream *http_stream,
@@ -728,6 +757,10 @@ static int s_state_fn_head(struct aws_h1_encoder *encoder, struct aws_byte_buf *
 
     } else if (encoder->message->has_chunked_encoding_header) {
         return s_switch_state(encoder, AWS_H1_ENCODER_STATE_CHUNK_NEXT);
+
+    } else if (encoder->message->content_length) {
+        /* Content-Length set but no body stream - manual write mode */
+        return s_switch_state(encoder, AWS_H1_ENCODER_STATE_UNCHUNKED_DATA_NEXT);
 
     } else {
         return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
@@ -976,6 +1009,49 @@ static int s_state_fn_chunk_trailer(struct aws_h1_encoder *encoder, struct aws_b
     return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
 }
 
+/* Wait for manual data writes when Content-Length is set but no body stream provided */
+static int s_state_fn_unchunked_data_next(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
+    (void)dst;
+
+    if (aws_linked_list_empty(encoder->message->pending_chunk_list)) {
+        /* Remain in this state until data arrives */
+        ENCODER_LOG(TRACE, encoder, "No data ready to send, waiting for manual write...");
+        return AWS_OP_SUCCESS;
+    }
+
+    /* Set next data and go to write state */
+    struct aws_linked_list_node *node = aws_linked_list_front(encoder->message->pending_chunk_list);
+    encoder->current_chunk = AWS_CONTAINER_OF(node, struct aws_h1_chunk, node);
+    ENCODER_LOGF(
+        TRACE,
+        encoder,
+        "Begin sending manual data with size %" PRIu64,
+        encoder->current_chunk->data_size);
+
+    return s_switch_state(encoder, AWS_H1_ENCODER_STATE_UNCHUNKED_DATA_WRITE);
+}
+
+/* Write raw data without chunk encoding */
+static int s_state_fn_unchunked_data_write(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
+    bool done;
+    if (s_encode_stream(encoder, dst, encoder->current_chunk->data, encoder->current_chunk->data_size, &done)) {
+        int error_code = aws_last_error();
+        s_clean_up_current_chunk(encoder, error_code);
+        return aws_raise_error(error_code);
+    }
+    if (!done) {
+        return AWS_OP_SUCCESS;
+    }
+
+    bool end_stream = encoder->current_chunk->end_stream;
+    s_clean_up_current_chunk(encoder, AWS_ERROR_SUCCESS);
+
+    if (end_stream) {
+        return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
+    }
+    return s_switch_state(encoder, AWS_H1_ENCODER_STATE_UNCHUNKED_DATA_NEXT);
+}
+
 /* Message is done, loop back to start of state machine */
 static int s_state_fn_done(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
     (void)dst;
@@ -1002,6 +1078,8 @@ static struct encoder_state_def s_encoder_states[] = {
     [AWS_H1_ENCODER_STATE_CHUNK_BODY] = {.fn = s_state_fn_chunk_body, .name = "CHUNK_BODY"},
     [AWS_H1_ENCODER_STATE_CHUNK_END] = {.fn = s_state_fn_chunk_end, .name = "CHUNK_END"},
     [AWS_H1_ENCODER_STATE_CHUNK_TRAILER] = {.fn = s_state_fn_chunk_trailer, .name = "CHUNK_TRAILER"},
+    [AWS_H1_ENCODER_STATE_UNCHUNKED_DATA_NEXT] = {.fn = s_state_fn_unchunked_data_next, .name = "UNCHUNKED_DATA_NEXT"},
+    [AWS_H1_ENCODER_STATE_UNCHUNKED_DATA_WRITE] = {.fn = s_state_fn_unchunked_data_write, .name = "UNCHUNKED_DATA_WRITE"},
     [AWS_H1_ENCODER_STATE_DONE] = {.fn = s_state_fn_done, .name = "DONE"},
 };
 

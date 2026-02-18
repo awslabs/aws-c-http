@@ -17,6 +17,16 @@ struct aws_h1_chunk {
     struct aws_linked_list_node node;
     /* Buffer containing pre-encoded start line: chunk-size [chunk-ext] CRLF */
     struct aws_byte_buf chunk_line;
+    bool end_stream;
+};
+
+struct aws_h1_data {
+    struct aws_allocator *allocator;
+    struct aws_input_stream *data;
+    bool end_stream;
+    aws_http_stream_write_complete_fn *on_complete;
+    void *user_data;
+    struct aws_linked_list_node node;
 };
 
 struct aws_h1_trailer {
@@ -64,6 +74,9 @@ enum aws_h1_encoder_state {
     AWS_H1_ENCODER_STATE_CHUNK_BODY,
     AWS_H1_ENCODER_STATE_CHUNK_END,
     AWS_H1_ENCODER_STATE_CHUNK_TRAILER,
+    /* Manual write API for unchunked bodies (Content-Length set, no body stream provided up front) */
+    AWS_H1_ENCODER_STATE_UNCHUNKED_DATA_NEXT,
+    AWS_H1_ENCODER_STATE_UNCHUNKED_DATA_WRITE,
     AWS_H1_ENCODER_STATE_DONE,
 };
 
@@ -84,6 +97,9 @@ struct aws_h1_encoder {
 };
 
 struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const struct aws_http1_chunk_options *options);
+struct aws_h1_data *aws_h1_data_new(
+    struct aws_allocator *allocator,
+    const struct aws_http1_stream_write_data_options *options);
 struct aws_h1_trailer *aws_h1_trailer_new(
     struct aws_allocator *allocator,
     const struct aws_http_headers *trailing_headers);
@@ -92,9 +108,11 @@ void aws_h1_trailer_destroy(struct aws_h1_trailer *trailer);
 
 /* Just destroy the chunk (don't fire callback) */
 void aws_h1_chunk_destroy(struct aws_h1_chunk *chunk);
+void aws_h1_data_destroy(struct aws_h1_data *data);
 
 /* Destroy chunk and fire its completion callback */
 void aws_h1_chunk_complete_and_destroy(struct aws_h1_chunk *chunk, struct aws_http_stream *http_stream, int error_code);
+void aws_h1_data_complete_and_destroy(struct aws_h1_data *data, struct aws_http_stream *http_stream, int error_code);
 
 AWS_EXTERN_C_BEGIN
 

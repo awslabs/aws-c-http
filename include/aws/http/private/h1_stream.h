@@ -107,6 +107,18 @@ struct aws_h1_stream {
 
         /* Whether the chunked trailer has already been sent */
         bool has_added_trailer : 1;
+
+        /* Whether the outgoing message is using manual data writes */
+        bool using_manual_data_writes : 1;
+
+        /* Content-Length value for manual data writes validation */
+        uint64_t manual_write_content_length;
+
+        /* Total bytes written via manual data writes */
+        uint64_t manual_write_total_bytes;
+
+        /* List of pending manual data writes */
+        struct aws_linked_list pending_data_list;
     } synced_data;
 };
 

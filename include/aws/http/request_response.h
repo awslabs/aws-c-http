@@ -500,6 +500,16 @@ struct aws_http2_stream_write_data_options {
     void *user_data;
 };
 
+/**
+ * Encoding options for manual HTTP/1.1 unchunked data writes
+ */
+struct aws_http1_stream_write_data_options {
+    struct aws_input_stream *data;
+    bool end_stream;
+    aws_http_stream_write_complete_fn *on_complete;
+    void *user_data;
+};
+
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
     {                                                                                                                  \
         .self_size = sizeof(struct aws_http_request_handler_options),                                                  \
@@ -930,6 +940,20 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
 AWS_HTTP_API int aws_http2_stream_write_data(
     struct aws_http_stream *http2_stream,
     const struct aws_http2_stream_write_data_options *options);
+
+/**
+ * Submit data to be sent on an HTTP/1.1 stream with Content-Length.
+ * The stream must have specified a Content-Length header but no body stream.
+ * For client streams, activate() must be called before any data is submitted.
+ * A write with end_stream set to true will end the stream and prevent any further writes.
+ * The total bytes written must equal the Content-Length when end_stream is true.
+ *
+ * @return AWS_OP_SUCCESS if the write was queued
+ *         AWS_OP_ERROR indicating the attempt raised an error code.
+ */
+AWS_HTTP_API int aws_http1_stream_write_data(
+    struct aws_http_stream *http1_stream,
+    const struct aws_http1_stream_write_data_options *options);
 
 /**
  * Add a list of headers to be added as trailing headers sent after the last chunk is sent.

@@ -21,6 +21,9 @@ struct aws_http_stream_vtable {
 
     int (*http1_write_chunk)(struct aws_http_stream *http1_stream, const struct aws_http1_chunk_options *options);
     int (*http1_add_trailer)(struct aws_http_stream *http1_stream, const struct aws_http_headers *trailing_headers);
+    int (*http1_write_data)(
+        struct aws_http_stream *http1_stream,
+        const struct aws_http1_stream_write_data_options *options);
 
     int (*http2_reset_stream)(struct aws_http_stream *http2_stream, uint32_t http2_error);
     int (*http2_get_received_error_code)(struct aws_http_stream *http2_stream, uint32_t *http2_error);

@@ -60,8 +60,10 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     int api_state = stream->synced_data.api_state;
 
     /* If we have any new outgoing data, prompt the connection to try and send it. */
-    bool new_outgoing_data = !aws_linked_list_empty(&stream->synced_data.pending_chunk_list);
+    bool new_outgoing_data = !aws_linked_list_empty(&stream->synced_data.pending_chunk_list) ||
+                             !aws_linked_list_empty(&stream->synced_data.pending_data_list);
     aws_linked_list_move_all_back(&stream->thread_data.pending_chunk_list, &stream->synced_data.pending_chunk_list);
+    aws_linked_list_move_all_back(&stream->thread_data.pending_chunk_list, &stream->synced_data.pending_data_list);
 
     /* If we JUST learned about having an outgoing response, that's a reason to try sending data */
     if (stream->synced_data.has_outgoing_response && !stream->thread_data.has_outgoing_response) {
@@ -243,6 +245,120 @@ static int s_stream_write_chunk(struct aws_http_stream *stream_base, const struc
     return AWS_OP_SUCCESS;
 }
 
+static int s_stream_write_data(
+    struct aws_http_stream *stream_base,
+    const struct aws_http1_stream_write_data_options *options) {
+    AWS_PRECONDITION(stream_base);
+    AWS_PRECONDITION(options);
+    struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
+
+    struct aws_h1_data *data = aws_h1_data_new(stream_base->alloc, options);
+    if (!data) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Failed to initialize manual data write, error %d (%s).",
+            (void *)stream_base,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+
+    int error_code = 0;
+    bool should_schedule_task = false;
+    uint64_t data_length = 0;
+
+    if (options->data) {
+        if (aws_input_stream_get_length(options->data, &data_length)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Failed to get data length, error %d (%s).",
+                (void *)stream_base,
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
+            aws_h1_data_destroy(data);
+            return AWS_OP_ERR;
+        }
+    }
+
+    { /* BEGIN CRITICAL SECTION */
+        s_stream_lock_synced_data(stream);
+
+        if (stream->synced_data.api_state != AWS_H1_STREAM_API_STATE_ACTIVE) {
+            error_code = (stream->synced_data.api_state == AWS_H1_STREAM_API_STATE_INIT)
+                             ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
+                             : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
+            goto unlock;
+        }
+
+        if (!stream->synced_data.using_manual_data_writes) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Cannot write data without Content-Length header and no body stream.",
+                (void *)stream_base);
+            error_code = AWS_ERROR_INVALID_STATE;
+            goto unlock;
+        }
+
+        uint64_t new_total = stream->synced_data.manual_write_total_bytes + data_length;
+        if (new_total > stream->synced_data.manual_write_content_length) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Manual write would exceed Content-Length (%" PRIu64 " + %" PRIu64 " > %" PRIu64 ").",
+                (void *)stream_base,
+                stream->synced_data.manual_write_total_bytes,
+                data_length,
+                stream->synced_data.manual_write_content_length);
+            error_code = AWS_ERROR_INVALID_ARGUMENT;
+            goto unlock;
+        }
+
+        if (options->end_stream && new_total != stream->synced_data.manual_write_content_length) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: end_stream set but total bytes (%" PRIu64 ") != Content-Length (%" PRIu64 ").",
+                (void *)stream_base,
+                new_total,
+                stream->synced_data.manual_write_content_length);
+            error_code = AWS_ERROR_INVALID_ARGUMENT;
+            goto unlock;
+        }
+
+        stream->synced_data.manual_write_total_bytes = new_total;
+        aws_linked_list_push_back(&stream->synced_data.pending_data_list, &data->node);
+        should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
+        stream->synced_data.is_cross_thread_work_task_scheduled = true;
+
+    unlock:
+        s_stream_unlock_synced_data(stream);
+    } /* END CRITICAL SECTION */
+
+    if (error_code) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Failed to write data, error %d (%s)",
+            (void *)stream_base,
+            error_code,
+            aws_error_name(error_code));
+        aws_h1_data_destroy(data);
+        return aws_raise_error(error_code);
+    }
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_STREAM, "id=%p: Adding manual data write with size %" PRIu64, (void *)stream, data_length);
+
+    if (should_schedule_task) {
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Scheduling stream cross-thread work task.", (void *)stream_base);
+        aws_channel_schedule_task_now(
+            stream->base.owning_connection->channel_slot->channel, &stream->cross_thread_work_task);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM, "id=%p: Stream cross-thread work task was already scheduled.", (void *)stream_base);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 static int s_stream_add_trailer(struct aws_http_stream *stream_base, const struct aws_http_headers *trailing_headers) {
     AWS_PRECONDITION(stream_base);
     AWS_PRECONDITION(trailing_headers);
@@ -336,6 +452,7 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
     .activate = aws_h1_stream_activate,
     .cancel = aws_h1_stream_cancel,
     .http1_write_chunk = s_stream_write_chunk,
+    .http1_write_data = s_stream_write_data,
     .http1_add_trailer = s_stream_add_trailer,
     .http2_reset_stream = NULL,
     .http2_get_received_error_code = NULL,
@@ -463,6 +580,9 @@ struct aws_h1_stream *aws_h1_stream_new_request(
     }
 
     stream->synced_data.using_chunked_encoding = stream->thread_data.encoder_message.has_chunked_encoding_header;
+    stream->synced_data.using_manual_data_writes =
+        stream->thread_data.encoder_message.content_length && !stream->thread_data.encoder_message.body;
+    stream->synced_data.manual_write_content_length = stream->thread_data.encoder_message.content_length;
 
     return stream;
 
