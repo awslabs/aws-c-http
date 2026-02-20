@@ -801,7 +801,9 @@ void aws_h1_decoder_set_body_headers_ignored(struct aws_h1_decoder *decoder, boo
 }
 
 int aws_h1_decoder_on_connection_closed(struct aws_h1_decoder *decoder) {
-    AWS_ASSERT(decoder);
+    if (!decoder) {
+        return AWS_OP_SUCCESS;
+    }
 
     if (!decoder->response_body_indeterminate_length || decoder->is_done) {
         /* nothing to do */
