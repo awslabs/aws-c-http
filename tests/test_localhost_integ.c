@@ -597,11 +597,11 @@ static int s_localhost_integ_h1_no_content_length_response(struct aws_allocator 
     ASSERT_SUCCESS(s_wait_on_connection_connected(&s_tester));
     ASSERT_NOT_NULL(s_tester.connection);
 
-    /* Create request to /no-content-length endpoint */
+    /* Create request to /indeterminate-length endpoint */
     struct aws_http_message *request = aws_http_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
     ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_http_method_get));
-    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/no-content-length")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/indeterminate-length")));
 
     struct aws_http_header host_header = {
         .name = aws_byte_cursor_from_c_str("Host"),
@@ -626,21 +626,13 @@ static int s_localhost_integ_h1_no_content_length_response(struct aws_allocator 
 
     /* Wait for stream completion */
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
-    ASSERT_SUCCESS(s_tester.stream_completed_error_code);
 
-    /* Verify response */
+    /* Verify the stream completed successfully */
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.stream_completed_error_code);
     ASSERT_INT_EQUALS(200, test_data.response_status);
-
-    /* Verify Content-Length header is NOT present */
     ASSERT_FALSE(test_data.has_content_length_header);
-
-    /* Verify Transfer-Encoding header is NOT present */
     ASSERT_FALSE(test_data.has_transfer_encoding_header);
-
-    /* Verify Connection: close header IS present */
     ASSERT_TRUE(test_data.has_connection_close_header);
-
-    /* Verify response body is present and matches expected content */
     const char *expected_body = "Response body without Content-Length header";
     ASSERT_UINT_EQUALS(strlen(expected_body), test_data.response_body.len);
     ASSERT_BIN_ARRAYS_EQUALS(

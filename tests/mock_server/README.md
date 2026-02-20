@@ -23,6 +23,7 @@ Echoes back request headers and body as JSON.
 ```bash
 curl -k -v -H "foo:bar" https://localhost:3443/echo
 ```
+
 #### Special headers
 
 ##### `/echo` with `x-repeat-data` header - Download test
@@ -79,7 +80,6 @@ Returns 404 Not Found.
 - The code is based the non-tls [example](http://python-hyper.org/projects/h2/en/stable/basic-usage.html) from hyper h2 server.
 - Run python. `python3 ./non_tls_server.py`.
 - To test the server runs correctly, you can do `curl -v --http2-prior-knowledge http://localhost:3280` and check the result.
-
 # HTTP1.1 Local server
 
 ## Requirements
@@ -118,8 +118,9 @@ HTTP_PORT=8080 HTTPS_PORT=8443 python3 mock_server.py
 
 ## Endpoints
 
-- **Any path**: Echoes request body as JSON
-- **/response-headers?HeaderName=value**: Adds custom headers to the response based on query parameters
+- **Any path**: Echoes request body as JSON with all request headers echoed back with "Echo-" prefix
+- **/indeterminate-length**: Returns a response without Content-Length or Transfer-Encoding headers, using `Connection: close` to indicate message boundary
+- **/404**: Returns a 404 Not Found status
 
 ## Stopping the Server
 

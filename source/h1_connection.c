@@ -142,6 +142,11 @@ static void s_stop(
     AWS_ASSERT(stop_reading || stop_writing || schedule_shutdown); /* You are required to stop at least 1 thing */
 
     if (stop_reading) {
+        /* signal the decoder that the connection has closed. */
+        if (aws_h1_decoder_on_connection_closed(connection->thread_data.incoming_stream_decoder)) {
+            error_code = aws_last_error();
+        }
+
         if (connection->thread_data.read_state == AWS_CONNECTION_READ_OPEN) {
             connection->thread_data.read_state = AWS_CONNECTION_READ_SHUT_DOWN_COMPLETE;
         } else if (connection->thread_data.read_state == AWS_CONNECTION_READ_SHUTTING_DOWN) {

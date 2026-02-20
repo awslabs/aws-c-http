@@ -103,7 +103,7 @@ class TrioHTTPWrapper:
             pass
 
     def basic_headers(self):
-        return [("Server", "echo-server")]
+        return [("Server", "crt-local-server")]
 
     def info(self, *args):
         print(f"{self._obj_id}:", *args)
@@ -121,7 +121,7 @@ async def http_serve(stream):
                 event = await wrapper.next_event()
                 wrapper.info("Server main loop got event:", event)
                 if type(event) is h11.Request:
-                    await send_echo_response(wrapper, event)
+                    await send_response(wrapper, event)
         except Exception as exc:
             wrapper.info(f"Error during response handler: {exc!r}")
             await maybe_send_error_response(wrapper, exc)
@@ -175,8 +175,8 @@ async def maybe_send_error_response(wrapper, exc):
         wrapper.info("error while sending error response:", exc)
 
 
-async def send_echo_response(wrapper, request):
-    wrapper.info("Preparing echo response")
+async def send_response(wrapper, request):
+    wrapper.info("Preparing response")
 
     body_data = b""
     while True:
@@ -189,8 +189,8 @@ async def send_echo_response(wrapper, request):
     target = request.target if isinstance(request.target, bytes) else request.target.encode()
     target_str = target.decode("utf-8", errors="replace")
 
-    # Check if this is the /no-content-length endpoint
-    if target_str.startswith("/no-content-length"):
+    # Check if this is the /indeterminate-length endpoint
+    if target_str.startswith("/indeterminate-length"):
         wrapper.info("Sending raw response without Content-Length or Transfer-Encoding")
         response_body = b"Response body without Content-Length header"
 
@@ -208,8 +208,20 @@ async def send_echo_response(wrapper, request):
         # Send raw response directly to the stream, bypassing h11
         await wrapper.stream.send_all(raw_response)
 
-        # Mark connection as must close since we sent raw data
-        wrapper.conn.send_failed()  # This marks the connection as broken in h11's view
+        # Update h11's state to indicate connection must close
+        # We simulate the response flow through h11's state machine without actually sending bytes
+        wrapper.info("Updating h11 state to MUST_CLOSE after raw response with Connection: close")
+        headers = [
+            ("Server", "echo-server"),
+            ("Content-Type", "text/plain; charset=utf-8"),
+            ("Connection", "close"),
+        ]
+        res = h11.Response(status_code=200, headers=headers)
+        # Call send() to update state machine, but don't send the bytes (we already did)
+        wrapper.conn.send(res)
+        wrapper.conn.send(h11.Data(data=response_body))
+        wrapper.conn.send(h11.EndOfMessage())
+        # Now h11 knows the connection must close
         return
 
     # Check if this is the /404 endpoint
