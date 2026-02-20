@@ -37,6 +37,7 @@ struct aws_h1_decoder {
     uint64_t chunk_size;
     bool doing_trailers;
     bool is_done;
+    bool body_headers_ignored_on_2xx;
     bool body_headers_ignored;
     bool body_headers_forbidden;
     bool content_length_received;
@@ -378,11 +379,12 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
             } else if (decoder->content_length > 0) {
                 s_set_state(decoder, s_state_unchunked_body);
             } else if (
-                !decoder->is_decoding_requests && !decoder->content_length_received && !(decoder->transfer_encoding)) {
-                /* RFC-7230 3.4: A response that has neither chunked transfer coding nor Content-Length
-                 * is terminated by closure of the connection and, thus, is considered complete regardless
-                 * of the number of message body octets received, provided that the header section was
-                 * received intact. */
+                !decoder->is_decoding_requests && !decoder->content_length_received &&
+                !decoder->body_headers_forbidden) {
+                /* RFC-7230 3.3.3: If a message is received without Transfer-Encoding and without Content-Length and NOT
+                 * determined by the response lien to have no body, then the message body length is determined by
+                 * reading the stream until connection closure. Note: This only applies to responses. A request without
+                 * Content-Length or Transfer-Encoding has no message body (per RFC 7230 section 3.3.3). */
                 decoder->response_body_indeterminate_length = true;
                 s_set_state(decoder, s_state_indeterminate_length_body);
                 AWS_LOGF_DEBUG(
@@ -710,6 +712,9 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
 
     /* RFC-7230 section 3.3 Message Body */
     decoder->body_headers_ignored |= code_val == AWS_HTTP_STATUS_CODE_304_NOT_MODIFIED;
+    if (decoder->body_headers_ignored_on_2xx) {
+        decoder->body_headers_ignored |= code_val / 200 == 1;
+    }
     decoder->body_headers_forbidden = code_val == AWS_HTTP_STATUS_CODE_204_NO_CONTENT || code_val / 100 == 1;
 
     if (s_check_info_response_status_code(code_val)) {
@@ -798,6 +803,10 @@ void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, const void *i
 
 void aws_h1_decoder_set_body_headers_ignored(struct aws_h1_decoder *decoder, bool body_headers_ignored) {
     decoder->body_headers_ignored = body_headers_ignored;
+}
+
+void aws_h1_decoder_set_body_headers_ignored_on_2xx(struct aws_h1_decoder *decoder, bool body_headers_ignored_on_2xx) {
+    decoder->body_headers_ignored_on_2xx = body_headers_ignored_on_2xx;
 }
 
 int aws_h1_decoder_on_connection_closed(struct aws_h1_decoder *decoder) {
