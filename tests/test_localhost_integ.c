@@ -201,7 +201,8 @@ static void s_tester_on_stream_completed(struct aws_http_stream *stream, int err
 
 static struct aws_logger s_logger;
 
-static int s_tester_init(struct tester *tester, struct aws_allocator *allocator, struct aws_byte_cursor host_name) {
+/* Common initialization for all tests - event loop, host resolver, client bootstrap, TLS */
+static int s_tester_init_common(struct tester *tester, struct aws_allocator *allocator) {
     aws_http_library_init(allocator);
 
     ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
@@ -214,21 +215,38 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
     };
 
     tester->host_resolver = aws_host_resolver_new_default(allocator, &resolver_options);
-    /* Create http connection */
     struct aws_client_bootstrap_options bootstrap_options = {
         .event_loop_group = tester->event_loop_group,
         .host_resolver = tester->host_resolver,
     };
     tester->client_bootstrap = aws_client_bootstrap_new(allocator, &bootstrap_options);
 
+    /* Initialize TLS context (even if not used, doesn't hurt) */
     aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, allocator);
+    tester->tls_ctx = aws_tls_client_ctx_new(allocator, &tester->tls_ctx_options);
+
+    struct aws_logger_standard_options logger_options = {
+        .level = AWS_LOG_LEVEL_DEBUG,
+        .file = stderr,
+    };
+    aws_logger_init_standard(&s_logger, allocator, &logger_options);
+    aws_logger_set(&s_logger);
+
+    return AWS_OP_SUCCESS;
+}
+
+/* H2/TLS-specific initialization */
+static int s_tester_init(struct tester *tester, struct aws_allocator *allocator, struct aws_byte_cursor host_name) {
+    ASSERT_SUCCESS(s_tester_init_common(tester, allocator));
+
+    /* Configure H2-specific TLS options */
     aws_tls_ctx_options_set_alpn_list(&tester->tls_ctx_options, "h2");
     /* Turn off peer verification as a localhost cert used */
     tester->tls_ctx_options.verify_peer = false;
 
-    tester->tls_ctx = aws_tls_client_ctx_new(allocator, &tester->tls_ctx_options);
     aws_tls_connection_options_init_from_ctx(&tester->tls_connection_options, tester->tls_ctx);
     aws_tls_connection_options_set_server_name(&tester->tls_connection_options, allocator, &host_name);
+
     struct aws_socket_options socket_options = {
         .type = AWS_SOCKET_STREAM,
         .connect_timeout_ms =
@@ -255,32 +273,31 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
         .monitoring_options = &monitor_opt,
     };
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
-    struct aws_logger_standard_options logger_options = {
-        .level = AWS_LOG_LEVEL_DEBUG, /* We are stress testing, and if this ever failed, the default trace level log is
-                                         too much to handle, let's do debug level instead */
-        .file = stderr,
-    };
 
-    aws_logger_init_standard(&s_logger, allocator, &logger_options);
-    aws_logger_set(&s_logger);
     return AWS_OP_SUCCESS;
 }
 
-static int s_tester_clean_up(struct tester *tester) {
-    aws_http_connection_release(tester->connection);
-    ASSERT_SUCCESS(s_wait_on_connection_shutdown(tester));
-
-    aws_tls_connection_options_clean_up(&tester->tls_connection_options);
+/* Common cleanup for all tests */
+static int s_tester_clean_up_common(struct tester *tester) {
     aws_tls_ctx_release(tester->tls_ctx);
     aws_tls_ctx_options_clean_up(&tester->tls_ctx_options);
     aws_client_bootstrap_release(tester->client_bootstrap);
     aws_host_resolver_release(tester->host_resolver);
     aws_event_loop_group_release(tester->event_loop_group);
-
     aws_mutex_clean_up(&tester->wait_lock);
     aws_http_library_clean_up();
     aws_logger_clean_up(&s_logger);
     return AWS_OP_SUCCESS;
+}
+
+/* H2/TLS-specific cleanup */
+static int s_tester_clean_up(struct tester *tester) {
+    aws_http_connection_release(tester->connection);
+    ASSERT_SUCCESS(s_wait_on_connection_shutdown(tester));
+
+    aws_tls_connection_options_clean_up(&tester->tls_connection_options);
+
+    return s_tester_clean_up_common(tester);
 }
 
 AWS_STATIC_STRING_FROM_LITERAL(s_http_localhost_env_var, "AWS_TEST_LOCALHOST_HOST");
@@ -468,6 +485,178 @@ static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, v
     aws_http_message_release(request);
     aws_string_destroy(http_localhost_host);
     return s_tester_clean_up(&s_tester);
+}
+
+/* Additional state for H1 no-content-length test */
+struct h1_no_cl_test_data {
+    struct aws_byte_buf response_body;
+    int response_status;
+    bool has_content_length_header;
+    bool has_transfer_encoding_header;
+    bool has_connection_close_header;
+};
+
+static int s_h1_no_cl_on_response_headers(
+    struct aws_http_stream *stream,
+    enum aws_http_header_block header_block,
+    const struct aws_http_header *header_array,
+    size_t num_headers,
+    void *user_data) {
+
+    (void)stream;
+    (void)header_block;
+    struct h1_no_cl_test_data *test_data = user_data;
+
+    for (size_t i = 0; i < num_headers; ++i) {
+        const struct aws_http_header *header = &header_array[i];
+
+        /* Check for specific headers */
+        if (aws_byte_cursor_eq_c_str_ignore_case(&header->name, "Content-Length")) {
+            test_data->has_content_length_header = true;
+        } else if (aws_byte_cursor_eq_c_str_ignore_case(&header->name, "Transfer-Encoding")) {
+            test_data->has_transfer_encoding_header = true;
+        } else if (aws_byte_cursor_eq_c_str_ignore_case(&header->name, "Connection")) {
+            if (aws_byte_cursor_eq_c_str_ignore_case(&header->value, "close")) {
+                test_data->has_connection_close_header = true;
+            }
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_h1_no_cl_on_response_body(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    void *user_data) {
+    (void)stream;
+    struct h1_no_cl_test_data *test_data = user_data;
+    aws_byte_buf_append_dynamic(&test_data->response_body, data);
+    return AWS_OP_SUCCESS;
+}
+
+static void s_h1_no_cl_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)user_data;
+    struct h1_no_cl_test_data *test_data = user_data;
+
+    AWS_FATAL_ASSERT(aws_mutex_lock(&s_tester.wait_lock) == AWS_OP_SUCCESS);
+    if (error_code) {
+        ++s_tester.stream_complete_errors;
+        s_tester.stream_completed_error_code = error_code;
+    } else {
+        if (aws_http_stream_get_incoming_response_status(stream, &test_data->response_status)) {
+            ++s_tester.stream_complete_errors;
+            s_tester.stream_completed_error_code = aws_last_error();
+        } else {
+            s_tester.stream_completed_with_200 = (test_data->response_status == 200);
+        }
+    }
+    ++s_tester.stream_completed_count;
+    aws_condition_variable_notify_one(&s_tester.wait_cvar);
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.wait_lock) == AWS_OP_SUCCESS);
+}
+
+/* Test H1 client handling response without Content-Length header */
+AWS_TEST_CASE(localhost_integ_h1_no_content_length_response, s_localhost_integ_h1_no_content_length_response)
+static int s_localhost_integ_h1_no_content_length_response(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    AWS_ZERO_STRUCT(s_tester);
+    s_tester.alloc = allocator;
+
+    /* Initialize test-specific data */
+    struct h1_no_cl_test_data test_data;
+    AWS_ZERO_STRUCT(test_data);
+    ASSERT_SUCCESS(aws_byte_buf_init(&test_data.response_body, allocator, 1024));
+
+    /* Use common initialization */
+    ASSERT_SUCCESS(s_tester_init_common(&s_tester, allocator));
+
+    /* Configure socket options for H1 non-TLS */
+    struct aws_socket_options socket_options = {
+        .type = AWS_SOCKET_STREAM,
+        .connect_timeout_ms = 3000,
+        .keep_alive_timeout_sec = 0,
+        .keepalive = false,
+    };
+
+    /* Connect to localhost:8081 (h11mock_server.py default HTTP port) */
+    struct aws_http_client_connection_options client_options = {
+        .self_size = sizeof(client_options),
+        .allocator = allocator,
+        .bootstrap = s_tester.client_bootstrap,
+        .host_name = aws_byte_cursor_from_c_str("127.0.0.1"),
+        .port = 8081,
+        .socket_options = &socket_options,
+        .user_data = &s_tester,
+        .on_setup = s_on_connection_setup,
+        .on_shutdown = s_on_connection_shutdown,
+    };
+
+    ASSERT_SUCCESS(aws_http_client_connect(&client_options));
+    ASSERT_SUCCESS(s_wait_on_connection_connected(&s_tester));
+    ASSERT_NOT_NULL(s_tester.connection);
+
+    /* Create request to /no-content-length endpoint */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_http_method_get));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/no-content-length")));
+
+    struct aws_http_header host_header = {
+        .name = aws_byte_cursor_from_c_str("Host"),
+        .value = aws_byte_cursor_from_c_str("localhost"),
+    };
+    ASSERT_SUCCESS(aws_http_message_add_header(request, host_header));
+
+    /* Make request */
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .user_data = &test_data,
+        .on_response_headers = s_h1_no_cl_on_response_headers,
+        .on_response_body = s_h1_no_cl_on_response_body,
+        .on_complete = s_h1_no_cl_on_stream_complete,
+    };
+
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
+    ASSERT_NOT_NULL(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
+    aws_http_stream_release(stream);
+
+    /* Wait for stream completion */
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
+    ASSERT_SUCCESS(s_tester.stream_completed_error_code);
+
+    /* Verify response */
+    ASSERT_INT_EQUALS(200, test_data.response_status);
+
+    /* Verify Content-Length header is NOT present */
+    ASSERT_FALSE(test_data.has_content_length_header);
+
+    /* Verify Transfer-Encoding header is NOT present */
+    ASSERT_FALSE(test_data.has_transfer_encoding_header);
+
+    /* Verify Connection: close header IS present */
+    ASSERT_TRUE(test_data.has_connection_close_header);
+
+    /* Verify response body is present and matches expected content */
+    const char *expected_body = "Response body without Content-Length header";
+    ASSERT_UINT_EQUALS(strlen(expected_body), test_data.response_body.len);
+    ASSERT_BIN_ARRAYS_EQUALS(
+        expected_body, strlen(expected_body), test_data.response_body.buffer, test_data.response_body.len);
+
+    /* Clean up request */
+    aws_http_message_release(request);
+
+    /* Close connection and wait for shutdown */
+    aws_http_connection_release(s_tester.connection);
+    ASSERT_SUCCESS(s_wait_on_connection_shutdown(&s_tester));
+
+    /* Clean up test-specific resources */
+    aws_byte_buf_clean_up(&test_data.response_body);
+    /* Clean up shared resources using common cleanup */
+    return s_tester_clean_up_common(&s_tester);
 }
 
 static int s_tester_on_download_body(

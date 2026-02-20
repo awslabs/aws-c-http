@@ -42,7 +42,7 @@ class TrioHTTPWrapper:
                 request_line_end = data.index(b'\r\n')
                 request_line = data[:request_line_end]
                 rest = data[request_line_end:]
-                
+
                 try:
                     # Try to decode and check if there are non-ASCII chars
                     request_line_str = request_line.decode('ascii')
@@ -66,7 +66,7 @@ class TrioHTTPWrapper:
                                 else:
                                     encoded_query_parts.append(param)
                             target_str = path + '?' + '&'.join(encoded_query_parts)
-                        
+
                         request_line = b' '.join([method, target_str.encode('ascii'), version])
                         data = request_line + rest
         except (ConnectionError, trio.BrokenResourceError, trio.ClosedResourceError):
@@ -87,7 +87,7 @@ class TrioHTTPWrapper:
                 await self.stream.send_eof()
         except (trio.BrokenResourceError, AttributeError):
             pass
-        
+
         with trio.move_on_after(TIMEOUT):
             try:
                 while True:
@@ -96,7 +96,7 @@ class TrioHTTPWrapper:
                         break
             except (trio.BrokenResourceError, trio.ClosedResourceError):
                 pass
-        
+
         try:
             await self.stream.aclose()
         except (trio.BrokenResourceError, trio.ClosedResourceError):
@@ -177,7 +177,7 @@ async def maybe_send_error_response(wrapper, exc):
 
 async def send_echo_response(wrapper, request):
     wrapper.info("Preparing echo response")
-    
+
     body_data = b""
     while True:
         event = await wrapper.next_event()
@@ -185,28 +185,51 @@ async def send_echo_response(wrapper, request):
             break
         assert type(event) is h11.Data
         body_data += event.data
-    
+
     target = request.target if isinstance(request.target, bytes) else request.target.encode()
     target_str = target.decode("utf-8", errors="replace")
-    
+
+    # Check if this is the /no-content-length endpoint
+    if target_str.startswith("/no-content-length"):
+        wrapper.info("Sending raw response without Content-Length or Transfer-Encoding")
+        response_body = b"Response body without Content-Length header"
+
+        # Send raw HTTP response to avoid h11 adding Transfer-Encoding: chunked
+        # Build the raw HTTP response
+        response_lines = [
+            b"HTTP/1.1 200 OK",
+            b"Server: echo-server",
+            b"Content-Type: text/plain; charset=utf-8",
+            b"Connection: close",
+            b"",  # Empty line separates headers from body
+        ]
+        raw_response = b"\r\n".join(response_lines) + b"\r\n" + response_body
+
+        # Send raw response directly to the stream, bypassing h11
+        await wrapper.stream.send_all(raw_response)
+
+        # Mark connection as must close since we sent raw data
+        wrapper.conn.send_failed()  # This marks the connection as broken in h11's view
+        return
+
     # Check if this is the /404 endpoint
     if target_str.startswith("/404"):
         status_code = 404
     else:
         status_code = 200
-    
+
     response_json = {"data": body_data.decode("utf-8")}
     response_body = json.dumps(response_json, indent=4).encode("utf-8")
-    
+
     headers = wrapper.basic_headers()
     headers.append(("Content-Type", "application/json; charset=utf-8"))
     headers.append(("Content-Length", str(len(response_body))))
-    
+
     for header_name, header_value in request.headers:
         echo_name = b"Echo-" + header_name if isinstance(header_name, bytes) else f"Echo-{header_name}".encode()
         echo_value = header_value if isinstance(header_value, bytes) else str(header_value).encode()
         headers.append((echo_name, echo_value))
-    
+
     res = h11.Response(status_code=status_code, headers=headers)
     await wrapper.send(res)
     await wrapper.send(h11.Data(data=response_body))
@@ -225,20 +248,20 @@ async def serve_ssl(port, cert_file=os.path.join(os.path.dirname(__file__),
                           "../resources/unittests.crt"), key_file=os.path.join(os.path.dirname(__file__),
                           "../resources/unittests.key")):
     import ssl
-    
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     cert_path = os.path.join(script_dir, cert_file)
     key_path = os.path.join(script_dir, key_file)
-    
+
     if not os.path.exists(cert_path) or not os.path.exists(key_path):
         print(f"Warning: SSL certificates not found at {cert_path} and {key_path}")
         print(f"Skipping HTTPS server on port {port}")
         print(f"To enable HTTPS, run: openssl req -x509 -newkey rsa:2048 -keyout {key_file} -out {cert_file} -days 365 -nodes -subj '/C=US/ST=WA/L=Seattle/O=Test/CN=localhost'")
         return
-    
+
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ssl_context.load_cert_chain(cert_path, key_path)
-    
+
     print(f"listening on https://localhost:{port}")
     try:
         await trio.serve_ssl_over_tcp(http_serve, port, ssl_context)
@@ -249,7 +272,7 @@ async def serve_ssl(port, cert_file=os.path.join(os.path.dirname(__file__),
 async def main():
     http_port = os.environ.get('HTTP_PORT')
     https_port = os.environ.get('HTTPS_PORT')
-    
+
     async with trio.open_nursery() as nursery:
         nursery.start_soon(serve, 8081 if not http_port else int(http_port))
         nursery.start_soon(serve_ssl, 8082 if not https_port else int(https_port))

@@ -292,6 +292,9 @@ if(ENABLE_LOCALHOST_INTEGRATION_TESTS)
     add_net_test_case(localhost_integ_hpack_compression_stress)
     add_net_test_case(localhost_integ_h2_upload_stress)
     add_net_test_case(localhost_integ_h2_download_stress)
+    # Test for H1 client handling response without Content-Length header
+    # Requires h11mock_server.py to be running on localhost:8081
+    add_net_test_case(localhost_integ_h1_no_content_length_response)
 endif()
 
 add_test_case(h2_header_empty_payload)
