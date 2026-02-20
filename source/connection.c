@@ -1057,6 +1057,14 @@ int aws_http_client_connect_internal(
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: http connection options are null.");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
+
+#if defined(AWS_OS_IOS) || defined(AWS_OS_TVOS)
+    if (proxy_request_transform) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_PROXY_NEGOTIATION, "HTTP proxy is not supported on iOS and tvOS platforms");
+        return aws_raise_error(AWS_ERROR_PLATFORM_NOT_SUPPORTED);
+    }
+#endif
+
     struct aws_http_client_bootstrap *http_bootstrap = NULL;
     struct aws_string *host_name = NULL;
     int err = 0;

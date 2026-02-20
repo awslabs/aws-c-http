@@ -9,6 +9,7 @@
 #include <aws/common/encoding.h>
 #include <aws/common/environment.h>
 #include <aws/common/hash_table.h>
+#include <aws/common/platform.h>
 #include <aws/common/string.h>
 #include <aws/http/connection_manager.h>
 #include <aws/http/private/connection_impl.h>
@@ -1564,6 +1565,11 @@ int aws_http_options_validate_proxy_configuration(const struct aws_http_client_c
     if (options == NULL || options->proxy_options == NULL) {
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
+
+#if defined(AWS_OS_IOS) || defined(AWS_OS_TVOS)
+    AWS_LOGF_ERROR(AWS_LS_HTTP_PROXY_NEGOTIATION, "HTTP proxy is not supported on iOS and tvOS platforms");
+    return aws_raise_error(AWS_ERROR_PLATFORM_NOT_SUPPORTED);
+#endif
 
     enum aws_http_proxy_connection_type proxy_type = options->proxy_options->connection_type;
     if (proxy_type == AWS_HPCT_HTTP_FORWARD && options->tls_options != NULL) {
