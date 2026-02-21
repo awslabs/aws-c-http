@@ -380,11 +380,13 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                 s_set_state(decoder, s_state_unchunked_body);
             } else if (
                 !decoder->is_decoding_requests && !decoder->content_length_received &&
-                !decoder->body_headers_forbidden) {
+                !decoder->body_headers_forbidden && !decoder->body_headers_ignored_on_2xx) {
                 /* RFC-7230 3.3.3: If a message is received without Transfer-Encoding and without Content-Length and NOT
                  * determined by the response lien to have no body, then the message body length is determined by
                  * reading the stream until connection closure. Note: This only applies to responses. A request without
                  * Content-Length or Transfer-Encoding has no message body (per RFC 7230 section 3.3.3). */
+                /* The failure response for CONNECT with body is undefined, and since the clinet will handle the CONNECT
+                 * request, don't read the body to keep it simple. */
                 decoder->response_body_indeterminate_length = true;
                 s_set_state(decoder, s_state_indeterminate_length_body);
                 AWS_LOGF_DEBUG(
