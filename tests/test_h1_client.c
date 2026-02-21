@@ -2271,8 +2271,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_headers) {
         &tester.testing_channel,
         "HTTP/1.1 308 Permanent Redirect\r\n"
         "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
-        "Content-Length: 0\r\n"
         "Location: /index.html\r\n"
+        "Content-Length: 0\r\n"
         "\r\n"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -2281,9 +2281,10 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_headers) {
     ASSERT_TRUE(stream_tester.complete);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
     ASSERT_INT_EQUALS(308, stream_tester.response_status);
-    ASSERT_UINT_EQUALS(2, aws_http_headers_count(stream_tester.response_headers));
+    ASSERT_UINT_EQUALS(3, aws_http_headers_count(stream_tester.response_headers));
     ASSERT_SUCCESS(s_check_header(stream_tester.response_headers, 0, "Date", "Fri, 01 Mar 2019 17:18:55 GMT"));
     ASSERT_SUCCESS(s_check_header(stream_tester.response_headers, 1, "Location", "/index.html"));
+    ASSERT_SUCCESS(s_check_header(stream_tester.response_headers, 2, "Content-Length", "0"));
     ASSERT_UINT_EQUALS(0, stream_tester.response_body.len);
 
     /* clean up */
