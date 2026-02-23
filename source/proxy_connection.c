@@ -1567,8 +1567,10 @@ int aws_http_options_validate_proxy_configuration(const struct aws_http_client_c
     }
 
 #if defined(AWS_OS_IOS) || defined(AWS_OS_TVOS)
-    AWS_LOGF_ERROR(AWS_LS_HTTP_PROXY_NEGOTIATION, "HTTP proxy is not supported on iOS and tvOS platforms");
-    return aws_raise_error(AWS_ERROR_PLATFORM_NOT_SUPPORTED);
+    if (options->proxy_options || options->proxy_ev_settings) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_PROXY_NEGOTIATION, "HTTP proxy is not supported on iOS and tvOS platforms");
+        return aws_raise_error(AWS_ERROR_PLATFORM_NOT_SUPPORTED);
+    }
 #endif
 
     enum aws_http_proxy_connection_type proxy_type = options->proxy_options->connection_type;
