@@ -9,7 +9,6 @@
 #include <aws/common/encoding.h>
 #include <aws/common/environment.h>
 #include <aws/common/hash_table.h>
-#include <aws/common/platform.h>
 #include <aws/common/string.h>
 #include <aws/http/connection_manager.h>
 #include <aws/http/private/connection_impl.h>
