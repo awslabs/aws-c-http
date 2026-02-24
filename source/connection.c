@@ -1059,7 +1059,7 @@ int aws_http_client_connect_internal(
     }
 
     if (aws_is_using_secitem() && proxy_request_transform) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_PROXY_NEGOTIATION, "HTTP proxy is not supported on iOS and tvOS platforms");
+        AWS_LOGF_ERROR(AWS_LS_HTTP_PROXY_NEGOTIATION, "HTTP proxy is not supported with Apple Network Framework.");
         return aws_raise_error(AWS_ERROR_PLATFORM_NOT_SUPPORTED);
     }
 
