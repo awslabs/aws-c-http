@@ -1565,7 +1565,7 @@ int aws_http_options_validate_proxy_configuration(const struct aws_http_client_c
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-#if defined(AWS_USE_SECITEM) && defined(AWS_OS_APPLE)
+#if defined(AWS_USE_SECITEM)
     if ((options->proxy_options || options->proxy_ev_settings)) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_PROXY_NEGOTIATION, "HTTP proxy is not supported on Apple Network Framework.");
         return aws_raise_error(AWS_ERROR_PLATFORM_NOT_SUPPORTED);

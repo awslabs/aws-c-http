@@ -1058,7 +1058,7 @@ int aws_http_client_connect_internal(
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-#if defined(AWS_USE_SECITEM) && defined(AWS_OS_APPLE)
+#if defined(AWS_USE_SECITEM)
     if (proxy_request_transform) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_PROXY_NEGOTIATION, "HTTP proxy is not supported on Apple Network Framework.");
         return aws_raise_error(AWS_ERROR_PLATFORM_NOT_SUPPORTED);
