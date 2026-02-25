@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 #include <aws/http/private/h1_encoder.h>
+#include <aws/http/private/h1_stream.h>
 #include <aws/http/private/strutil.h>
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
@@ -25,7 +26,8 @@ static int s_scan_outgoing_headers(
     const struct aws_http_message *message,
     size_t *out_header_lines_len,
     bool body_headers_ignored,
-    bool body_headers_forbidden) {
+    bool body_headers_forbidden,
+    bool use_manual_data_writes) {
 
     size_t total = 0;
     bool has_body_stream = aws_http_message_get_body_stream(message);
@@ -140,11 +142,42 @@ static int s_scan_outgoing_headers(
         encoder_message->has_chunked_encoding_header = false;
     }
 
-    if (encoder_message->content_length > 0 && !has_body_stream) {
+    if (encoder_message->content_length > 0 && !has_body_stream && !use_manual_data_writes) {
         return aws_raise_error(AWS_ERROR_HTTP_MISSING_BODY_STREAM);
     }
 
     *out_header_lines_len = total;
+    return AWS_OP_SUCCESS;
+}
+
+static int s_validate_manual_data_writes(
+    const struct aws_h1_encoder_message *encoder_message,
+    bool has_body_stream) {
+
+    /* Manual data writes require Content-Length header */
+    if (encoder_message->content_length == 0) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=static: Manual data writes require Content-Length header");
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
+    }
+
+    /* Manual data writes cannot use chunked encoding */
+    if (encoder_message->has_chunked_encoding_header) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=static: Manual data writes cannot use Transfer-Encoding: chunked");
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
+    }
+
+    /* Manual data writes cannot have body stream */
+    if (has_body_stream) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=static: Manual data writes cannot have body stream");
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
+    }
+
     return AWS_OP_SUCCESS;
 }
 
@@ -242,7 +275,9 @@ int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *request,
-    struct aws_linked_list *pending_chunk_list) {
+    struct aws_linked_list *pending_chunk_list,
+    struct aws_linked_list *pending_data_write_list,
+    bool use_manual_data_writes) {
 
     AWS_PRECONDITION(aws_linked_list_is_valid(pending_chunk_list));
 
@@ -250,6 +285,7 @@ int aws_h1_encoder_message_init_from_request(
 
     message->body = aws_input_stream_acquire(aws_http_message_get_body_stream(request));
     message->pending_chunk_list = pending_chunk_list;
+    message->pending_data_write_list = pending_data_write_list;
 
     struct aws_byte_cursor method;
     int err = aws_http_message_get_request_method(request, &method);
@@ -286,9 +322,22 @@ int aws_h1_encoder_message_init_from_request(
 
     size_t header_lines_len;
     err = s_scan_outgoing_headers(
-        message, request, &header_lines_len, false /*body_headers_ignored*/, false /*body_headers_forbidden*/);
+        message,
+        request,
+        &header_lines_len,
+        false /*body_headers_ignored*/,
+        false /*body_headers_forbidden*/,
+        use_manual_data_writes);
     if (err) {
         goto error;
+    }
+
+    /* Validate manual data writes configuration */
+    if (use_manual_data_writes) {
+        err = s_validate_manual_data_writes(message, message->body != NULL);
+        if (err) {
+            goto error;
+        }
     }
 
     /* request-line: "{method} {uri} {version}\r\n" */
@@ -374,7 +423,8 @@ int aws_h1_encoder_message_init_from_response(
      */
     body_headers_ignored |= status_int == AWS_HTTP_STATUS_CODE_304_NOT_MODIFIED;
     bool body_headers_forbidden = status_int == AWS_HTTP_STATUS_CODE_204_NO_CONTENT || status_int / 100 == 1;
-    err = s_scan_outgoing_headers(message, response, &header_lines_len, body_headers_ignored, body_headers_forbidden);
+    err = s_scan_outgoing_headers(
+        message, response, &header_lines_len, body_headers_ignored, body_headers_forbidden, false /*use_manual_data_writes*/);
     if (err) {
         goto error;
     }
@@ -688,8 +738,17 @@ typedef int encoder_state_fn(struct aws_h1_encoder *encoder, struct aws_byte_buf
 /* Switch state.
  * The only reason this returns a value is so it can be called with `return` to conclude a state function */
 static int s_switch_state(struct aws_h1_encoder *encoder, enum aws_h1_encoder_state state) {
+    /* Don't reset progress_bytes when transitioning between DATA_WRITE states,
+     * as we need to track cumulative progress across multiple writes */
+    bool preserve_progress = (encoder->state == AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT ||
+                              encoder->state == AWS_H1_ENCODER_STATE_DATA_WRITE_BODY) &&
+                             (state == AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT ||
+                              state == AWS_H1_ENCODER_STATE_DATA_WRITE_BODY);
+    
     encoder->state = state;
-    encoder->progress_bytes = 0;
+    if (!preserve_progress) {
+        encoder->progress_bytes = 0;
+    }
     return AWS_OP_SUCCESS;
 }
 
@@ -720,7 +779,11 @@ static int s_state_fn_head(struct aws_h1_encoder *encoder, struct aws_byte_buf *
     aws_byte_buf_clean_up(&encoder->message->outgoing_head_buf);
 
     /* Pick next state */
-    if (encoder->message->body && encoder->message->content_length) {
+    if (encoder->message->pending_data_write_list && encoder->message->content_length) {
+        /* Manual data writes with Content-Length */
+        return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT);
+
+    } else if (encoder->message->body && encoder->message->content_length) {
         return s_switch_state(encoder, AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM);
 
     } else if (encoder->message->body && encoder->message->has_chunked_encoding_header) {
@@ -976,6 +1039,140 @@ static int s_state_fn_chunk_trailer(struct aws_h1_encoder *encoder, struct aws_b
     return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
 }
 
+/* Select next data write to work on for manual data writes with Content-Length.
+ * Encoder is essentially "paused" here if no data writes are available. */
+static int s_encoder_state_data_write_next(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
+    (void)dst;
+
+    if (aws_linked_list_empty(encoder->message->pending_data_write_list)) {
+        ENCODER_LOG(TRACE, encoder, "No data writes ready, waiting...");
+        return AWS_OP_SUCCESS;
+    }
+
+    struct aws_linked_list_node *node = aws_linked_list_front(encoder->message->pending_data_write_list);
+    encoder->message->current_data_write = AWS_CONTAINER_OF(node, struct aws_h1_data_write, node);
+    aws_linked_list_remove(node);
+
+    ENCODER_LOG(TRACE, encoder, "Begin sending manual data write");
+    return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_BODY);
+}
+
+/* Write out data from current manual data write */
+static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
+    struct aws_h1_data_write *data_write = encoder->message->current_data_write;
+    
+    if (dst->capacity == dst->len) {
+        return AWS_OP_SUCCESS;
+    }
+
+    /* Read from stream */
+    ENCODER_LOG(TRACE, encoder, "Reading from manual data write stream");
+    const size_t prev_len = dst->len;
+    int err = aws_input_stream_read(data_write->data, dst);
+    const size_t amount_read = dst->len - prev_len;
+
+    if (err) {
+        ENCODER_LOGF(
+            ERROR,
+            encoder,
+            "Failed to read data write stream, error %d (%s)",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        int error_code = aws_last_error();
+        aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, error_code);
+        encoder->message->current_data_write = NULL;
+        return aws_raise_error(error_code);
+    }
+
+    /* Increment progress_bytes and check we haven't exceeded Content-Length */
+    if (aws_add_u64_checked(encoder->progress_bytes, amount_read, &encoder->progress_bytes) ||
+        encoder->progress_bytes > encoder->message->content_length) {
+        ENCODER_LOGF(
+            ERROR,
+            encoder,
+            "Manual data writes exceeded Content-Length: %" PRIu64,
+            encoder->message->content_length);
+        aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+        encoder->message->current_data_write = NULL;
+        return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+    }
+
+    ENCODER_LOGF(
+        TRACE,
+        encoder,
+        "Sent %zu bytes from manual data write, total progress: %" PRIu64 "/%" PRIu64,
+        amount_read,
+        encoder->progress_bytes,
+        encoder->message->content_length);
+
+    /* Check if this stream is done */
+    if (amount_read == 0) {
+        struct aws_stream_status status;
+        err = aws_input_stream_get_status(data_write->data, &status);
+        if (err) {
+            ENCODER_LOGF(
+                ERROR,
+                encoder,
+                "Failed to query data write stream status, error %d (%s)",
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
+            int error_code = aws_last_error();
+            aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, error_code);
+            encoder->message->current_data_write = NULL;
+            return aws_raise_error(error_code);
+        }
+
+        if (!status.is_end_of_stream) {
+            /* Stream didn't provide data but isn't done yet, remain in state */
+            return AWS_OP_SUCCESS;
+        }
+    }
+
+    /* If we read something or reached end of stream, check if stream is complete */
+    struct aws_stream_status status;
+    err = aws_input_stream_get_status(data_write->data, &status);
+    if (err) {
+        ENCODER_LOGF(
+            ERROR,
+            encoder,
+            "Failed to query data write stream status, error %d (%s)",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        int error_code = aws_last_error();
+        aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, error_code);
+        encoder->message->current_data_write = NULL;
+        return aws_raise_error(error_code);
+    }
+
+    if (!status.is_end_of_stream) {
+        /* Stream not done yet, remain in state */
+        return AWS_OP_SUCCESS;
+    }
+
+    /* This data write is complete */
+    ENCODER_LOG(TRACE, encoder, "Manual data write complete");
+    bool is_end = data_write->is_end_stream;
+    aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, AWS_ERROR_SUCCESS);
+    encoder->message->current_data_write = NULL;
+
+    if (is_end) {
+        /* This was the final write, validate total matches Content-Length */
+        if (encoder->progress_bytes != encoder->message->content_length) {
+            ENCODER_LOGF(
+                ERROR,
+                encoder,
+                "Manual data writes sent %" PRIu64 " bytes but Content-Length is %" PRIu64,
+                encoder->progress_bytes,
+                encoder->message->content_length);
+            return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+        }
+        return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
+    }
+
+    /* More writes expected, go back to waiting for next write */
+    return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT);
+}
+
 /* Message is done, loop back to start of state machine */
 static int s_state_fn_done(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
     (void)dst;
@@ -1002,6 +1199,8 @@ static struct encoder_state_def s_encoder_states[] = {
     [AWS_H1_ENCODER_STATE_CHUNK_BODY] = {.fn = s_state_fn_chunk_body, .name = "CHUNK_BODY"},
     [AWS_H1_ENCODER_STATE_CHUNK_END] = {.fn = s_state_fn_chunk_end, .name = "CHUNK_END"},
     [AWS_H1_ENCODER_STATE_CHUNK_TRAILER] = {.fn = s_state_fn_chunk_trailer, .name = "CHUNK_TRAILER"},
+    [AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT] = {.fn = s_encoder_state_data_write_next, .name = "DATA_WRITE_NEXT"},
+    [AWS_H1_ENCODER_STATE_DATA_WRITE_BODY] = {.fn = s_encoder_state_data_write_body, .name = "DATA_WRITE_BODY"},
     [AWS_H1_ENCODER_STATE_DONE] = {.fn = s_state_fn_done, .name = "DONE"},
 };
 
@@ -1034,4 +1233,9 @@ bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder)
 bool aws_h1_encoder_is_waiting_for_chunks(const struct aws_h1_encoder *encoder) {
     return encoder->state == AWS_H1_ENCODER_STATE_CHUNK_NEXT &&
            aws_linked_list_empty(encoder->message->pending_chunk_list);
+}
+
+bool aws_h1_encoder_is_waiting_for_data_writes(const struct aws_h1_encoder *encoder) {
+    return encoder->state == AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT &&
+           aws_linked_list_empty(encoder->message->pending_data_write_list);
 }

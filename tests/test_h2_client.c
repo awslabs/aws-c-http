@@ -6160,3 +6160,111 @@ TEST_CASE(h2_client_cap_manual_window_update) {
     client_stream_tester_clean_up(&stream_tester);
     return s_tester_clean_up();
 }
+
+/* Test unified API works for H2 */
+TEST_CASE(h2_client_unified_write_data_api) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "POST"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/upload"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .http2_use_manual_data_writes = true,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
+    ASSERT_NOT_NULL(stream);
+
+    aws_http_stream_activate(stream);
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    struct aws_byte_cursor data = aws_byte_cursor_from_c_str("hello");
+    struct aws_input_stream *input_stream = aws_input_stream_new_from_cursor(allocator, &data);
+    ASSERT_NOT_NULL(input_stream);
+
+    struct aws_http_stream_write_data_options write_options = {
+        .data = input_stream,
+        .end_stream = true,
+    };
+
+    ASSERT_SUCCESS(aws_http_stream_write_data(stream, &write_options));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    uint32_t stream_id = aws_http_stream_get_id(stream);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    ASSERT_NOT_NULL(
+        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_HEADERS, 0 /*search_start_idx*/, NULL));
+    ASSERT_SUCCESS(
+        h2_decode_tester_check_data_str_across_frames(&s_tester.peer.decode, stream_id, "hello", true /*end_stream*/));
+
+    aws_input_stream_release(input_stream);
+    aws_http_message_release(request);
+    aws_http_stream_release(stream);
+    aws_http_connection_close(s_tester.connection);
+
+    return s_tester_clean_up();
+}
+
+/* Test backward compatibility - old aws_http2_stream_write_data still works */
+TEST_CASE(h2_client_backward_compat_write_data) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "POST"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/upload"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .http2_use_manual_data_writes = true,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
+    ASSERT_NOT_NULL(stream);
+
+    aws_http_stream_activate(stream);
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    struct aws_byte_cursor data = aws_byte_cursor_from_c_str("backward_compat_test");
+    struct aws_input_stream *input_stream = aws_input_stream_new_from_cursor(allocator, &data);
+    ASSERT_NOT_NULL(input_stream);
+
+    struct aws_http2_stream_write_data_options write_options = {
+        .data = input_stream,
+        .end_stream = true,
+    };
+
+    ASSERT_SUCCESS(aws_http2_stream_write_data(stream, &write_options));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    uint32_t stream_id = aws_http_stream_get_id(stream);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    ASSERT_NOT_NULL(
+        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_HEADERS, 0 /*search_start_idx*/, NULL));
+    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
+        &s_tester.peer.decode, stream_id, "backward_compat_test", true /*end_stream*/));
+
+    aws_input_stream_release(input_stream);
+    aws_http_message_release(request);
+    aws_http_stream_release(stream);
+    aws_http_connection_close(s_tester.connection);
+
+    return s_tester_clean_up();
+}

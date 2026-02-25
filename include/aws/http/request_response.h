@@ -301,6 +301,14 @@ struct aws_http_make_request_options {
     aws_http_on_stream_destroy_fn *on_destroy;
 
     /**
+     * When true, request body data will be provided over time via `aws_http_stream_write_data()`.
+     * The stream will only be polled for writing when data has been supplied.
+     * Works with both HTTP/1.1 (Content-Length) and HTTP/2.
+     * When false (default), the entire request body is read from the input stream immediately.
+     */
+    bool use_manual_data_writes;
+
+    /**
      * When using HTTP/2, request body data will be provided over time. The stream will only be polled for writing
      * when data has been supplied via `aws_http2_stream_write_data`
      */
@@ -471,33 +479,28 @@ struct aws_http1_chunk_options {
 typedef aws_http_stream_write_complete_fn aws_http2_stream_write_data_complete_fn;
 
 /**
+ * Common fields for write_data options structures.
+ * This macro allows protocol-specific options to share the same base fields.
+ */
+#define AWS_HTTP_STREAM_WRITE_DATA_OPTIONS_FIELDS                                                                      \
+    struct aws_input_stream *data;                                                                                     \
+    bool end_stream;                                                                                                   \
+    aws_http_stream_write_complete_fn *on_complete;                                                                    \
+    void *user_data;
+
+/**
+ * Unified options for writing data to an HTTP stream.
+ * Works with both HTTP/1.1 (with Content-Length) and HTTP/2.
+ */
+struct aws_http_stream_write_data_options {
+    AWS_HTTP_STREAM_WRITE_DATA_OPTIONS_FIELDS
+};
+
+/**
  * Encoding options for manual H2 data frame writes
  */
 struct aws_http2_stream_write_data_options {
-    /**
-     * The data to be sent.
-     * Optional.
-     * If not set, input stream with length 0 will be used.
-     */
-    struct aws_input_stream *data;
-
-    /**
-     * Set true when it's the last chunk to be sent.
-     * After a write with end_stream, no more data write will be accepted.
-     */
-    bool end_stream;
-
-    /**
-     * Invoked when the data stream is no longer in use, whether or not it was successfully sent.
-     * Optional.
-     * See `aws_http2_stream_write_data_complete_fn`.
-     */
-    aws_http2_stream_write_data_complete_fn *on_complete;
-
-    /**
-     * User provided data passed to the on_complete callback on its invocation.
-     */
-    void *user_data;
+    AWS_HTTP_STREAM_WRITE_DATA_OPTIONS_FIELDS
 };
 
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
@@ -901,6 +904,27 @@ AWS_FUTURE_T_POINTER_WITH_RELEASE_DECLARATION(aws_future_http_message, struct aw
 AWS_HTTP_API int aws_http1_stream_write_chunk(
     struct aws_http_stream *http1_stream,
     const struct aws_http1_chunk_options *options);
+
+/**
+ * Write data to an HTTP stream in a protocol-agnostic way.
+ * Works with both HTTP/1.1 (with Content-Length) and HTTP/2.
+ *
+ * For HTTP/1.1: The request must have a Content-Length header and must NOT have a body stream set.
+ *               The stream must have specified `use_manual_data_writes` during request creation.
+ * For HTTP/2: The stream must have specified `http2_use_manual_data_writes` during request creation.
+ *
+ * For client streams, activate() must be called before any data is written.
+ * For server streams, the response must be submitted before any data is written.
+ * A write with end_stream set to true will complete the stream and prevent any further writes.
+ *
+ * @return AWS_OP_SUCCESS if the write was queued
+ *         AWS_OP_ERROR indicating the attempt raised an error code.
+ *              AWS_ERROR_INVALID_STATE will be raised for invalid usage.
+ *              AWS_ERROR_HTTP_STREAM_HAS_COMPLETED will be raised if the stream ended for reasons behind the scenes.
+ */
+AWS_HTTP_API int aws_http_stream_write_data(
+    struct aws_http_stream *stream,
+    const struct aws_http_stream_write_data_options *options);
 
 /**
  * The stream must have specified `http2_use_manual_data_writes` during request creation.

@@ -52,6 +52,7 @@ struct client_stream_tester_options {
     struct aws_http_message *request;
     struct aws_http_connection *connection;
     bool http2_manual_write;
+    bool use_manual_data_writes;
 };
 
 int client_stream_tester_init(

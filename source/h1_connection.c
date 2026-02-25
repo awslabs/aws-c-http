@@ -1072,14 +1072,16 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
      * The outgoing stream task will be kicked off again when user adds more data (new stream, new chunk, etc) */
     struct aws_h1_stream *outgoing_stream = s_update_outgoing_stream_ptr(connection);
     bool waiting_for_chunks = aws_h1_encoder_is_waiting_for_chunks(&connection->thread_data.encoder);
-    if (!outgoing_stream || waiting_for_chunks) {
+    bool waiting_for_data_writes = aws_h1_encoder_is_waiting_for_data_writes(&connection->thread_data.encoder);
+    if (!outgoing_stream || waiting_for_chunks || waiting_for_data_writes) {
         if (!first_try) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION,
-                "id=%p: Outgoing stream task stopped. outgoing_stream=%p waiting_for_chunks:%d",
+                "id=%p: Outgoing stream task stopped. outgoing_stream=%p waiting_for_chunks:%d waiting_for_data_writes:%d",
                 (void *)&connection->base,
                 outgoing_stream ? (void *)&outgoing_stream->base : NULL,
-                waiting_for_chunks);
+                waiting_for_chunks,
+                waiting_for_data_writes);
         }
         connection->thread_data.is_outgoing_stream_task_active = false;
         return;

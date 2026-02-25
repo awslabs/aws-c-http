@@ -82,7 +82,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_content_length_header) {
     aws_linked_list_init(&chunk_list);
 
     struct aws_h1_encoder_message encoder_message;
-    ASSERT_SUCCESS(aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list));
+    ASSERT_SUCCESS(aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list, NULL, false));
 
     ASSERT_FALSE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -124,7 +124,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_header) {
     aws_linked_list_init(&chunk_list);
 
     struct aws_h1_encoder_message encoder_message;
-    ASSERT_SUCCESS(aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list));
+    ASSERT_SUCCESS(aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list, NULL, false));
 
     ASSERT_TRUE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -171,7 +171,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_header_with_multiple_e
     aws_linked_list_init(&chunk_list);
 
     struct aws_h1_encoder_message encoder_message;
-    ASSERT_SUCCESS(aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list));
+    ASSERT_SUCCESS(aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list, NULL, false));
 
     ASSERT_TRUE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -212,7 +212,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_case_insensitive_header_names) {
     aws_linked_list_init(&chunk_list);
 
     struct aws_h1_encoder_message encoder_message;
-    ASSERT_SUCCESS(aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list));
+    ASSERT_SUCCESS(aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list, NULL, false));
 
     ASSERT_TRUE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -299,7 +299,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_across_multiple_header
     aws_linked_list_init(&chunk_list);
 
     struct aws_h1_encoder_message encoder_message;
-    ASSERT_SUCCESS(aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list));
+    ASSERT_SUCCESS(aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list, NULL, false));
 
     ASSERT_TRUE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -386,7 +386,7 @@ static int s_test_bad_request(
     struct aws_h1_encoder_message encoder_message;
 
     ASSERT_ERROR(
-        expected_error, aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list));
+        expected_error, aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list, NULL, false));
 
     aws_http_message_destroy(request);
     aws_h1_encoder_message_clean_up(&encoder_message);

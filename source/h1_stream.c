@@ -13,6 +13,40 @@
 
 #include <inttypes.h>
 
+struct aws_h1_data_write *aws_h1_data_write_new(
+    struct aws_allocator *allocator,
+    const struct aws_http_stream_write_data_options *options) {
+    struct aws_h1_data_write *data_write = aws_mem_calloc(allocator, 1, sizeof(struct aws_h1_data_write));
+    if (!data_write) {
+        return NULL;
+    }
+    data_write->allocator = allocator;
+    data_write->data = aws_input_stream_acquire(options->data);
+    data_write->on_complete = options->on_complete;
+    data_write->user_data = options->user_data;
+    data_write->is_end_stream = options->end_stream;
+    return data_write;
+}
+
+void aws_h1_data_write_destroy(struct aws_h1_data_write *data_write) {
+    AWS_PRECONDITION(data_write);
+    aws_input_stream_release(data_write->data);
+    aws_mem_release(data_write->allocator, data_write);
+}
+
+void aws_h1_data_write_complete_and_destroy(
+    struct aws_h1_data_write *data_write,
+    struct aws_http_stream *http_stream,
+    int error_code) {
+    AWS_PRECONDITION(data_write);
+    aws_http_stream_write_complete_fn *on_complete = data_write->on_complete;
+    void *user_data = data_write->user_data;
+    aws_h1_data_write_destroy(data_write);
+    if (on_complete) {
+        on_complete(http_stream, error_code, user_data);
+    }
+}
+
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
     struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
     AWS_ASSERT(
@@ -22,6 +56,10 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
         aws_linked_list_empty(&stream->thread_data.pending_chunk_list) &&
         aws_linked_list_empty(&stream->synced_data.pending_chunk_list) &&
         "Chunks should be marked complete before stream destroyed");
+    AWS_ASSERT(
+        aws_linked_list_empty(&stream->thread_data.pending_data_write_list) &&
+        aws_linked_list_empty(&stream->synced_data.pending_data_write_list) &&
+        "Data writes should be marked complete before stream destroyed");
 
     aws_h1_encoder_message_clean_up(&stream->thread_data.encoder_message);
     aws_h1_encoder_message_clean_up(&stream->synced_data.pending_outgoing_response);
@@ -60,8 +98,10 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     int api_state = stream->synced_data.api_state;
 
     /* If we have any new outgoing data, prompt the connection to try and send it. */
-    bool new_outgoing_data = !aws_linked_list_empty(&stream->synced_data.pending_chunk_list);
+    bool new_outgoing_data = !aws_linked_list_empty(&stream->synced_data.pending_chunk_list) ||
+                             !aws_linked_list_empty(&stream->synced_data.pending_data_write_list);
     aws_linked_list_move_all_back(&stream->thread_data.pending_chunk_list, &stream->synced_data.pending_chunk_list);
+    aws_linked_list_move_all_back(&stream->thread_data.pending_data_write_list, &stream->synced_data.pending_data_write_list);
 
     /* If we JUST learned about having an outgoing response, that's a reason to try sending data */
     if (stream->synced_data.has_outgoing_response && !stream->thread_data.has_outgoing_response) {
@@ -330,6 +370,93 @@ static int s_stream_add_trailer(struct aws_http_stream *stream_base, const struc
     return AWS_OP_SUCCESS;
 }
 
+static int s_stream_write_data(
+    struct aws_http_stream *stream_base,
+    const struct aws_http_stream_write_data_options *options) {
+    AWS_PRECONDITION(stream_base);
+    AWS_PRECONDITION(options);
+    struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
+
+    if (!options->data) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Data stream cannot be NULL", (void *)stream_base);
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    struct aws_h1_data_write *data_write = aws_h1_data_write_new(stream_base->alloc, options);
+    if (!data_write) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Failed to create data write, error %d (%s).",
+            (void *)stream_base,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+
+    int error_code = 0;
+    bool should_schedule_task = false;
+
+    { /* BEGIN CRITICAL SECTION */
+        s_stream_lock_synced_data(stream);
+
+        if (stream->synced_data.api_state != AWS_H1_STREAM_API_STATE_ACTIVE) {
+            error_code = (stream->synced_data.api_state == AWS_H1_STREAM_API_STATE_INIT)
+                             ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
+                             : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
+            goto unlock;
+        }
+
+        if (!stream->synced_data.using_manual_data_writes) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Manual writes not enabled. Set 'use_manual_data_writes' in aws_http_make_request_options.",
+                (void *)stream_base);
+            error_code = AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED;
+            goto unlock;
+        }
+
+        if (stream->synced_data.has_final_data_write) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM, "id=%p: Cannot write data after final write (end_stream=true).", (void *)stream_base);
+            error_code = AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED;
+            goto unlock;
+        }
+
+        if (options->end_stream) {
+            stream->synced_data.has_final_data_write = true;
+        }
+
+        aws_linked_list_push_back(&stream->synced_data.pending_data_write_list, &data_write->node);
+        should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
+        stream->synced_data.is_cross_thread_work_task_scheduled = true;
+
+    unlock:
+        s_stream_unlock_synced_data(stream);
+    } /* END CRITICAL SECTION */
+
+    if (error_code) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Failed to write data, error %d (%s)",
+            (void *)stream_base,
+            error_code,
+            aws_error_name(error_code));
+        aws_h1_data_write_destroy(data_write);
+        return aws_raise_error(error_code);
+    }
+
+    AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Queued data write", (void *)stream_base);
+
+    if (should_schedule_task) {
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Scheduling stream cross-thread work task.", (void *)stream_base);
+        aws_channel_schedule_task_now(
+            stream->base.owning_connection->channel_slot->channel, &stream->cross_thread_work_task);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 static const struct aws_http_stream_vtable s_stream_vtable = {
     .destroy = s_stream_destroy,
     .update_window = s_stream_update_window,
@@ -340,6 +467,7 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
     .http2_reset_stream = NULL,
     .http2_get_received_error_code = NULL,
     .http2_get_sent_error_code = NULL,
+    .write_data = s_stream_write_data,
 };
 
 static struct aws_h1_stream *s_stream_new_common(
@@ -379,6 +507,8 @@ static struct aws_h1_stream *s_stream_new_common(
 
     aws_linked_list_init(&stream->thread_data.pending_chunk_list);
     aws_linked_list_init(&stream->synced_data.pending_chunk_list);
+    aws_linked_list_init(&stream->thread_data.pending_data_write_list);
+    aws_linked_list_init(&stream->synced_data.pending_data_write_list);
 
     stream->thread_data.stream_window = connection->initial_stream_window_size;
 
@@ -416,12 +546,18 @@ struct aws_h1_stream *aws_h1_stream_new_request(
     stream->base.client_data->response_first_byte_timeout_ms = options->response_first_byte_timeout_ms;
     stream->base.on_metrics = options->on_metrics;
 
+    /* Set manual data writes flag from options */
+    stream->synced_data.using_manual_data_writes = options->use_manual_data_writes;
+    stream->thread_data.using_manual_data_writes = options->use_manual_data_writes;
+
     /* Validate request and cache info that the encoder will eventually need */
     if (aws_h1_encoder_message_init_from_request(
             &stream->thread_data.encoder_message,
             client_connection->alloc,
             options->request,
-            &stream->thread_data.pending_chunk_list)) {
+            &stream->thread_data.pending_chunk_list,
+            &stream->thread_data.pending_data_write_list,
+            stream->synced_data.using_manual_data_writes)) {
         goto error;
     }
 
