@@ -1077,7 +1077,8 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
         if (!first_try) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION,
-                "id=%p: Outgoing stream task stopped. outgoing_stream=%p waiting_for_chunks:%d waiting_for_data_writes:%d",
+                "id=%p: Outgoing stream task stopped. outgoing_stream=%p waiting_for_chunks:%d "
+                "waiting_for_data_writes:%d",
                 (void *)&connection->base,
                 outgoing_stream ? (void *)&outgoing_stream->base : NULL,
                 waiting_for_chunks,

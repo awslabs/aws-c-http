@@ -150,31 +150,23 @@ static int s_scan_outgoing_headers(
     return AWS_OP_SUCCESS;
 }
 
-static int s_validate_manual_data_writes(
-    const struct aws_h1_encoder_message *encoder_message,
-    bool has_body_stream) {
+static int s_validate_manual_data_writes(const struct aws_h1_encoder_message *encoder_message, bool has_body_stream) {
 
     /* Manual data writes require Content-Length header */
     if (encoder_message->content_length == 0) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM,
-            "id=static: Manual data writes require Content-Length header");
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Manual data writes require Content-Length header");
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
     }
 
     /* Manual data writes cannot use chunked encoding */
     if (encoder_message->has_chunked_encoding_header) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM,
-            "id=static: Manual data writes cannot use Transfer-Encoding: chunked");
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Manual data writes cannot use Transfer-Encoding: chunked");
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
     }
 
     /* Manual data writes cannot have body stream */
     if (has_body_stream) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM,
-            "id=static: Manual data writes cannot have body stream");
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Manual data writes cannot have body stream");
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
     }
 
@@ -424,7 +416,12 @@ int aws_h1_encoder_message_init_from_response(
     body_headers_ignored |= status_int == AWS_HTTP_STATUS_CODE_304_NOT_MODIFIED;
     bool body_headers_forbidden = status_int == AWS_HTTP_STATUS_CODE_204_NO_CONTENT || status_int / 100 == 1;
     err = s_scan_outgoing_headers(
-        message, response, &header_lines_len, body_headers_ignored, body_headers_forbidden, false /*use_manual_data_writes*/);
+        message,
+        response,
+        &header_lines_len,
+        body_headers_ignored,
+        body_headers_forbidden,
+        false /*use_manual_data_writes*/);
     if (err) {
         goto error;
     }
@@ -740,11 +737,11 @@ typedef int encoder_state_fn(struct aws_h1_encoder *encoder, struct aws_byte_buf
 static int s_switch_state(struct aws_h1_encoder *encoder, enum aws_h1_encoder_state state) {
     /* Don't reset progress_bytes when transitioning between DATA_WRITE states,
      * as we need to track cumulative progress across multiple writes */
-    bool preserve_progress = (encoder->state == AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT ||
-                              encoder->state == AWS_H1_ENCODER_STATE_DATA_WRITE_BODY) &&
-                             (state == AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT ||
-                              state == AWS_H1_ENCODER_STATE_DATA_WRITE_BODY);
-    
+    bool preserve_progress =
+        (encoder->state == AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT ||
+         encoder->state == AWS_H1_ENCODER_STATE_DATA_WRITE_BODY) &&
+        (state == AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT || state == AWS_H1_ENCODER_STATE_DATA_WRITE_BODY);
+
     encoder->state = state;
     if (!preserve_progress) {
         encoder->progress_bytes = 0;
@@ -1060,7 +1057,7 @@ static int s_encoder_state_data_write_next(struct aws_h1_encoder *encoder, struc
 /* Write out data from current manual data write */
 static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
     struct aws_h1_data_write *data_write = encoder->message->current_data_write;
-    
+
     if (dst->capacity == dst->len) {
         return AWS_OP_SUCCESS;
     }
@@ -1088,11 +1085,9 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
     if (aws_add_u64_checked(encoder->progress_bytes, amount_read, &encoder->progress_bytes) ||
         encoder->progress_bytes > encoder->message->content_length) {
         ENCODER_LOGF(
-            ERROR,
-            encoder,
-            "Manual data writes exceeded Content-Length: %" PRIu64,
-            encoder->message->content_length);
-        aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+            ERROR, encoder, "Manual data writes exceeded Content-Length: %" PRIu64, encoder->message->content_length);
+        aws_h1_data_write_complete_and_destroy(
+            data_write, encoder->current_stream, AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
         encoder->message->current_data_write = NULL;
         return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
     }

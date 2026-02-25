@@ -5159,11 +5159,14 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_single_chunk) {
     ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
 
     struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(client_stream_tester_init(&stream_tester, allocator, &(struct client_stream_tester_options){
-        .request = request,
-        .connection = tester.connection,
-        .use_manual_data_writes = true,
-    }));
+    ASSERT_SUCCESS(client_stream_tester_init(
+        &stream_tester,
+        allocator,
+        &(struct client_stream_tester_options){
+            .request = request,
+            .connection = tester.connection,
+            .use_manual_data_writes = true,
+        }));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     aws_http_message_destroy(request);
@@ -5223,11 +5226,14 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_multiple_chunks) {
     ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
 
     struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(client_stream_tester_init(&stream_tester, allocator, &(struct client_stream_tester_options){
-        .request = request,
-        .connection = tester.connection,
-        .use_manual_data_writes = true,
-    }));
+    ASSERT_SUCCESS(client_stream_tester_init(
+        &stream_tester,
+        allocator,
+        &(struct client_stream_tester_options){
+            .request = request,
+            .connection = tester.connection,
+            .use_manual_data_writes = true,
+        }));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     aws_http_message_destroy(request);
@@ -5306,10 +5312,13 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_not_enabled) {
     ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
 
     struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(client_stream_tester_init(&stream_tester, allocator, &(struct client_stream_tester_options){
-        .request = request,
-        .connection = tester.connection,
-    }));
+    ASSERT_SUCCESS(client_stream_tester_init(
+        &stream_tester,
+        allocator,
+        &(struct client_stream_tester_options){
+            .request = request,
+            .connection = tester.connection,
+        }));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     aws_http_message_destroy(request);
@@ -5351,11 +5360,14 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_after_final) {
     ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
 
     struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(client_stream_tester_init(&stream_tester, allocator, &(struct client_stream_tester_options){
-        .request = request,
-        .connection = tester.connection,
-        .use_manual_data_writes = true,
-    }));
+    ASSERT_SUCCESS(client_stream_tester_init(
+        &stream_tester,
+        allocator,
+        &(struct client_stream_tester_options){
+            .request = request,
+            .connection = tester.connection,
+            .use_manual_data_writes = true,
+        }));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     aws_http_message_destroy(request);
@@ -5410,11 +5422,14 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_exceeds_content_length) {
     ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
 
     struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(client_stream_tester_init(&stream_tester, allocator, &(struct client_stream_tester_options){
-        .request = request,
-        .connection = tester.connection,
-        .use_manual_data_writes = true,
-    }));
+    ASSERT_SUCCESS(client_stream_tester_init(
+        &stream_tester,
+        allocator,
+        &(struct client_stream_tester_options){
+            .request = request,
+            .connection = tester.connection,
+            .use_manual_data_writes = true,
+        }));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     aws_http_message_destroy(request);
@@ -5463,11 +5478,14 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_less_than_content_length) {
     ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
 
     struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(client_stream_tester_init(&stream_tester, allocator, &(struct client_stream_tester_options){
-        .request = request,
-        .connection = tester.connection,
-        .use_manual_data_writes = true,
-    }));
+    ASSERT_SUCCESS(client_stream_tester_init(
+        &stream_tester,
+        allocator,
+        &(struct client_stream_tester_options){
+            .request = request,
+            .connection = tester.connection,
+            .use_manual_data_writes = true,
+        }));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     aws_http_message_destroy(request);
@@ -5513,11 +5531,14 @@ H1_CLIENT_TEST_CASE(h1_client_unified_write_data_api) {
     ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
 
     struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(client_stream_tester_init(&stream_tester, allocator, &(struct client_stream_tester_options){
-        .request = request,
-        .connection = tester.connection,
-        .use_manual_data_writes = true,
-    }));
+    ASSERT_SUCCESS(client_stream_tester_init(
+        &stream_tester,
+        allocator,
+        &(struct client_stream_tester_options){
+            .request = request,
+            .connection = tester.connection,
+            .use_manual_data_writes = true,
+        }));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     aws_http_message_destroy(request);

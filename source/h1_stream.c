@@ -101,7 +101,8 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     bool new_outgoing_data = !aws_linked_list_empty(&stream->synced_data.pending_chunk_list) ||
                              !aws_linked_list_empty(&stream->synced_data.pending_data_write_list);
     aws_linked_list_move_all_back(&stream->thread_data.pending_chunk_list, &stream->synced_data.pending_chunk_list);
-    aws_linked_list_move_all_back(&stream->thread_data.pending_data_write_list, &stream->synced_data.pending_data_write_list);
+    aws_linked_list_move_all_back(
+        &stream->thread_data.pending_data_write_list, &stream->synced_data.pending_data_write_list);
 
     /* If we JUST learned about having an outgoing response, that's a reason to try sending data */
     if (stream->synced_data.has_outgoing_response && !stream->thread_data.has_outgoing_response) {
@@ -417,7 +418,9 @@ static int s_stream_write_data(
 
         if (stream->synced_data.has_final_data_write) {
             AWS_LOGF_ERROR(
-                AWS_LS_HTTP_STREAM, "id=%p: Cannot write data after final write (end_stream=true).", (void *)stream_base);
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Cannot write data after final write (end_stream=true).",
+                (void *)stream_base);
             error_code = AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED;
             goto unlock;
         }
