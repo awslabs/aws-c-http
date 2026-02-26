@@ -655,6 +655,7 @@ add_test_case(test_no_proxy_invalid_patterns)
 add_test_case(test_no_proxy_invalid_host_inputs)
 
 add_test_case(http_tunnel_proxy_connection_success)
+add_test_case(http_tunnel_proxy_ipv6_connect_request)
 add_test_case(https_tunnel_proxy_connection_success)
 add_test_case(http_tunnel_proxy_connection_failure_connect)
 add_test_case(https_tunnel_proxy_connection_failure_connect)

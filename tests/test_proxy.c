@@ -392,6 +392,69 @@ static int s_test_http_tunnel_proxy_connection_success(struct aws_allocator *all
 AWS_TEST_CASE(http_tunnel_proxy_connection_success, s_test_http_tunnel_proxy_connection_success);
 
 /*
+ * For tunneling proxy connections with an IPv6 destination:
+ * Verify the CONNECT request target has the IPv6 address in brackets per RFC 7231.
+ * The expected target is "[2001:db8::1]:443".
+ */
+static int s_test_http_tunnel_proxy_ipv6_connect_request(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    static char *s_ipv6_host = "2001:db8::1";
+    static uint32_t s_ipv6_port = 443;
+
+    aws_http_connection_set_system_vtable(&s_proxy_connection_system_vtable);
+    aws_http_proxy_system_set_vtable(&s_proxy_table_for_tls);
+
+    struct aws_http_proxy_options proxy_options = {
+        .connection_type = AWS_HPCT_HTTP_TUNNEL,
+        .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
+        .port = s_proxy_port,
+    };
+
+    struct proxy_tester_options options = {
+        .alloc = allocator,
+        .proxy_options = &proxy_options,
+        .host = aws_byte_cursor_from_c_str(s_ipv6_host),
+        .port = s_ipv6_port,
+        .test_mode = PTTM_HTTP_TUNNEL,
+        .failure_type = PTFT_NONE,
+    };
+
+    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
+    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
+
+    /* Get the recorded CONNECT request and extract its target (the request path) */
+    ASSERT_TRUE(aws_array_list_length(&tester.connect_requests) == 1);
+    struct aws_http_message *connect_req = NULL;
+    ASSERT_SUCCESS(aws_array_list_get_at(&tester.connect_requests, &connect_req, 0));
+
+    struct aws_byte_cursor request_target;
+    ASSERT_SUCCESS(aws_http_message_get_request_path(connect_req, &request_target));
+
+    /*
+     * Parse the CONNECT target as a URI authority. A correctly bracketed IPv6 target
+     * "[2001:db8::1]:443" should parse with port == 443.
+     */
+    struct aws_byte_buf uri_buf;
+    ASSERT_SUCCESS(aws_byte_buf_init(&uri_buf, allocator, request_target.len + 16));
+    struct aws_byte_cursor scheme = aws_byte_cursor_from_c_str("http://");
+    aws_byte_buf_append(&uri_buf, &scheme);
+    aws_byte_buf_append(&uri_buf, &request_target);
+
+    struct aws_uri parsed_uri;
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_buf(&uri_buf);
+    ASSERT_SUCCESS(aws_uri_init_parse(&parsed_uri, allocator, &uri_cursor));
+    ASSERT_UINT_EQUALS(s_ipv6_port, parsed_uri.port);
+    aws_uri_clean_up(&parsed_uri);
+
+    aws_byte_buf_clean_up(&uri_buf);
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(http_tunnel_proxy_ipv6_connect_request, s_test_http_tunnel_proxy_ipv6_connect_request);
+
+/*
  * For tls-enabled tunneling proxy connections:
  * If the CONNECT request fails, verify error propagation and cleanup
  */
