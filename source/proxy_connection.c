@@ -1670,6 +1670,11 @@ int aws_http_proxy_new_socket_channel(
     AWS_FATAL_ASSERT(channel_options != NULL && channel_options->bootstrap != NULL);
     AWS_FATAL_ASSERT(proxy_options != NULL);
 
+#if defined(AWS_USE_SECITEM)
+    AWS_LOGF_ERROR(AWS_LS_HTTP_PROXY_NEGOTIATION, "HTTP proxy is not supported on Apple Network Framework.");
+    return aws_raise_error(AWS_ERROR_PLATFORM_NOT_SUPPORTED);
+#endif
+
     if (proxy_options->connection_type != AWS_HPCT_HTTP_TUNNEL) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_PROXY_NEGOTIATION,
