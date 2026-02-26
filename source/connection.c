@@ -1057,7 +1057,6 @@ int aws_http_client_connect_internal(
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: http connection options are null.");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
-
     struct aws_http_client_bootstrap *http_bootstrap = NULL;
     struct aws_string *host_name = NULL;
     int err = 0;
@@ -1185,11 +1184,6 @@ error:
 
 int aws_http_client_connect(const struct aws_http_client_connection_options *options) {
     aws_http_fatal_assert_library_initialized();
-
-#if defined(AWS_USE_SECITEM)
-    AWS_LOGF_ERROR(AWS_LS_HTTP_PROXY_NEGOTIATION, "HTTP proxy is not supported on Apple Network Framework.");
-    return aws_raise_error(AWS_ERROR_PLATFORM_NOT_SUPPORTED);
-#endif
 
     if (options->prior_knowledge_http2 && options->tls_options) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: HTTP/2 prior knowledge only works with cleartext TCP.");
