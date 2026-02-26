@@ -42,7 +42,9 @@ struct tester_options {
     char *client_alpn_list;
     bool no_connection; /* don't connect server to client */
     bool pin_event_loop;
-    bool use_tcp; /* otherwise uses domain sockets */
+    bool use_tcp;  /* otherwise uses domain sockets */
+    bool use_ipv6; /* use IPv6 (::1) instead of IPv4, implies use_tcp */
+    const char *client_host_name; /* override host_name used by client (e.g. "[::1]") */
 };
 
 /* Singleton used by tests in this file */
@@ -333,9 +335,11 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     tester->server_bootstrap = aws_server_bootstrap_new(tester->alloc, tester->server_event_loop_group);
     ASSERT_NOT_NULL(tester->server_bootstrap);
 
+    bool use_tcp = options->use_tcp || options->use_ipv6;
+
     struct aws_socket_options socket_options = {
         .type = AWS_SOCKET_STREAM,
-        .domain = options->use_tcp ? AWS_SOCKET_IPV4 : AWS_SOCKET_LOCAL,
+        .domain = options->use_ipv6 ? AWS_SOCKET_IPV6 : (use_tcp ? AWS_SOCKET_IPV4 : AWS_SOCKET_LOCAL),
         .connect_timeout_ms =
             (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
     };
@@ -344,7 +348,9 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     struct aws_socket_endpoint endpoint;
     AWS_ZERO_STRUCT(endpoint);
 
-    if (options->use_tcp) {
+    if (options->use_ipv6) {
+        snprintf(endpoint.address, sizeof(endpoint.address), "::1");
+    } else if (use_tcp) {
         snprintf(endpoint.address, sizeof(endpoint.address), "127.0.0.1");
     } else {
         aws_socket_endpoint_init_local_address_for_test(&endpoint);
@@ -374,7 +380,7 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
      * localhost server binds to any port, so let's get the final listener endpoint whether or not we're making
      * connections to it.
      */
-    if (options->use_tcp) {
+    if (options->use_tcp || options->use_ipv6) {
         tester->endpoint = *aws_http_server_get_listener_endpoint(tester->server);
     }
 
@@ -386,6 +392,9 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     /* Connect */
     struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
     s_client_connection_options_init_tester(&client_options, tester);
+    if (options->client_host_name) {
+        client_options.host_name = aws_byte_cursor_from_c_str(options->client_host_name);
+    }
     if (options->tls) {
         ASSERT_SUCCESS(s_tls_client_opt_tester_init(
             tester,
@@ -485,6 +494,29 @@ void release_all_server_connections(struct tester *tester) {
     /* wait for all the connections to shutdown */
     tester->wait_server_connection_is_shutdown = tester->server_connection_num;
 }
+
+static int s_test_connection_setup_ipv6(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    struct tester_options options = {
+        .alloc = allocator,
+        .use_ipv6 = true,
+        .client_host_name = "[::1]",
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, &options));
+
+    /* Verify we got a connection over IPv6 */
+    ASSERT_TRUE(tester.client_connection_num == 1);
+    ASSERT_TRUE(tester.server_connection_num == 1);
+
+    release_all_client_connections(&tester);
+    release_all_server_connections(&tester);
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(connection_setup_ipv6, s_test_connection_setup_ipv6);
 
 static int s_test_connection_setup_shutdown(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;

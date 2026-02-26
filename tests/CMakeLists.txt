@@ -517,6 +517,7 @@ add_test_case(h2_client_cap_manual_window_update)
 
 add_test_case(server_new_destroy)
 add_test_case(server_new_destroy_tcp)
+add_test_case(connection_setup_ipv6)
 add_test_case(connection_setup_shutdown)
 add_net_test_case(connection_setup_shutdown_tls)
 add_test_case(connection_setup_shutdown_proxy_setting_on_ev_not_found)
