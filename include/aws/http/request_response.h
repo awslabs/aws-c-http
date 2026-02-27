@@ -310,7 +310,9 @@ struct aws_http_make_request_options {
 
     /**
      * When using HTTP/2, request body data will be provided over time. The stream will only be polled for writing
-     * when data has been supplied via `aws_http2_stream_write_data`
+     * when data has been supplied via `aws_http2_stream_write_data`.
+     * Use `use_manual_data_writes` instead, which works for both HTTP/1.1 and HTTP/2.
+     * This field will be deprecated and removed in a future release.
      */
     bool http2_use_manual_data_writes;
 
@@ -483,9 +485,26 @@ typedef aws_http_stream_write_complete_fn aws_http2_stream_write_data_complete_f
  * This macro allows protocol-specific options to share the same base fields.
  */
 #define AWS_HTTP_STREAM_WRITE_DATA_OPTIONS_FIELDS                                                                      \
+    /**
+     * The data to be sent.
+     * Optional.
+     * If not set, input stream with length 0 will be used.
+     */
     struct aws_input_stream *data;                                                                                     \
+    /**
+     * Set true when it's the last chunk to be sent.
+     * After a write with end_stream, no more data write will be accepted.
+     */
     bool end_stream;                                                                                                   \
+    /**
+     * Invoked when the data stream is no longer in use, whether or not it was successfully sent.
+     * Optional.
+     * See `aws_http2_stream_write_data_complete_fn`.
+     */
     aws_http_stream_write_complete_fn *on_complete;                                                                    \
+    /**
+     * User provided data passed to the on_complete callback on its invocation.
+     */
     void *user_data;
 
 /**
@@ -909,9 +928,9 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
  * Write data to an HTTP stream in a protocol-agnostic way.
  * Works with both HTTP/1.1 (with Content-Length) and HTTP/2.
  *
+ * The stream must have specified `use_manual_data_writes` during request creation.
+ * Note: `http2_use_manual_data_writes` also works for HTTP/2 but should be deprecated in favor of this unified flag.
  * For HTTP/1.1: The request must have a Content-Length header and must NOT have a body stream set.
- *               The stream must have specified `use_manual_data_writes` during request creation.
- * For HTTP/2: The stream must have specified `http2_use_manual_data_writes` during request creation.
  *
  * For client streams, activate() must be called before any data is written.
  * For server streams, the response must be submitted before any data is written.
