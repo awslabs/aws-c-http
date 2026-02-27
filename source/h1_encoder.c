@@ -277,7 +277,7 @@ int aws_h1_encoder_message_init_from_request(
 
     message->body = aws_input_stream_acquire(aws_http_message_get_body_stream(request));
     message->pending_chunk_list = pending_chunk_list;
-    message->pending_data_write_list = pending_data_write_list;
+    message->pending_data_write_list = use_manual_data_writes ? pending_data_write_list : NULL;
 
     struct aws_byte_cursor method;
     int err = aws_http_message_get_request_method(request, &method);

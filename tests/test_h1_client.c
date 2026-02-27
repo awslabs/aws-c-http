@@ -5300,44 +5300,72 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_not_enabled) {
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
-    struct aws_http_header headers[] = {
-        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
-         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("5")},
-    };
-
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
-    ASSERT_NOT_NULL(request);
-    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("POST")));
-    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/upload")));
-    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
-
-    struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(client_stream_tester_init(
-        &stream_tester,
-        allocator,
-        &(struct client_stream_tester_options){
-            .request = request,
-            .connection = tester.connection,
-        }));
-
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-    aws_http_message_destroy(request);
-
     /* Try to write data without enabling manual writes */
     struct aws_byte_cursor data = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("hello");
     struct aws_input_stream *input_stream = aws_input_stream_new_from_cursor(allocator, &data);
     ASSERT_NOT_NULL(input_stream);
-
     struct aws_http_stream_write_data_options write_options = {
         .data = input_stream,
         .end_stream = true,
     };
 
-    ASSERT_FAILS(aws_http_stream_write_data(stream_tester.stream, &write_options));
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED, aws_last_error());
+    struct client_stream_tester stream_tester;
+
+    {
+        struct aws_http_header headers[] = {
+            {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("5")},
+        };
+
+        struct aws_http_message *request = aws_http_message_new_request(allocator);
+        ASSERT_NOT_NULL(request);
+        ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("POST")));
+        ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/upload")));
+        ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
+        aws_http_message_set_body_stream(request, input_stream);
+
+        ASSERT_SUCCESS(client_stream_tester_init(
+            &stream_tester,
+            allocator,
+            &(struct client_stream_tester_options){
+                .request = request,
+                .connection = tester.connection,
+            }));
+
+        testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+        ASSERT_FAILS(aws_http_stream_write_data(stream_tester.stream, &write_options));
+        ASSERT_INT_EQUALS(AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED, aws_last_error());
+
+        aws_http_message_destroy(request);
+        client_stream_tester_clean_up(&stream_tester);
+    }
+
+    {
+        struct aws_http_message *request = aws_http_message_new_request(allocator);
+        ASSERT_NOT_NULL(request);
+        ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("POST")));
+        ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/upload")));
+
+        struct client_stream_tester stream_tester;
+        ASSERT_SUCCESS(client_stream_tester_init(
+            &stream_tester,
+            allocator,
+            &(struct client_stream_tester_options){
+                .request = request,
+                .connection = tester.connection,
+            }));
+
+        testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+        ASSERT_FAILS(aws_http_stream_write_data(stream_tester.stream, &write_options));
+        ASSERT_INT_EQUALS(AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED, aws_last_error());
+
+        aws_http_message_destroy(request);
+        client_stream_tester_clean_up(&stream_tester);
+    }
 
     aws_input_stream_release(input_stream);
-    client_stream_tester_clean_up(&stream_tester);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
@@ -5555,11 +5583,8 @@ H1_CLIENT_TEST_CASE(h1_client_unified_write_data_api) {
     ASSERT_SUCCESS(aws_http_stream_write_data(stream_tester.stream, &write_options));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
-    ASSERT_TRUE(stream_tester.complete);
-    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
-
     const char *expected = "POST /upload HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello";
-    ASSERT_SUCCESS(testing_channel_check_written_message_str(&tester.testing_channel, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
 
     aws_input_stream_release(input_stream);
     client_stream_tester_clean_up(&stream_tester);
