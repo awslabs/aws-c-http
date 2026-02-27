@@ -220,10 +220,9 @@ static int s_tester_init_common(struct tester *tester, struct aws_allocator *all
         .host_resolver = tester->host_resolver,
     };
     tester->client_bootstrap = aws_client_bootstrap_new(allocator, &bootstrap_options);
-
-    /* Initialize TLS context (even if not used, doesn't hurt) */
     aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, allocator);
-    tester->tls_ctx = aws_tls_client_ctx_new(allocator, &tester->tls_ctx_options);
+    /* Turn off peer verification as a localhost cert used */
+    tester->tls_ctx_options.verify_peer = false;
 
     struct aws_logger_standard_options logger_options = {
         .level = AWS_LOG_LEVEL_DEBUG,
@@ -241,8 +240,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
 
     /* Configure H2-specific TLS options */
     aws_tls_ctx_options_set_alpn_list(&tester->tls_ctx_options, "h2");
-    /* Turn off peer verification as a localhost cert used */
-    tester->tls_ctx_options.verify_peer = false;
+    tester->tls_ctx = aws_tls_client_ctx_new(allocator, &tester->tls_ctx_options);
 
     aws_tls_connection_options_init_from_ctx(&tester->tls_connection_options, tester->tls_ctx);
     aws_tls_connection_options_set_server_name(&tester->tls_connection_options, allocator, &host_name);
