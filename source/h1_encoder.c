@@ -152,15 +152,11 @@ static int s_scan_outgoing_headers(
 
 static int s_validate_manual_data_writes(const struct aws_h1_encoder_message *encoder_message, bool has_body_stream) {
 
-    /* Manual data writes require Content-Length header */
-    if (encoder_message->content_length == 0) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Manual data writes require Content-Length header");
-        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
-    }
-
-    /* Manual data writes cannot use chunked encoding */
-    if (encoder_message->has_chunked_encoding_header) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Manual data writes cannot use Transfer-Encoding: chunked");
+    /* Manual data writes require either Content-Length or chunked encoding */
+    if (encoder_message->content_length == 0 && !encoder_message->has_chunked_encoding_header) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=static: Manual data writes require Content-Length header or Transfer-Encoding: chunked");
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
     }
 
@@ -277,7 +273,9 @@ int aws_h1_encoder_message_init_from_request(
 
     message->body = aws_input_stream_acquire(aws_http_message_get_body_stream(request));
     message->pending_chunk_list = pending_chunk_list;
-    message->pending_data_write_list = use_manual_data_writes ? pending_data_write_list : NULL;
+    /* Only set pending_data_write_list for Content-Length manual writes.
+     * Chunked manual writes go through pending_chunk_list instead (converted in s_stream_write_data). */
+    message->pending_data_write_list = NULL;
 
     struct aws_byte_cursor method;
     int err = aws_http_message_get_request_method(request, &method);
@@ -329,6 +327,11 @@ int aws_h1_encoder_message_init_from_request(
         err = s_validate_manual_data_writes(message, message->body != NULL);
         if (err) {
             goto error;
+        }
+        /* Content-Length manual writes use pending_data_write_list.
+         * Chunked manual writes go through pending_chunk_list instead. */
+        if (!message->has_chunked_encoding_header) {
+            message->pending_data_write_list = pending_data_write_list;
         }
     }
 

@@ -104,7 +104,7 @@ static int s_tester_init_ex(struct tester *tester, struct aws_allocator *alloc, 
     tester->alloc = alloc;
 
     struct aws_logger_standard_options logger_options = {
-        .level = AWS_LOG_LEVEL_TRACE,
+        .level = AWS_LOG_LEVEL_DEBUG,
         .file = stderr,
     };
     ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->alloc, &logger_options));
@@ -5603,6 +5603,109 @@ H1_CLIENT_TEST_CASE(h1_client_unified_write_data_api) {
     ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
 
     aws_input_stream_release(input_stream);
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test write_data with chunked encoding - single write */
+H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_single) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct aws_http_message *request = s_new_default_chunked_put_request(allocator);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(client_stream_tester_init(
+        &stream_tester,
+        allocator,
+        &(struct client_stream_tester_options){
+            .request = request,
+            .connection = tester.connection,
+            .use_manual_data_writes = true,
+        }));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    aws_http_message_destroy(request);
+
+    struct aws_byte_cursor data = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
+    struct aws_input_stream *input_stream = aws_input_stream_new_from_cursor(allocator, &data);
+
+    struct aws_http_stream_write_data_options write_options = {
+        .data = input_stream,
+        .end_stream = true,
+    };
+
+    ASSERT_SUCCESS(aws_http_stream_write_data(stream_tester.stream, &write_options));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
+                           "Transfer-Encoding: chunked\r\n"
+                           "\r\n"
+                           "10\r\n"
+                           "write more tests"
+                           "\r\n"
+                           "0\r\n"
+                           "\r\n";
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
+
+    aws_input_stream_release(input_stream);
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test write_data with chunked encoding - multiple writes */
+H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_multiple) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct aws_http_message *request = s_new_default_chunked_put_request(allocator);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(client_stream_tester_init(
+        &stream_tester,
+        allocator,
+        &(struct client_stream_tester_options){
+            .request = request,
+            .connection = tester.connection,
+            .use_manual_data_writes = true,
+        }));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    aws_http_message_destroy(request);
+
+    /* First write */
+    struct aws_byte_cursor data1 = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write ");
+    struct aws_input_stream *stream1 = aws_input_stream_new_from_cursor(allocator, &data1);
+    struct aws_http_stream_write_data_options opts1 = {.data = stream1, .end_stream = false};
+    ASSERT_SUCCESS(aws_http_stream_write_data(stream_tester.stream, &opts1));
+
+    /* Second write with end_stream */
+    struct aws_byte_cursor data2 = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("more tests");
+    struct aws_input_stream *stream2 = aws_input_stream_new_from_cursor(allocator, &data2);
+    struct aws_http_stream_write_data_options opts2 = {.data = stream2, .end_stream = true};
+    ASSERT_SUCCESS(aws_http_stream_write_data(stream_tester.stream, &opts2));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
+                           "Transfer-Encoding: chunked\r\n"
+                           "\r\n"
+                           "6\r\n"
+                           "write "
+                           "\r\n"
+                           "A\r\n"
+                           "more tests"
+                           "\r\n"
+                           "0\r\n"
+                           "\r\n";
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
+
+    aws_input_stream_release(stream1);
+    aws_input_stream_release(stream2);
     client_stream_tester_clean_up(&stream_tester);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;

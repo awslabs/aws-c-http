@@ -165,6 +165,8 @@ add_test_case(h1_client_write_data_after_final)
 add_test_case(h1_client_write_data_exceeds_content_length)
 add_test_case(h1_client_write_data_less_than_content_length)
 add_test_case(h1_client_unified_write_data_api)
+add_test_case(h1_client_write_data_chunked_single)
+add_test_case(h1_client_write_data_chunked_multiple)
 
 add_test_case(strutil_trim_http_whitespace)
 add_test_case(strutil_is_http_token)

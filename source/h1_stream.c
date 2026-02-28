@@ -383,19 +383,11 @@ static int s_stream_write_data(
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    struct aws_h1_data_write *data_write = aws_h1_data_write_new(stream_base->alloc, options);
-    if (!data_write) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM,
-            "id=%p: Failed to create data write, error %d (%s).",
-            (void *)stream_base,
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
-        return AWS_OP_ERR;
-    }
-
     int error_code = 0;
     bool should_schedule_task = false;
+
+    /* Check if this stream uses chunked encoding — if so, convert write_data into chunks */
+    bool is_chunked = false;
 
     { /* BEGIN CRITICAL SECTION */
         s_stream_lock_synced_data(stream);
@@ -425,13 +417,11 @@ static int s_stream_write_data(
             goto unlock;
         }
 
+        is_chunked = stream->synced_data.using_chunked_encoding;
+
         if (options->end_stream) {
             stream->synced_data.has_final_data_write = true;
         }
-
-        aws_linked_list_push_back(&stream->synced_data.pending_data_write_list, &data_write->node);
-        should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
-        stream->synced_data.is_cross_thread_work_task_scheduled = true;
 
     unlock:
         s_stream_unlock_synced_data(stream);
@@ -444,9 +434,64 @@ static int s_stream_write_data(
             (void *)stream_base,
             error_code,
             aws_error_name(error_code));
-        aws_h1_data_write_destroy(data_write);
         return aws_raise_error(error_code);
     }
+
+    if (is_chunked) {
+        /* Convert write_data into chunk(s) for chunked encoding */
+        int64_t data_len = 0;
+        if (aws_input_stream_get_length(options->data, &data_len)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Failed to get data stream length for chunked conversion",
+                (void *)stream_base);
+            return AWS_OP_ERR;
+        }
+
+        struct aws_http1_chunk_options chunk_opts = {
+            .chunk_data = options->data,
+            .chunk_data_size = (uint64_t)data_len,
+            .on_complete = options->on_complete,
+            .user_data = options->user_data,
+        };
+        if (aws_http1_stream_write_chunk(stream_base, &chunk_opts)) {
+            return AWS_OP_ERR;
+        }
+
+        /* If end_stream, also submit terminating zero-length chunk */
+        if (options->end_stream) {
+            struct aws_http1_chunk_options terminator = {
+                .chunk_data_size = 0,
+            };
+            if (aws_http1_stream_write_chunk(stream_base, &terminator)) {
+                return AWS_OP_ERR;
+            }
+        }
+
+        return AWS_OP_SUCCESS;
+    }
+
+    /* Content-Length path: create data write and push to pending list */
+    struct aws_h1_data_write *data_write = aws_h1_data_write_new(stream_base->alloc, options);
+    if (!data_write) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Failed to create data write, error %d (%s).",
+            (void *)stream_base,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+
+    { /* BEGIN CRITICAL SECTION */
+        s_stream_lock_synced_data(stream);
+
+        aws_linked_list_push_back(&stream->synced_data.pending_data_write_list, &data_write->node);
+        should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
+        stream->synced_data.is_cross_thread_work_task_scheduled = true;
+
+        s_stream_unlock_synced_data(stream);
+    } /* END CRITICAL SECTION */
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Queued data write", (void *)stream_base);
 
