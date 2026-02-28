@@ -485,26 +485,26 @@ typedef aws_http_stream_write_complete_fn aws_http2_stream_write_data_complete_f
  * This macro allows protocol-specific options to share the same base fields.
  */
 #define AWS_HTTP_STREAM_WRITE_DATA_OPTIONS_FIELDS                                                                      \
-    /**
-     * The data to be sent.
-     * Optional.
-     * If not set, input stream with length 0 will be used.
-     */
+    /**                                                                                                                \
+     * The data to be sent.                                                                                            \
+     * Optional.                                                                                                       \
+     * If not set, input stream with length 0 will be used.                                                            \
+     */                                                                                                                \
     struct aws_input_stream *data;                                                                                     \
-    /**
-     * Set true when it's the last chunk to be sent.
-     * After a write with end_stream, no more data write will be accepted.
-     */
+    /**                                                                                                                \
+     * Set true when it's the last chunk to be sent.                                                                   \
+     * After a write with end_stream, no more data write will be accepted.                                             \
+     */                                                                                                                \
     bool end_stream;                                                                                                   \
-    /**
-     * Invoked when the data stream is no longer in use, whether or not it was successfully sent.
-     * Optional.
-     * See `aws_http2_stream_write_data_complete_fn`.
-     */
+    /**                                                                                                                \
+     * Invoked when the data stream is no longer in use, whether or not it was successfully sent.                      \
+     * Optional.                                                                                                       \
+     * See `aws_http2_stream_write_data_complete_fn`.                                                                  \
+     */                                                                                                                \
     aws_http_stream_write_complete_fn *on_complete;                                                                    \
-    /**
-     * User provided data passed to the on_complete callback on its invocation.
-     */
+    /**                                                                                                                \
+     * User provided data passed to the on_complete callback on its invocation.                                        \
+     */                                                                                                                \
     void *user_data;
 
 /**

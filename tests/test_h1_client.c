@@ -5313,7 +5313,7 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_not_enabled_with_body) {
 
     struct aws_http_header headers[] = {
         {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
-        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("5")},
+         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("5")},
     };
 
     struct aws_http_message *request = aws_http_message_new_request(allocator);
