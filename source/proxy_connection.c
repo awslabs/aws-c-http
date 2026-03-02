@@ -1565,6 +1565,13 @@ int aws_http_options_validate_proxy_configuration(const struct aws_http_client_c
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
+#if defined(AWS_USE_SECITEM)
+    if ((options->proxy_options || options->proxy_ev_settings)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_PROXY_NEGOTIATION, "HTTP proxy is not supported on Apple Network Framework.");
+        return aws_raise_error(AWS_ERROR_PLATFORM_NOT_SUPPORTED);
+    }
+#endif
+
     enum aws_http_proxy_connection_type proxy_type = options->proxy_options->connection_type;
     if (proxy_type == AWS_HPCT_HTTP_FORWARD && options->tls_options != NULL) {
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
@@ -1662,6 +1669,11 @@ int aws_http_proxy_new_socket_channel(
 
     AWS_FATAL_ASSERT(channel_options != NULL && channel_options->bootstrap != NULL);
     AWS_FATAL_ASSERT(proxy_options != NULL);
+
+#if defined(AWS_USE_SECITEM)
+    AWS_LOGF_ERROR(AWS_LS_HTTP_PROXY_NEGOTIATION, "HTTP proxy is not supported on Apple Network Framework.");
+    return aws_raise_error(AWS_ERROR_PLATFORM_NOT_SUPPORTED);
+#endif
 
     if (proxy_options->connection_type != AWS_HPCT_HTTP_TUNNEL) {
         AWS_LOGF_ERROR(
