@@ -6214,5 +6214,3 @@ TEST_CASE(h2_client_unified_write_data_api) {
 
     return s_tester_clean_up();
 }
-
-
