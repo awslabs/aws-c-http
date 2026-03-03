@@ -5287,11 +5287,7 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_multiple_chunks) {
 H1_CLIENT_TEST_CASE(h1_client_write_data_not_enabled) {
     (void)ctx;
     struct write_data_test_fixture fixture;
-    struct aws_http_header headers[] = {
-        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
-         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("5")},
-    };
-    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), false));
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, NULL, 0, false));
 
     struct aws_byte_cursor data = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("hello");
     struct aws_input_stream *input_stream = aws_input_stream_new_from_cursor(allocator, &data);
