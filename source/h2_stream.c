@@ -333,8 +333,9 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
     /* stream end is implicit if the request isn't using manual data writes */
-    stream->synced_data.manual_write_ended = !options->http2_use_manual_data_writes;
-    stream->manual_write = options->http2_use_manual_data_writes;
+    bool manual_write = options->use_manual_data_writes || options->http2_use_manual_data_writes;
+    stream->synced_data.manual_write_ended = !manual_write;
+    stream->manual_write = manual_write;
 
     /* if there's a request body to write, add it as the first outgoing write */
     struct aws_input_stream *body_stream = aws_http_message_get_body_stream(options->request);
