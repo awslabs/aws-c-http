@@ -87,9 +87,6 @@ struct aws_h1_stream {
         /* Whether a "request handler" stream has a response to send.
          * Has mirror variable in synced_data */
         bool has_outgoing_response : 1;
-
-        /* Total bytes written so far for Content-Length validation */
-        uint64_t incremental_content_written;
     } thread_data;
 
     /* Any thread may touch this data, but the connection's lock must be held.

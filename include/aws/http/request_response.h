@@ -926,11 +926,12 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
 
 /**
  * Write data to an HTTP stream in a protocol-agnostic way.
- * Works with both HTTP/1.1 (with Content-Length) and HTTP/2.
+ * Works with both HTTP/1.1 and HTTP/2.
  *
  * The stream must have specified `use_manual_data_writes` during request creation.
  * Note: `http2_use_manual_data_writes` also works for HTTP/2 but should be deprecated in favor of this unified flag.
- * For HTTP/1.1: The request must have a Content-Length header and must NOT have a body stream set.
+ * For HTTP/1.1: The request must have either a Content-Length header or Transfer-Encoding: chunked header,
+ *               and must NOT have a body stream set.
  *
  * For client streams, activate() must be called before any data is written.
  * For server streams, the response must be submitted before any data is written.

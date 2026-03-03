@@ -438,7 +438,7 @@ static int s_stream_write_data(
     }
 
     if (is_chunked) {
-        /* Convert write_data into chunk(s) for chunked encoding */
+        /* Convert write_data into a chunk for chunked encoding */
         int64_t data_len = 0;
         if (aws_input_stream_get_length(options->data, &data_len)) {
             AWS_LOGF_ERROR(
@@ -454,21 +454,7 @@ static int s_stream_write_data(
             .on_complete = options->on_complete,
             .user_data = options->user_data,
         };
-        if (aws_http1_stream_write_chunk(stream_base, &chunk_opts)) {
-            return AWS_OP_ERR;
-        }
-
-        /* If end_stream, also submit terminating zero-length chunk */
-        if (options->end_stream) {
-            struct aws_http1_chunk_options terminator = {
-                .chunk_data_size = 0,
-            };
-            if (aws_http1_stream_write_chunk(stream_base, &terminator)) {
-                return AWS_OP_ERR;
-            }
-        }
-
-        return AWS_OP_SUCCESS;
+        return aws_http1_stream_write_chunk(stream_base, &chunk_opts);
     }
 
     /* Content-Length path: create data write and push to pending list */
