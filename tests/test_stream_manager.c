@@ -1293,10 +1293,10 @@ TEST_CASE(h2_sm_with_initial_settings) {
     return s_tester_clean_up();
 }
 
-/* Test that max_total_streams limits the total number of active streams */
-TEST_CASE(h2_sm_mock_max_total_streams) {
+/* Test that max_concurrent_streams limits the total number of active streams */
+TEST_CASE(h2_sm_mock_max_concurrent_streams) {
     (void)ctx;
-    size_t max_total_streams = 5;
+    size_t max_concurrent_streams = 5;
     struct sm_tester_options options = {
         .max_connections = 3,
         .max_concurrent_streams_per_connection = 10,
@@ -1304,8 +1304,8 @@ TEST_CASE(h2_sm_mock_max_total_streams) {
     };
     ASSERT_SUCCESS(s_tester_init(&options));
 
-    /* Set max_total_streams on the stream manager */
-    s_tester.stream_manager->max_total_streams = max_total_streams;
+    /* Set max_concurrent_streams on the stream manager */
+    s_tester.stream_manager->max_concurrent_streams = max_concurrent_streams;
 
     s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
 
@@ -1317,9 +1317,9 @@ TEST_CASE(h2_sm_mock_max_total_streams) {
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
     s_drain_all_fake_connection_testing_channel();
 
-    /* Should have acquired only max_total_streams streams */
-    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(max_total_streams));
-    ASSERT_UINT_EQUALS(max_total_streams, aws_array_list_length(&s_tester.streams));
+    /* Should have acquired only max_concurrent_streams streams */
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(max_concurrent_streams));
+    ASSERT_UINT_EQUALS(max_concurrent_streams, aws_array_list_length(&s_tester.streams));
 
     /* Complete 3 streams */
     struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
@@ -1344,10 +1344,10 @@ TEST_CASE(h2_sm_mock_max_total_streams) {
     return s_tester_clean_up();
 }
 
-/* Test that max_total_streams works with multiple connections */
-TEST_CASE(h2_sm_mock_max_total_streams_multiple_connections) {
+/* Test that max_concurrent_streams works with multiple connections */
+TEST_CASE(h2_sm_mock_max_concurrent_streams_multiple_connections) {
     (void)ctx;
-    size_t max_total_streams = 8;
+    size_t max_concurrent_streams = 8;
     struct sm_tester_options options = {
         .max_connections = 4,
         .max_concurrent_streams_per_connection = 3,
@@ -1355,8 +1355,8 @@ TEST_CASE(h2_sm_mock_max_total_streams_multiple_connections) {
     };
     ASSERT_SUCCESS(s_tester_init(&options));
 
-    /* Set max_total_streams */
-    s_tester.stream_manager->max_total_streams = max_total_streams;
+    /* Set max_concurrent_streams */
+    s_tester.stream_manager->max_concurrent_streams = max_concurrent_streams;
 
     s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
 
@@ -1368,9 +1368,9 @@ TEST_CASE(h2_sm_mock_max_total_streams_multiple_connections) {
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(4));
     s_drain_all_fake_connection_testing_channel();
 
-    /* Should have acquired only max_total_streams streams */
-    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(max_total_streams));
-    ASSERT_UINT_EQUALS(max_total_streams, aws_array_list_length(&s_tester.streams));
+    /* Should have acquired only max_concurrent_streams streams */
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(max_concurrent_streams));
+    ASSERT_UINT_EQUALS(max_concurrent_streams, aws_array_list_length(&s_tester.streams));
     /* 4 connections total */
     ASSERT_UINT_EQUALS(4, aws_array_list_length(&s_tester.fake_connections));
 
@@ -1398,8 +1398,8 @@ TEST_CASE(h2_sm_mock_max_total_streams_multiple_connections) {
     return s_tester_clean_up();
 }
 
-/* Test that max_total_streams = 0 means no limit (default behavior) */
-TEST_CASE(h2_sm_mock_max_total_streams_zero_means_no_limit) {
+/* Test that max_concurrent_streams = 0 means no limit (default behavior) */
+TEST_CASE(h2_sm_mock_max_concurrent_streams_zero_means_no_limit) {
     (void)ctx;
     struct sm_tester_options options = {
         .max_connections = 2,
@@ -1408,8 +1408,8 @@ TEST_CASE(h2_sm_mock_max_total_streams_zero_means_no_limit) {
     };
     ASSERT_SUCCESS(s_tester_init(&options));
 
-    /* max_total_streams defaults to 0 (no limit) */
-    ASSERT_UINT_EQUALS(0, s_tester.stream_manager->max_total_streams);
+    /* max_concurrent_streams defaults to 0 (no limit) */
+    ASSERT_UINT_EQUALS(0, s_tester.stream_manager->max_concurrent_streams);
 
     s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
 
