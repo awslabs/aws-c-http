@@ -583,6 +583,23 @@ struct aws_h1_stream *aws_h1_stream_new_request(
     /* Set manual data writes flag from options */
     stream->synced_data.using_manual_data_writes = options->use_manual_data_writes;
 
+    /* For manual data writes, add Transfer-Encoding: chunked if neither Content-Length nor Transfer-Encoding is set */
+    if (options->use_manual_data_writes) {
+        struct aws_http_headers *headers = aws_http_message_get_headers(options->request);
+        bool has_content_length =
+            aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Content-Length"));
+        bool has_transfer_encoding =
+            aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Transfer-Encoding"));
+        if (!has_content_length && !has_transfer_encoding) {
+            if (aws_http_headers_add(
+                    headers,
+                    aws_byte_cursor_from_c_str("Transfer-Encoding"),
+                    aws_byte_cursor_from_c_str("chunked"))) {
+                goto error;
+            }
+        }
+    }
+
     /* Validate request and cache info that the encoder will eventually need */
     if (aws_h1_encoder_message_init_from_request(
             &stream->thread_data.encoder_message,
