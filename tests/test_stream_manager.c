@@ -128,6 +128,7 @@ struct sm_fake_connection {
     struct h2_fake_peer peer;
     struct aws_http_client_connection_options options;
     struct aws_http_connection *connection;
+    size_t last_completed_frame_index; /* Track the last frame index we've completed */
 };
 
 static void s_testing_channel_shutdown(int error_code, void *user_data) {
@@ -358,7 +359,8 @@ static void s_fake_connection_complete_streams(
     aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
     size_t frames_count = h2_decode_tester_frame_count(&fake_connection->peer.decode);
     int streams_completed = 0;
-    for (size_t i = 0; i < frames_count; ++i) {
+    /* Start from the last completed frame index to avoid re-completing streams */
+    for (size_t i = fake_connection->last_completed_frame_index; i < frames_count; ++i) {
         struct h2_decoded_frame *frame = h2_decode_tester_get_frame(&fake_connection->peer.decode, i);
         if (frame->end_stream) {
             struct aws_h2_frame *response_frame = aws_h2_frame_new_headers(
@@ -372,6 +374,8 @@ static void s_fake_connection_complete_streams(
                         aws_byte_cursor_from_c_str("tests"),
                         true /*end_stream*/) == AWS_OP_SUCCESS);
             }
+            /* Update the last completed frame index */
+            fake_connection->last_completed_frame_index = i + 1;
             if (num_streams_to_complete && ++streams_completed >= num_streams_to_complete) {
                 break;
             }
