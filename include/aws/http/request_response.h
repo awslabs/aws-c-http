@@ -303,16 +303,26 @@ struct aws_http_make_request_options {
     /**
      * When true, request body data will be provided over time via `aws_http_stream_write_data()`.
      * The stream will only be polled for writing when data has been supplied.
-     * Works with both HTTP/1.1 (Content-Length) and HTTP/2.
      * When false (default), the entire request body is read from the input stream immediately.
+     *
+     * HTTP/1.1 requirements:
+     * - SHOULD have either `Content-Length` OR `Transfer-Encoding: chunked` header (but not both).
+     *   Transfer-Encoding header will be automatically added Content-Length is absent.
+     * - MUST NOT have a body stream set. Fails with AWS_ERROR_HTTP_INVALID_HEADER_FIELD otherwise.
+     * - With `Content-Length`: total bytes written must exactly match the declared length.
+     *   Fails with AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT if data exceeds Content-Length,
+     *   or if `end_stream` is set before enough data is written.
+     * - With `Transfer-Encoding: chunked`: no length validation, data sent as chunks.
+     *
+     * HTTP/2: No `Content-Length` or `Transfer-Encoding` header required. Data sent via DATA frames.
      */
     bool use_manual_data_writes;
 
     /**
+     * This field will be DEPRECATED and removed in a future release.
+     * Use `use_manual_data_writes` instead, which works for both HTTP/1.1 and HTTP/2.
      * When using HTTP/2, request body data will be provided over time. The stream will only be polled for writing
      * when data has been supplied via `aws_http2_stream_write_data`.
-     * Use `use_manual_data_writes` instead, which works for both HTTP/1.1 and HTTP/2.
-     * This field will be deprecated and removed in a future release.
      */
     bool http2_use_manual_data_writes;
 
@@ -509,7 +519,7 @@ typedef aws_http_stream_write_complete_fn aws_http2_stream_write_data_complete_f
 
 /**
  * Unified options for writing data to an HTTP stream.
- * Works with both HTTP/1.1 (with Content-Length) and HTTP/2.
+ * Works with both HTTP/1.1 and HTTP/2.
  */
 struct aws_http_stream_write_data_options {
     AWS_HTTP_STREAM_WRITE_DATA_OPTIONS_FIELDS
@@ -929,8 +939,8 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
  * Works with both HTTP/1.1 and HTTP/2.
  *
  * The stream must have specified `use_manual_data_writes` during request creation.
- * Note: `http2_use_manual_data_writes` also works for HTTP/2 but should be deprecated in favor of this unified flag.
- * For HTTP/1.1: The request must have either a Content-Length header or Transfer-Encoding: chunked header,
+ * For HTTP/1.1: The request must have either a Content-Length header or/and Transfer-Encoding: chunked header,
+ *               (if Content-Length is not set, Transfer-Encoding: chunked is automatically added)
  *               and must NOT have a body stream set.
  *
  * For client streams, activate() must be called before any data is written.

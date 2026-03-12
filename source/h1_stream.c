@@ -582,7 +582,6 @@ struct aws_h1_stream *aws_h1_stream_new_request(
 
     /* Set manual data writes flag from options */
     stream->synced_data.using_manual_data_writes = options->use_manual_data_writes;
-    stream->thread_data.using_manual_data_writes = options->use_manual_data_writes;
 
     /* Validate request and cache info that the encoder will eventually need */
     if (aws_h1_encoder_message_init_from_request(

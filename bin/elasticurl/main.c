@@ -66,7 +66,7 @@ struct elasticurl_ctx {
     bool exchange_completed;
     bool manual_write;
     bool manual_write_chunked;
-    int64_t manual_write_content_length;
+    uint32_t manual_write_content_length;
     struct aws_http_stream *stream;
     bool stream_ready;
 };
@@ -717,8 +717,9 @@ int main(int argc, char **argv) {
 
     /* Interactive prompt for manual-write mode */
     if (app_ctx.manual_write) {
-        if (!strcmp(app_ctx.verb, "GET")) {
-            app_ctx.verb = "POST";
+        if (!strcmp(app_ctx.verb, "POST")) {
+            fprintf(stderr, "Only POST requests allowed for manual_writes. Exiting... \n");
+            return 1;
         }
         fprintf(stderr, "Manual write mode enabled.\n");
         fprintf(stderr, "Content-Length (leave empty for chunked transfer encoding): ");
