@@ -1293,6 +1293,142 @@ TEST_CASE(h2_sm_with_initial_settings) {
     return s_tester_clean_up();
 }
 
+/* Test that max_total_streams limits the total number of active streams */
+TEST_CASE(h2_sm_mock_max_total_streams) {
+    (void)ctx;
+    size_t max_total_streams = 5;
+    struct sm_tester_options options = {
+        .max_connections = 3,
+        .max_concurrent_streams_per_connection = 10,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+
+    /* Set max_total_streams on the stream manager */
+    s_tester.stream_manager->max_total_streams = max_total_streams;
+
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+
+    /* Try to acquire 10 streams, but only 5 should be created initially */
+    int num_to_acquire = 10;
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+
+    /* Wait for connection to be made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+
+    /* Should have acquired only max_total_streams streams */
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(max_total_streams));
+    ASSERT_UINT_EQUALS(max_total_streams, aws_array_list_length(&s_tester.streams));
+
+    /* Complete 3 streams */
+    struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
+    s_fake_connection_complete_streams(fake_connection, 3, false);
+    s_drain_all_fake_connection_testing_channel();
+
+    /* Now 3 more streams should be created (total of 8 acquired) */
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(8));
+    ASSERT_UINT_EQUALS(8, aws_array_list_length(&s_tester.streams));
+
+    /* Complete 2 more streams */
+    s_fake_connection_complete_streams(fake_connection, 2, false);
+    s_drain_all_fake_connection_testing_channel();
+
+    /* The remaining 2 streams should now be created (total of 10) */
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(10));
+    ASSERT_UINT_EQUALS(10, aws_array_list_length(&s_tester.streams));
+
+    /* Complete all remaining streams */
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+
+    return s_tester_clean_up();
+}
+
+/* Test that max_total_streams works with multiple connections */
+TEST_CASE(h2_sm_mock_max_total_streams_multiple_connections) {
+    (void)ctx;
+    size_t max_total_streams = 8;
+    struct sm_tester_options options = {
+        .max_connections = 4,
+        .max_concurrent_streams_per_connection = 3,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+
+    /* Set max_total_streams */
+    s_tester.stream_manager->max_total_streams = max_total_streams;
+
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+
+    /* Try to acquire 15 streams */
+    int num_to_acquire = 15;
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+
+    /* all 4 connections should be created for the pending streams, but only 8 streams will be created in total */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(4));
+    s_drain_all_fake_connection_testing_channel();
+
+    /* Should have acquired only max_total_streams streams */
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(max_total_streams));
+    ASSERT_UINT_EQUALS(max_total_streams, aws_array_list_length(&s_tester.streams));
+    /* 4 connections total */
+    ASSERT_UINT_EQUALS(4, aws_array_list_length(&s_tester.fake_connections));
+
+    /* Complete 4 streams from first 2 connections, since they must have at least 2 streams. */
+    for (size_t i = 0; i < 2; ++i) {
+        struct sm_fake_connection *fake_connection = s_get_fake_connection(i);
+        s_fake_connection_complete_streams(fake_connection, 2, false);
+    }
+    s_drain_all_fake_connection_testing_channel();
+
+    /* 4 more streams should be created (total of 12) */
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(12));
+    ASSERT_UINT_EQUALS(12, aws_array_list_length(&s_tester.streams));
+
+    /* Complete remaining streams */
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+    s_drain_all_fake_connection_testing_channel();
+
+    /* All 15 streams should eventually be acquired */
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(15));
+    ASSERT_UINT_EQUALS(15, aws_array_list_length(&s_tester.streams));
+
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+
+    return s_tester_clean_up();
+}
+
+/* Test that max_total_streams = 0 means no limit (default behavior) */
+TEST_CASE(h2_sm_mock_max_total_streams_zero_means_no_limit) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 2,
+        .max_concurrent_streams_per_connection = 5,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+
+    /* max_total_streams defaults to 0 (no limit) */
+    ASSERT_UINT_EQUALS(0, s_tester.stream_manager->max_total_streams);
+
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+
+    /* Acquire 10 streams - all should be created immediately */
+    int num_to_acquire = 10;
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(2)); /* 2 connections needed for 10 streams */
+    s_drain_all_fake_connection_testing_channel();
+
+    /* All 10 streams should be acquired without waiting */
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(num_to_acquire));
+    ASSERT_UINT_EQUALS(num_to_acquire, aws_array_list_length(&s_tester.streams));
+
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+
+    return s_tester_clean_up();
+}
+
 /*******************************************************************************
  * Net test, that makes real HTTP/2 connection and requests
  ******************************************************************************/

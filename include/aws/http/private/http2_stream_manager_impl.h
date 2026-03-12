@@ -115,6 +115,14 @@ struct aws_http2_stream_manager {
     size_t max_concurrent_streams_per_connection;
 
     /**
+     * Optional. 0 means no limit (default).
+     * The max total number of streams that can be active across all connections at the same time.
+     * When this limit is reached, the stream manager will wait for existing streams to complete
+     * before creating new ones, even if connections have available capacity.
+     */
+    size_t max_total_streams;
+
+    /**
      * Task to invoke pending acquisition callbacks asynchronously if stream manager is shutting.
      */
     struct aws_event_loop *finish_pending_stream_acquisitions_task_event_loop;

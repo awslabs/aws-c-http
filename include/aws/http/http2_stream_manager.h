@@ -155,8 +155,16 @@ struct aws_http2_stream_manager_options {
     /**
      * Required.
      * The max number of connections will be open at same time. If all the connections are full, manager will wait until
-     * available to vender more streams */
+     * available to vender more streams
+     */
     size_t max_connections;
+    /**
+     * Optional.
+     * The max total number of streams that can be active across all connections at the same time.
+     * 0 means no limit (default). When this limit is reached, the stream manager will wait for
+     * existing streams to complete before creating new ones, even if connections have available capacity.
+     */
+    size_t max_total_streams;
 };
 
 struct aws_http2_stream_manager_acquire_stream_options {

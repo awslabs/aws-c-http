@@ -151,6 +151,25 @@ static void s_sm_try_assign_connection_to_pending_stream_acquisition_synced(
     struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition) {
 
     AWS_ASSERT(pending_stream_acquisition->sm_connection == NULL);
+
+    /* Check if we've reached the max_total_streams limit */
+    if (stream_manager->max_total_streams > 0) {
+        size_t total_active_streams =
+            stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_OPEN_STREAM] +
+            stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_MAKE_REQUESTS];
+        if (total_active_streams >= stream_manager->max_total_streams) {
+            /* We've reached the limit, cannot assign a connection yet */
+            STREAM_MANAGER_LOGF(
+                DEBUG,
+                stream_manager,
+                "acquisition:%p waiting - max_total_streams limit reached (%" PRIu64 "/%" PRIu64 ")",
+                (void *)pending_stream_acquisition,
+                (uint64_t)total_active_streams,
+                (uint64_t)stream_manager->max_total_streams);
+            return;
+        }
+    }
+
     int errored = 0;
     if (aws_random_access_set_get_size(&stream_manager->synced_data.ideal_available_set)) {
         /**
@@ -1156,6 +1175,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     stream_manager->max_concurrent_streams_per_connection =
         options->max_concurrent_streams_per_connection ? options->max_concurrent_streams_per_connection : UINT32_MAX;
     stream_manager->max_connections = options->max_connections;
+    stream_manager->max_total_streams = options->max_total_streams; /* 0 means no limit */
     stream_manager->close_connection_on_server_error = options->close_connection_on_server_error;
 
     return stream_manager;
