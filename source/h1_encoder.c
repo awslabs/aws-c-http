@@ -152,13 +152,9 @@ static int s_scan_outgoing_headers(
 
 static int s_validate_manual_data_writes(const struct aws_h1_encoder_message *encoder_message, bool has_body_stream) {
 
-    /* Manual data writes require either Content-Length or chunked encoding */
-    if (encoder_message->content_length == 0 && !encoder_message->has_chunked_encoding_header) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM,
-            "id=static: Manual data writes require Content-Length header or Transfer-Encoding: chunked");
-        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
-    }
+    /* Manual data writes require either Content-Length or chunked encoding.
+     * Note: Transfer-Encoding: chunked is automatically added by h1_stream if neither header is present. */
+    AWS_ASSERT(encoder_message->content_length > 0 || encoder_message->has_chunked_encoding_header);
 
     /* Manual data writes cannot have body stream */
     if (has_body_stream) {

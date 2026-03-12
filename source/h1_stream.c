@@ -29,7 +29,6 @@ struct aws_h1_data_write *aws_h1_data_write_new(
 }
 
 void aws_h1_data_write_destroy(struct aws_h1_data_write *data_write) {
-    AWS_PRECONDITION(data_write);
     aws_input_stream_release(data_write->data);
     aws_mem_release(data_write->allocator, data_write);
 }
