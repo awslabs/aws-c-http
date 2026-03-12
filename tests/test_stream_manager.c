@@ -1345,6 +1345,9 @@ TEST_CASE(h2_sm_mock_max_concurrent_streams) {
     /* Complete all remaining streams */
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
     s_drain_all_fake_connection_testing_channel();
+    /* completed the remain streams that can be created afterwards */
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+    s_drain_all_fake_connection_testing_channel();
     /* Should complete without error */
     ASSERT_INT_EQUALS(0, s_tester.stream_complete_errors);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.stream_completed_error_code);
