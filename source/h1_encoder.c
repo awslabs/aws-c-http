@@ -150,21 +150,6 @@ static int s_scan_outgoing_headers(
     return AWS_OP_SUCCESS;
 }
 
-static int s_validate_manual_data_writes(const struct aws_h1_encoder_message *encoder_message, bool has_body_stream) {
-
-    /* Manual data writes require either Content-Length or chunked encoding.
-     * Note: Transfer-Encoding: chunked is automatically added by h1_stream if neither header is present. */
-    AWS_ASSERT(encoder_message->content_length > 0 || encoder_message->has_chunked_encoding_header);
-
-    /* Manual data writes cannot have body stream */
-    if (has_body_stream) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Manual data writes cannot have body stream");
-        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
-    }
-
-    return AWS_OP_SUCCESS;
-}
-
 static int s_scan_outgoing_trailer(const struct aws_http_headers *headers, size_t *out_size) {
     const size_t num_headers = aws_http_headers_count(headers);
     size_t total = 0;
@@ -320,8 +305,9 @@ int aws_h1_encoder_message_init_from_request(
 
     /* Validate manual data writes configuration */
     if (use_manual_data_writes) {
-        err = s_validate_manual_data_writes(message, message->body != NULL);
-        if (err) {
+        if (message->body != NULL) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Manual data writes cannot have body stream");
+            aws_raise_error(AWS_ERROR_HTTP_INVALID_STATUS_CODE);
             goto error;
         }
         /* Content-Length manual writes use pending_data_write_list.
