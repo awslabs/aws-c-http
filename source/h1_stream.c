@@ -406,7 +406,7 @@ static int s_stream_write_data(
             goto error;
         }
 
-        is_chunked = stream->synced_data.using_chunked_encoding;
+        bool is_chunked = stream->synced_data.using_chunked_encoding;
 
         if (is_chunked) {
             int64_t data_len = 0;
