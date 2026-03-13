@@ -255,6 +255,7 @@ int aws_h1_encoder_message_init_from_request(
     message->body = aws_input_stream_acquire(aws_http_message_get_body_stream(request));
     message->pending_chunk_list = pending_chunk_list;
     message->pending_data_write_list = pending_data_write_list;
+    message->has_manual_data_writes = use_manual_data_writes;
 
     struct aws_byte_cursor method;
     int err = aws_http_message_get_request_method(request, &method);
@@ -745,7 +746,7 @@ static int s_state_fn_head(struct aws_h1_encoder *encoder, struct aws_byte_buf *
     aws_byte_buf_clean_up(&encoder->message->outgoing_head_buf);
 
     /* Pick next state */
-    if (!encoder->message->has_chunked_encoding_header && encoder->message->pending_data_write_list && encoder->message->content_length) {
+    if (!encoder->message->has_chunked_encoding_header && encoder->message->has_manual_data_writes && encoder->message->content_length) {
         /* Manual data writes with Content-Length */
         return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT);
 
