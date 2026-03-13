@@ -375,6 +375,7 @@ static int s_stream_write_data(
     struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
 
     bool should_schedule_task = false;
+    bool is_chunked = false;
 
 
     { /* BEGIN CRITICAL SECTION */
@@ -406,35 +407,9 @@ static int s_stream_write_data(
             goto error;
         }
 
-        bool is_chunked = stream->synced_data.using_chunked_encoding;
+        is_chunked = stream->synced_data.using_chunked_encoding;
 
-        if (is_chunked) {
-            int64_t data_len = 0;
-            if (aws_input_stream_get_length(options->data, &data_len)) {
-                AWS_LOGF_ERROR(
-                    AWS_LS_HTTP_STREAM,
-                    "id=%p: Failed to get data stream length for chunked conversion",
-                    (void *)stream_base);
-                goto error;
-            }
-
-            struct aws_http1_chunk_options chunk_opts = {
-                .chunk_data = options->data,
-                .chunk_data_size = (uint64_t) data_len,
-                .on_complete = options->on_complete,
-                .user_data = options->user_data,
-            };
-
-            if(!aws_http1_stream_write_chunk(stream_base, &chunk_opts)) {
-                AWS_LOGF_ERROR(
-                    AWS_LS_HTTP_STREAM,
-                    "id=%p: Failed to write chunk to stream, error %d (%s).",
-                    (void *)stream_base,
-                    aws_last_error(),
-                    aws_error_name(aws_last_error()));
-                goto error;
-            }
-        } else {
+        if (!is_chunked) {
             struct aws_h1_data_write *data_write = aws_h1_data_write_new(stream_base->alloc, options);
             if (!data_write) {
                 AWS_LOGF_ERROR(
@@ -455,6 +430,34 @@ static int s_stream_write_data(
 
         s_stream_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
+
+    if (is_chunked) {
+        int64_t data_len = 0;
+        if (aws_input_stream_get_length(options->data, &data_len)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Failed to get data stream length for chunked conversion",
+                (void *)stream_base);
+            goto error;
+        }
+
+        struct aws_http1_chunk_options chunk_opts = {
+            .chunk_data = options->data,
+            .chunk_data_size = (uint64_t) data_len,
+            .on_complete = options->on_complete,
+            .user_data = options->user_data,
+        };
+
+        if(aws_http1_stream_write_chunk(stream_base, &chunk_opts)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Failed to write chunk to stream, error %d (%s).",
+                (void *)stream_base,
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
+            goto error;
+        }
+    }
 
     if (should_schedule_task) {
         aws_atomic_fetch_add(&stream->base.refcount, 1);
