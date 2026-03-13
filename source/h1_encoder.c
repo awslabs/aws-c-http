@@ -1036,6 +1036,7 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
     const size_t prev_len = dst->len;
     int err = aws_input_stream_read(data_write->data, dst);
     const size_t amount_read = dst->len - prev_len;
+    int error_code = AWS_OP_ERR;
 
     if (err) {
         ENCODER_LOGF(
@@ -1044,10 +1045,10 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
             "Failed to read data write stream, error %d (%s)",
             aws_last_error(),
             aws_error_name(aws_last_error()));
-        int error_code = aws_last_error();
+        error_code = aws_last_error();
         aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, error_code);
         encoder->message->current_data_write = NULL;
-        return aws_raise_error(error_code);
+        goto error;
     }
 
     /* Increment progress_bytes and check we haven't exceeded Content-Length */
@@ -1058,7 +1059,8 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
         aws_h1_data_write_complete_and_destroy(
             data_write, encoder->current_stream, AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
         encoder->message->current_data_write = NULL;
-        return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+        error_code = AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT;
+        goto error;
     }
 
     ENCODER_LOGF(
@@ -1080,10 +1082,10 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
                 "Failed to query data write stream status, error %d (%s)",
                 aws_last_error(),
                 aws_error_name(aws_last_error()));
-            int error_code = aws_last_error();
+            error_code = aws_last_error();
             aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, error_code);
             encoder->message->current_data_write = NULL;
-            return aws_raise_error(error_code);
+            goto error;
         }
 
         if (!status.is_end_of_stream) {
@@ -1102,10 +1104,10 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
             "Failed to query data write stream status, error %d (%s)",
             aws_last_error(),
             aws_error_name(aws_last_error()));
-        int error_code = aws_last_error();
+        error_code = aws_last_error();
         aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, error_code);
         encoder->message->current_data_write = NULL;
-        return aws_raise_error(error_code);
+        goto error;
     }
 
     if (!status.is_end_of_stream) {
@@ -1128,13 +1130,17 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
                 "Manual data writes sent %" PRIu64 " bytes but Content-Length is %" PRIu64,
                 encoder->progress_bytes,
                 encoder->message->content_length);
-            return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+            error_code = AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT;
+            goto error;
         }
         return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DONE);
     }
 
     /* More writes expected, go back to waiting for next write */
     return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT);
+
+error:
+    return aws_raise_error(error_code);
 }
 
 /* Message is done, loop back to start of state machine */
