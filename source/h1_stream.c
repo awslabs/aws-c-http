@@ -402,7 +402,7 @@ static int s_stream_write_data(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Cannot write data after final write (end_stream=true).",
                 (void *)stream_base);
-            aws_raise_error(AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED);
+            aws_raise_error(AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED);
             goto error;
         }
 
