@@ -254,9 +254,7 @@ int aws_h1_encoder_message_init_from_request(
 
     message->body = aws_input_stream_acquire(aws_http_message_get_body_stream(request));
     message->pending_chunk_list = pending_chunk_list;
-    /* Only set pending_data_write_list for Content-Length manual writes.
-     * Chunked manual writes go through pending_chunk_list instead (converted in s_stream_write_data). */
-    message->pending_data_write_list = NULL;
+    message->pending_data_write_list = pending_data_write_list;
 
     struct aws_byte_cursor method;
     int err = aws_http_message_get_request_method(request, &method);
@@ -301,20 +299,6 @@ int aws_h1_encoder_message_init_from_request(
         use_manual_data_writes);
     if (err) {
         goto error;
-    }
-
-    /* Validate manual data writes configuration */
-    if (use_manual_data_writes) {
-        if (message->body != NULL) {
-            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Manual data writes cannot have body stream");
-            aws_raise_error(AWS_ERROR_HTTP_INVALID_STATUS_CODE);
-            goto error;
-        }
-        /* Content-Length manual writes use pending_data_write_list.
-         * Chunked manual writes go through pending_chunk_list instead. */
-        if (!message->has_chunked_encoding_header) {
-            message->pending_data_write_list = pending_data_write_list;
-        }
     }
 
     /* request-line: "{method} {uri} {version}\r\n" */
@@ -761,7 +745,7 @@ static int s_state_fn_head(struct aws_h1_encoder *encoder, struct aws_byte_buf *
     aws_byte_buf_clean_up(&encoder->message->outgoing_head_buf);
 
     /* Pick next state */
-    if (encoder->message->pending_data_write_list && encoder->message->content_length) {
+    if (!encoder->message->has_chunked_encoding_header && encoder->message->pending_data_write_list && encoder->message->content_length) {
         /* Manual data writes with Content-Length */
         return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT);
 
