@@ -1072,29 +1072,6 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
         encoder->progress_bytes,
         encoder->message->content_length);
 
-    /* Check if this stream is done */
-    if (amount_read == 0) {
-        struct aws_stream_status status;
-        err = aws_input_stream_get_status(data_write->data, &status);
-        if (err) {
-            ENCODER_LOGF(
-                ERROR,
-                encoder,
-                "Failed to query data write stream status, error %d (%s)",
-                aws_last_error(),
-                aws_error_name(aws_last_error()));
-            error_code = aws_last_error();
-            aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, error_code);
-            encoder->message->current_data_write = NULL;
-            goto error;
-        }
-
-        if (!status.is_end_of_stream) {
-            /* Stream didn't provide data but isn't done yet, remain in state */
-            return AWS_OP_SUCCESS;
-        }
-    }
-
     /* If we read something or reached end of stream, check if stream is complete */
     struct aws_stream_status status;
     err = aws_input_stream_get_status(data_write->data, &status);
