@@ -24,7 +24,6 @@
 #include <aws/io/uri.h>
 
 #include <inttypes.h>
-#include <stdint.h>
 
 #ifdef _MSC_VER
 #    pragma warning(disable : 4996) /* Disable warnings about fopen() being insecure */
@@ -67,7 +66,7 @@ struct elasticurl_ctx {
     bool exchange_completed;
     bool manual_write;
     bool manual_write_chunked;
-    uint32_t manual_write_content_length;
+    int64_t manual_write_content_length;
     struct aws_http_stream *stream;
     bool stream_ready;
 };
@@ -455,7 +454,7 @@ static struct aws_http_message *s_build_http_request(
         } else if (!app_ctx->manual_write_chunked) {
             char content_length[64];
             AWS_ZERO_ARRAY(content_length);
-            snprintf(content_length, sizeof(content_length), "%" PRIu32, app_ctx->manual_write_content_length);
+            snprintf(content_length, sizeof(content_length), "%" PRIi64, app_ctx->manual_write_content_length);
             struct aws_http_header cl_header = {
                 .name = aws_byte_cursor_from_c_str("content-length"),
                 .value = aws_byte_cursor_from_c_str(content_length),
@@ -624,7 +623,7 @@ static void s_manual_write_loop(struct elasticurl_ctx *app_ctx) {
         return;
     }
 
-    uint32_t bytes_sent = 0;
+    int64_t bytes_sent = 0;
     char line_buf[4096];
 
     fprintf(stderr, "Enter data (empty line to finish):\n");
@@ -668,8 +667,8 @@ static void s_manual_write_loop(struct elasticurl_ctx *app_ctx) {
             break;
         }
 
-        bytes_sent += (uint32_t)len;
-        fprintf(stderr, "Sent %zu bytes (total: %" PRIu32 ")\n", len, bytes_sent);
+        bytes_sent += (int64_t)len;
+        fprintf(stderr, "Sent %zu bytes (total: %" PRIi64 ")\n", len, bytes_sent);
     }
 
     /* Send final write */
@@ -685,7 +684,7 @@ static void s_manual_write_loop(struct elasticurl_ctx *app_ctx) {
     if (aws_http_stream_write_data(app_ctx->stream, &final_opts)) {
         fprintf(stderr, "final write_data failed: %s\n", aws_error_debug_str(aws_last_error()));
     } else {
-        fprintf(stderr, "Stream complete. Sent %" PRIu32 " bytes.\n", bytes_sent);
+        fprintf(stderr, "Stream complete. Sent %" PRIi64 " bytes.\n", bytes_sent);
     }
 
     aws_input_stream_release(empty_stream);
@@ -726,9 +725,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Content-Length (leave empty for chunked transfer encoding): ");
         char cl_buf[64];
         if (fgets(cl_buf, sizeof(cl_buf), stdin) && cl_buf[0] != '\n') {
-            app_ctx.manual_write_content_length = (uint32_t)atoll(cl_buf);
+            app_ctx.manual_write_content_length = (int64_t)atoll(cl_buf);
             app_ctx.manual_write_chunked = false;
-            fprintf(stderr, "Using Content-Length: %" PRIu32 "\n", app_ctx.manual_write_content_length);
+            fprintf(stderr, "Using Content-Length: %" PRIi64 "\n", app_ctx.manual_write_content_length);
         } else {
             app_ctx.manual_write_chunked = true;
             fprintf(stderr, "Using chunked transfer encoding.\n");
