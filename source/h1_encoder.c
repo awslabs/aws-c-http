@@ -746,7 +746,8 @@ static int s_state_fn_head(struct aws_h1_encoder *encoder, struct aws_byte_buf *
     aws_byte_buf_clean_up(&encoder->message->outgoing_head_buf);
 
     /* Pick next state */
-    if (!encoder->message->has_chunked_encoding_header && encoder->message->has_manual_data_writes && encoder->message->content_length) {
+    if (!encoder->message->has_chunked_encoding_header && encoder->message->has_manual_data_writes &&
+        encoder->message->content_length) {
         /* Manual data writes with Content-Length */
         return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT);
 

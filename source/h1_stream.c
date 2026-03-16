@@ -377,14 +377,13 @@ static int s_stream_write_data(
     bool should_schedule_task = false;
     bool is_chunked = false;
 
-
     { /* BEGIN CRITICAL SECTION */
         s_stream_lock_synced_data(stream);
 
         if (stream->synced_data.api_state != AWS_H1_STREAM_API_STATE_ACTIVE) {
             int error_code = (stream->synced_data.api_state == AWS_H1_STREAM_API_STATE_INIT)
-                            ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
-                            : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
+                                 ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
+                                 : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
             aws_raise_error(error_code);
             goto error;
         }
@@ -443,12 +442,12 @@ static int s_stream_write_data(
 
         struct aws_http1_chunk_options chunk_opts = {
             .chunk_data = options->data,
-            .chunk_data_size = (uint64_t) data_len,
+            .chunk_data_size = (uint64_t)data_len,
             .on_complete = options->on_complete,
             .user_data = options->user_data,
         };
 
-        if(aws_http1_stream_write_chunk(stream_base, &chunk_opts)) {
+        if (aws_http1_stream_write_chunk(stream_base, &chunk_opts)) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Failed to write chunk to stream, error %d (%s).",
@@ -567,15 +566,11 @@ struct aws_h1_stream *aws_h1_stream_new_request(
     /* For manual data writes, add Transfer-Encoding: chunked if neither Content-Length nor Transfer-Encoding is set */
     if (options->use_manual_data_writes) {
         struct aws_http_headers *headers = aws_http_message_get_headers(options->request);
-        bool has_content_length =
-            aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Content-Length"));
-        bool has_transfer_encoding =
-            aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Transfer-Encoding"));
+        bool has_content_length = aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Content-Length"));
+        bool has_transfer_encoding = aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Transfer-Encoding"));
         if (!has_content_length && !has_transfer_encoding) {
             if (aws_http_headers_add(
-                    headers,
-                    aws_byte_cursor_from_c_str("Transfer-Encoding"),
-                    aws_byte_cursor_from_c_str("chunked"))) {
+                    headers, aws_byte_cursor_from_c_str("Transfer-Encoding"), aws_byte_cursor_from_c_str("chunked"))) {
                 goto error;
             }
         }
