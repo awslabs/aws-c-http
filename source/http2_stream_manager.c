@@ -152,24 +152,6 @@ static void s_sm_try_assign_connection_to_pending_stream_acquisition_synced(
 
     AWS_ASSERT(pending_stream_acquisition->sm_connection == NULL);
 
-    /* Check if we've reached the max_concurrent_streams limit */
-    if (stream_manager->max_concurrent_streams > 0) {
-        size_t total_active_streams =
-            stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_OPEN_STREAM] +
-            stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_MAKE_REQUESTS];
-        if (total_active_streams >= stream_manager->max_concurrent_streams) {
-            /* We've reached the limit, cannot assign a connection yet */
-            STREAM_MANAGER_LOGF(
-                DEBUG,
-                stream_manager,
-                "acquisition:%p waiting - max_concurrent_streams limit reached (%" PRIu64 "/%" PRIu64 ")",
-                (void *)pending_stream_acquisition,
-                (uint64_t)total_active_streams,
-                (uint64_t)stream_manager->max_concurrent_streams);
-            return;
-        }
-    }
-
     int errored = 0;
     if (aws_random_access_set_get_size(&stream_manager->synced_data.ideal_available_set)) {
         /**
@@ -318,6 +300,18 @@ static void s_finish_pending_stream_acquisitions_task(struct aws_task *task, voi
 /* helper function for building the transaction: how many new connections we should request */
 static void s_check_new_connections_needed_synced(struct aws_http2_stream_management_transaction *work) {
     struct aws_http2_stream_manager *stream_manager = work->stream_manager;
+
+    if (stream_manager->max_concurrent_streams > 0) {
+        /* avoid acquiring for connection when no more streams are allowed */
+        size_t total_active_streams =
+            stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_OPEN_STREAM] +
+            stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_MAKE_REQUESTS];
+        if (total_active_streams >= stream_manager->max_concurrent_streams) {
+            /* We've reached the limit, avoid creating new connection in case of having connection not being tracked by
+             * streams. */
+            return;
+        }
+    }
     /* The ideal new connection we need to fit all the pending stream acquisitions */
     size_t ideal_new_connection_count =
         stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION] /
@@ -360,6 +354,23 @@ static void s_check_new_connections_needed_synced(struct aws_http2_stream_manage
 static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2_stream_management_transaction *work) {
     struct aws_http2_stream_manager *stream_manager = work->stream_manager;
     if (stream_manager->synced_data.state == AWS_H2SMST_READY) {
+
+        /* Steps 0: Check if we've reached the max_concurrent_streams limit */
+        if (stream_manager->max_concurrent_streams > 0) {
+            size_t total_active_streams =
+                stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_OPEN_STREAM] +
+                stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_MAKE_REQUESTS];
+            if (total_active_streams >= stream_manager->max_concurrent_streams) {
+                /* We've reached the limit, skip building the transactions */
+                STREAM_MANAGER_LOGF(
+                    DEBUG,
+                    stream_manager,
+                    "stream manager waiting - max_concurrent_streams limit reached (%" PRIu64 "/%" PRIu64 ")",
+                    (uint64_t)total_active_streams,
+                    (uint64_t)stream_manager->max_concurrent_streams);
+                return;
+            }
+        }
 
         /* Steps 1: Pending acquisitions of stream */
         while (!aws_linked_list_empty(&stream_manager->synced_data.pending_stream_acquisitions)) {
