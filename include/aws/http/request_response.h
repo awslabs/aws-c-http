@@ -307,7 +307,7 @@ struct aws_http_make_request_options {
      *
      * HTTP/1.1 requirements:
      * - SHOULD have either `Content-Length` OR `Transfer-Encoding: chunked` header (but not both).
-     *   Transfer-Encoding header will be automatically added Content-Length is absent.
+     *   Transfer-Encoding: chunked header will be automatically added if neither header is set.
      * - MUST NOT have a body stream set. Fails with AWS_ERROR_HTTP_INVALID_HEADER_FIELD otherwise.
      * - With `Content-Length`: total bytes written must exactly match the declared length.
      *   Fails with AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT if data exceeds Content-Length,

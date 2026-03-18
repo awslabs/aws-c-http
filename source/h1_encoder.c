@@ -142,6 +142,12 @@ static int s_scan_outgoing_headers(
         encoder_message->has_chunked_encoding_header = false;
     }
 
+    if (use_manual_data_writes && has_body_stream) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM, "id=static: Body stream must not be set when manual data writes are enabled");
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
+    }
+
     if (encoder_message->content_length > 0 && !has_body_stream && !use_manual_data_writes) {
         return aws_raise_error(AWS_ERROR_HTTP_MISSING_BODY_STREAM);
     }

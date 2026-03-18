@@ -410,15 +410,6 @@ static int s_stream_write_data(
 
         if (!is_chunked) {
             struct aws_h1_data_write *data_write = aws_h1_data_write_new(stream_base->alloc, options);
-            if (!data_write) {
-                AWS_LOGF_ERROR(
-                    AWS_LS_HTTP_STREAM,
-                    "id=%p: Failed to create data write, error %d (%s).",
-                    (void *)stream_base,
-                    aws_last_error(),
-                    aws_error_name(aws_last_error()));
-                goto error;
-            }
 
             aws_linked_list_push_back(&stream->synced_data.pending_data_write_list, &data_write->node);
             should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
@@ -432,12 +423,12 @@ static int s_stream_write_data(
 
     if (is_chunked) {
         int64_t data_len = 0;
-        if (aws_input_stream_get_length(options->data, &data_len)) {
+        if (!options->data || aws_input_stream_get_length(options->data, &data_len)) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Failed to get data stream length for chunked conversion",
-                (void *)stream_base);
-            goto error;
+                (void *)options->data);
+            return AWS_OP_ERR;
         }
 
         struct aws_http1_chunk_options chunk_opts = {
@@ -454,7 +445,7 @@ static int s_stream_write_data(
                 (void *)stream_base,
                 aws_last_error(),
                 aws_error_name(aws_last_error()));
-            goto error;
+            return AWS_OP_ERR;
         }
     }
 
