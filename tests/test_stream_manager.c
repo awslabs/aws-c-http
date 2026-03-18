@@ -1373,78 +1373,35 @@ TEST_CASE(h2_sm_mock_max_concurrent_streams_multiple_connections) {
 
     /* Try to acquire 15 streams */
     int num_to_acquire = 15;
-    fprintf(stderr, "[EXTRA_LOG] About to acquire %d streams\n", num_to_acquire);
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
-    fprintf(stderr, "[EXTRA_LOG] Stream acquisition requests sent\n");
 
     /* all 4 connections should be created for the pending streams, but only 8 streams will be created in total */
-    fprintf(stderr, "[EXTRA_LOG] Waiting for 3 fake connections...\n");
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(3));
-    fprintf(
-        stderr,
-        "[EXTRA_LOG] Got 3 fake connections. Current count: %zu\n",
-        aws_array_list_length(&s_tester.fake_connections));
     s_drain_all_fake_connection_testing_channel();
 
     /* Should have acquired only max_concurrent_streams streams */
-    fprintf(stderr, "[EXTRA_LOG] Waiting for %zu streams to be acquired...\n", max_concurrent_streams);
-    fprintf(
-        stderr,
-        "[EXTRA_LOG] Current stream count: %zu, acquiring errors: %zu\n",
-        aws_array_list_length(&s_tester.streams),
-        s_tester.acquiring_stream_errors);
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(max_concurrent_streams));
-    fprintf(stderr, "[EXTRA_LOG] Got %zu streams acquired\n", aws_array_list_length(&s_tester.streams));
     ASSERT_UINT_EQUALS(max_concurrent_streams, aws_array_list_length(&s_tester.streams));
 
     /* Complete 4 streams from first 2 connections, since they must have at least 2 streams. */
-    fprintf(stderr, "[EXTRA_LOG] Completing 4 streams from first 2 connections...\n");
     for (size_t i = 0; i < 2; ++i) {
         struct sm_fake_connection *fake_connection = s_get_fake_connection(i);
         s_fake_connection_complete_streams(fake_connection, 2, false);
     }
     s_drain_all_fake_connection_testing_channel();
-    fprintf(
-        stderr,
-        "[EXTRA_LOG] Completed 4 streams. Current stream count: %zu\n",
-        aws_array_list_length(&s_tester.streams));
 
     /* 4 more streams should be created (total of 12) */
-    fprintf(stderr, "[EXTRA_LOG] Waiting for 12 streams to be acquired...\n");
-    fprintf(
-        stderr,
-        "[EXTRA_LOG] Current stream count: %zu, acquiring errors: %zu\n",
-        aws_array_list_length(&s_tester.streams),
-        s_tester.acquiring_stream_errors);
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(12));
-    fprintf(stderr, "[EXTRA_LOG] Got 12 streams acquired\n");
     ASSERT_UINT_EQUALS(12, aws_array_list_length(&s_tester.streams));
 
     /* Complete remaining streams */
-    fprintf(stderr, "[EXTRA_LOG] Completing remaining streams...\n");
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
     s_drain_all_fake_connection_testing_channel();
-    fprintf(
-        stderr,
-        "[EXTRA_LOG] Completed remaining streams. Current stream count: %zu\n",
-        aws_array_list_length(&s_tester.streams));
 
     /* All 15 streams should eventually be acquired */
-    fprintf(stderr, "[EXTRA_LOG] Waiting for all 15 streams to be acquired...\n");
-    fprintf(
-        stderr,
-        "[EXTRA_LOG] Current stream count: %zu, acquiring errors: %zu\n",
-        aws_array_list_length(&s_tester.streams),
-        s_tester.acquiring_stream_errors);
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(15));
-    fprintf(stderr, "[EXTRA_LOG] Got all 15 streams acquired\n");
     ASSERT_UINT_EQUALS(15, aws_array_list_length(&s_tester.streams));
 
-    fprintf(stderr, "[EXTRA_LOG] Completing all fake connection streams...\n");
-    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
-    fprintf(stderr, "[EXTRA_LOG] Test completed successfully\n");
-    s_drain_all_fake_connection_testing_channel();
-    /* completed the remain streams that can be created afterwards */
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
     s_drain_all_fake_connection_testing_channel();
     /* Should complete without error */
