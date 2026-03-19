@@ -5413,24 +5413,15 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_single) {
     };
     ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
 
-    /* Write data */
+    /* Single write with end_stream=true, termination chunk should be sent automatically */
     struct aws_byte_cursor data = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
     struct aws_input_stream *input_stream = aws_input_stream_new_from_cursor(allocator, &data);
 
     struct aws_http_stream_write_data_options write_options = {
         .data = input_stream,
-        .end_stream = false,
-    };
-    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
-
-    /* Send zero-length terminator */
-    struct aws_byte_cursor empty = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("");
-    struct aws_input_stream *empty_stream = aws_input_stream_new_from_cursor(allocator, &empty);
-    struct aws_http_stream_write_data_options terminator = {
-        .data = empty_stream,
         .end_stream = true,
     };
-    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &terminator));
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
 
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
 
@@ -5445,7 +5436,6 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_single) {
     ASSERT_SUCCESS(testing_channel_check_written_messages_str(&fixture.tester.testing_channel, allocator, expected));
 
     aws_input_stream_release(input_stream);
-    aws_input_stream_release(empty_stream);
     ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
     return AWS_OP_SUCCESS;
 }
@@ -5466,17 +5456,11 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_multiple) {
     struct aws_http_stream_write_data_options opts1 = {.data = stream1, .end_stream = false};
     ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &opts1));
 
-    /* Second write */
+    /* Second write with end_stream=true, termination chunk should be sent automatically */
     struct aws_byte_cursor data2 = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("more tests");
     struct aws_input_stream *stream2 = aws_input_stream_new_from_cursor(allocator, &data2);
-    struct aws_http_stream_write_data_options opts2 = {.data = stream2, .end_stream = false};
+    struct aws_http_stream_write_data_options opts2 = {.data = stream2, .end_stream = true};
     ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &opts2));
-
-    /* Send zero-length terminator */
-    struct aws_byte_cursor empty = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("");
-    struct aws_input_stream *empty_stream = aws_input_stream_new_from_cursor(allocator, &empty);
-    struct aws_http_stream_write_data_options terminator = {.data = empty_stream, .end_stream = true};
-    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &terminator));
 
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
 
@@ -5495,7 +5479,6 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_multiple) {
 
     aws_input_stream_release(stream1);
     aws_input_stream_release(stream2);
-    aws_input_stream_release(empty_stream);
     ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
     return AWS_OP_SUCCESS;
 }

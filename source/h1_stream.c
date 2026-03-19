@@ -374,6 +374,11 @@ static int s_stream_write_data(
     AWS_PRECONDITION(options);
     struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
 
+    /* NULL data without end_stream is a no-op */
+    if (!options->data && !options->end_stream) {
+        return AWS_OP_SUCCESS;
+    }
+
     bool should_schedule_task = false;
     bool is_chunked = false;
 
@@ -408,7 +413,7 @@ static int s_stream_write_data(
 
         is_chunked = stream->synced_data.using_chunked_encoding;
 
-        if (!is_chunked) {
+        if (!is_chunked && options->data) {
             struct aws_h1_data_write *data_write = aws_h1_data_write_new(stream_base->alloc, options);
 
             aws_linked_list_push_back(&stream->synced_data.pending_data_write_list, &data_write->node);
@@ -422,30 +427,48 @@ static int s_stream_write_data(
     } /* END CRITICAL SECTION */
 
     if (is_chunked) {
-        int64_t data_len = 0;
-        if (!options->data || aws_input_stream_get_length(options->data, &data_len)) {
-            AWS_LOGF_ERROR(
-                AWS_LS_HTTP_STREAM,
-                "id=%p: Failed to get data stream length for chunked conversion",
-                (void *)options->data);
-            return AWS_OP_ERR;
+        /* Send user's data as a chunk if present */
+        if (options->data) {
+            int64_t data_len = 0;
+            if (aws_input_stream_get_length(options->data, &data_len)) {
+                AWS_LOGF_ERROR(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Failed to get data stream length for chunked conversion",
+                    (void *)stream_base);
+                return AWS_OP_ERR;
+            }
+
+            struct aws_http1_chunk_options chunk_opts = {
+                .chunk_data = options->data,
+                .chunk_data_size = (uint64_t)data_len,
+                .on_complete = options->on_complete,
+                .user_data = options->user_data,
+            };
+
+            if (aws_http1_stream_write_chunk(stream_base, &chunk_opts)) {
+                AWS_LOGF_ERROR(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Failed to write chunk to stream, error %d (%s).",
+                    (void *)stream_base,
+                    aws_last_error(),
+                    aws_error_name(aws_last_error()));
+                return AWS_OP_ERR;
+            }
         }
 
-        struct aws_http1_chunk_options chunk_opts = {
-            .chunk_data = options->data,
-            .chunk_data_size = (uint64_t)data_len,
-            .on_complete = options->on_complete,
-            .user_data = options->user_data,
-        };
-
-        if (aws_http1_stream_write_chunk(stream_base, &chunk_opts)) {
-            AWS_LOGF_ERROR(
-                AWS_LS_HTTP_STREAM,
-                "id=%p: Failed to write chunk to stream, error %d (%s).",
-                (void *)stream_base,
-                aws_last_error(),
-                aws_error_name(aws_last_error()));
-            return AWS_OP_ERR;
+        /* end_stream on chunked requires a 0-length termination chunk */
+        if (options->end_stream) {
+            struct aws_http1_chunk_options termination_opts;
+            AWS_ZERO_STRUCT(termination_opts);
+            if (aws_http1_stream_write_chunk(stream_base, &termination_opts)) {
+                AWS_LOGF_ERROR(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Failed to write termination chunk, error %d (%s).",
+                    (void *)stream_base,
+                    aws_last_error(),
+                    aws_error_name(aws_last_error()));
+                return AWS_OP_ERR;
+            }
         }
     }
 
@@ -553,19 +576,6 @@ struct aws_h1_stream *aws_h1_stream_new_request(
 
     /* Set manual data writes flag from options */
     stream->synced_data.using_manual_data_writes = options->use_manual_data_writes;
-
-    /* For manual data writes, add Transfer-Encoding: chunked if neither Content-Length nor Transfer-Encoding is set */
-    if (options->use_manual_data_writes) {
-        struct aws_http_headers *headers = aws_http_message_get_headers(options->request);
-        bool has_content_length = aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Content-Length"));
-        bool has_transfer_encoding = aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Transfer-Encoding"));
-        if (!has_content_length && !has_transfer_encoding) {
-            if (aws_http_headers_add(
-                    headers, aws_byte_cursor_from_c_str("Transfer-Encoding"), aws_byte_cursor_from_c_str("chunked"))) {
-                goto error;
-            }
-        }
-    }
 
     /* Validate request and cache info that the encoder will eventually need */
     if (aws_h1_encoder_message_init_from_request(

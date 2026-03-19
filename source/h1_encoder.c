@@ -290,6 +290,21 @@ int aws_h1_encoder_message_init_from_request(
         goto error;
     }
 
+    /* For manual data writes, auto-add Transfer-Encoding: chunked if neither
+     * Content-Length nor Transfer-Encoding is set */
+    if (use_manual_data_writes) {
+        struct aws_http_headers *headers = aws_http_message_get_headers(request);
+        if (!aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Content-Length")) &&
+            !aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Transfer-Encoding"))) {
+            if (aws_http_headers_add(
+                    headers,
+                    aws_byte_cursor_from_c_str("Transfer-Encoding"),
+                    aws_byte_cursor_from_c_str("chunked"))) {
+                goto error;
+            }
+        }
+    }
+
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
 
     /**
