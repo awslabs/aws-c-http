@@ -163,8 +163,9 @@ struct aws_http2_stream_manager {
         struct aws_linked_list pending_stream_acquisitions;
 
         /**
-         * List of all created sm_connections, regardless of their state.
-         * This list tracks all aws_h2_sm_connection from creation to destruction.
+         * List of all aws_h2_sm_connection that holding the HTTP connection from connection manager.
+         * This list tracks all aws_h2_sm_connection from getting the connection from connection manager until release
+         * it back.
          * list of `struct aws_h2_sm_connection*`
          */
         struct aws_linked_list sm_connections;

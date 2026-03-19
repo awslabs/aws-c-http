@@ -186,7 +186,10 @@ static void s_sm_try_assign_connection_to_pending_stream_acquisition_synced(
             s_get_best_sm_connection_from_set(&stream_manager->synced_data.ideal_available_set);
         AWS_ASSERT(chosen_connection);
         pending_stream_acquisition->sm_connection = chosen_connection;
-        chosen_connection->num_streams_assigned++;
+        if (chosen_connection->num_streams_assigned++ == 0) {
+            /* If bump from 0, acquire the refcount for streams */
+            aws_ref_count_acquire(&chosen_connection->ref_count);
+        }
 
         STREAM_MANAGER_LOGF(
             DEBUG,
@@ -238,7 +241,10 @@ static void s_sm_try_assign_connection_to_pending_stream_acquisition_synced(
                 s_get_best_sm_connection_from_set(&stream_manager->synced_data.nonideal_available_set);
             AWS_ASSERT(chosen_connection);
             pending_stream_acquisition->sm_connection = chosen_connection;
-            chosen_connection->num_streams_assigned++;
+            if (chosen_connection->num_streams_assigned++ == 0) {
+                /* If bump from 0, acquire the refcount for streams */
+                aws_ref_count_acquire(&chosen_connection->ref_count);
+            }
 
             STREAM_MANAGER_LOGF(
                 DEBUG,
@@ -541,9 +547,6 @@ static void s_connection_ping_task(struct aws_channel_task *task, void *arg, enu
 static void s_sm_connection_destroy(void *user_data) {
     struct aws_h2_sm_connection *sm_connection = user_data;
 
-    /* Remove this connection from the sm_connections tracking list */
-    aws_linked_list_remove(&sm_connection->node);
-
     aws_mem_release(sm_connection->allocator, sm_connection);
 }
 
@@ -565,9 +568,6 @@ static struct aws_h2_sm_connection *s_sm_connection_new(
     sm_connection->state = AWS_H2SMCST_IDEAL;
     aws_ref_count_init(&sm_connection->ref_count, sm_connection, s_sm_connection_destroy);
 
-    /* Add this connection to the sm_connections tracking list */
-    aws_linked_list_push_back(&stream_manager->synced_data.sm_connections, &sm_connection->node);
-
     if (stream_manager->connection_ping_period_ns) {
         struct aws_channel *channel = aws_http_connection_get_channel(connection);
         uint64_t schedule_time = 0;
@@ -587,13 +587,18 @@ static void s_sm_connection_release_connection(struct aws_h2_sm_connection *sm_c
     if (sm_connection->connection) {
         /* Should only be invoked from the connection thread. */
         AWS_ASSERT(aws_channel_thread_is_callers_thread(aws_http_connection_get_channel(sm_connection->connection)));
+
+        s_lock_synced_data(sm_connection->stream_manager);
+        /* Remove this connection from the connection tracking list */
+        aws_linked_list_remove(&sm_connection->node);
+        s_unlock_synced_data(sm_connection->stream_manager);
         int error = aws_http_connection_manager_release_connection(
             sm_connection->stream_manager->connection_manager, sm_connection->connection);
         AWS_ASSERT(!error);
         (void)error;
         sm_connection->connection = NULL;
+        aws_ref_count_release(&sm_connection->ref_count);
     }
-    aws_ref_count_release(&sm_connection->ref_count);
 }
 
 static void s_sm_on_connection_acquired_failed_synced(
@@ -665,6 +670,8 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
             should_release_connection = true;
         } else {
             struct aws_h2_sm_connection *sm_connection = s_sm_connection_new(stream_manager, connection);
+            /* Add this connection to the sm_connections tracking list */
+            aws_linked_list_push_back(&stream_manager->synced_data.sm_connections, &sm_connection->node);
             bool added = false;
             re_error |=
                 aws_random_access_set_add(&stream_manager->synced_data.ideal_available_set, sm_connection, &added);
@@ -821,7 +828,10 @@ static void s_sm_connection_on_scheduled_stream_finishes(
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
         s_sm_count_decrease_synced(stream_manager, AWS_SMCT_OPEN_STREAM, 1);
-        --sm_connection->num_streams_assigned;
+        if (--sm_connection->num_streams_assigned == 0) {
+            /* Release the refcount for streams */
+            aws_ref_count_release(&sm_connection->ref_count);
+        }
         if (!connection_available) {
             /* It might be removed already, but, it's fine */
             aws_random_access_set_remove(&stream_manager->synced_data.ideal_available_set, sm_connection);
@@ -830,8 +840,8 @@ static void s_sm_connection_on_scheduled_stream_finishes(
             s_update_sm_connection_set_on_stream_finishes_synced(sm_connection, stream_manager);
         }
         s_aws_http2_stream_manager_build_transaction_synced(&work);
-        /* After we build transaction, if the sm_connection still have zero assigned stream, we can kill the
-         * sm_connection */
+        /* After we build transaction, if the sm_connection still have zero assigned stream, we can release the
+         * sm_connection back to the pool */
         if (sm_connection->num_streams_assigned == 0) {
             /* It might be removed already, but, it's fine */
             aws_random_access_set_remove(&stream_manager->synced_data.ideal_available_set, sm_connection);
@@ -1079,13 +1089,14 @@ static void s_stream_manager_start_destroy(void *user_data) {
 
     /* Iterate through all connections and clean up any that remain */
     struct aws_linked_list_node *node = aws_linked_list_begin(&stream_manager->synced_data.sm_connections);
-    while (node != aws_linked_list_end(&stream_manager->synced_data.sm_connections)) {
+    const struct aws_linked_list_node *end_node = aws_linked_list_end(&stream_manager->synced_data.sm_connections);
+    while (node != end_node) {
         struct aws_h2_sm_connection *sm_connection = AWS_CONTAINER_OF(node, struct aws_h2_sm_connection, node);
         /* Move to next node before potentially destroying current connection */
         node = aws_linked_list_next(node);
 
         /* Verify this connection has no outstanding streams */
-        AWS_ASSERT(sm_connection->num_streams_assigned == 0);
+        AWS_FATAL_ASSERT(sm_connection->num_streams_assigned == 0);
         /* Release the connection back to connection manager */
         if (sm_connection->connection) {
             aws_http_connection_manager_release_connection(
@@ -1094,7 +1105,11 @@ static void s_stream_manager_start_destroy(void *user_data) {
             --stream_manager->synced_data.holding_connections_count;
         }
 
-        /* Release the sm_connection refcount which will trigger destruction and removal from list */
+        s_lock_synced_data(sm_connection->stream_manager);
+        /* Remove this connection from the connection tracking list */
+        aws_linked_list_remove(&sm_connection->node);
+        s_unlock_synced_data(sm_connection->stream_manager);
+
         aws_ref_count_release(&sm_connection->ref_count);
     }
 
