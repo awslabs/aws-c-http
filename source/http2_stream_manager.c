@@ -333,11 +333,11 @@ static void s_check_new_connections_needed_synced(struct aws_http2_stream_manage
     struct aws_http2_stream_manager *stream_manager = work->stream_manager;
 
     /* avoid acquiring for connection when no more streams are allowed */
-    // if (!s_sm_allows_more_concurrent_streams(stream_manager)) {
-    //     /* We've reached the limit, avoid creating new connection in case of having connection not being tracked by
-    //      * streams. */
-    //     return;
-    // }
+    if (!s_sm_allows_more_concurrent_streams(stream_manager)) {
+        /* We've reached the limit, avoid creating new connection in case of having connection not being tracked by
+         * streams. */
+        return;
+    }
 
     /* The ideal new connection we need to fit all the pending stream acquisitions */
     size_t ideal_new_connection_count =
@@ -382,16 +382,16 @@ static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2
     struct aws_http2_stream_manager *stream_manager = work->stream_manager;
     if (stream_manager->synced_data.state == AWS_H2SMST_READY) {
 
-        // /* Steps 0: Check if we've reached the max_concurrent_streams limit */
-        // if (!s_sm_allows_more_concurrent_streams(stream_manager)) {
-        //     /* We've reached the limit, skip building the transactions */
-        //     STREAM_MANAGER_LOGF(
-        //         DEBUG,
-        //         stream_manager,
-        //         "stream manager waiting - max_concurrent_streams limit reached (%" PRIu64 ")",
-        //         (uint64_t)stream_manager->max_concurrent_streams);
-        //     return;
-        // }
+        /* Steps 0: Check if we've reached the max_concurrent_streams limit */
+        if (!s_sm_allows_more_concurrent_streams(stream_manager)) {
+            /* We've reached the limit, skip building the transactions */
+            STREAM_MANAGER_LOGF(
+                DEBUG,
+                stream_manager,
+                "stream manager waiting - max_concurrent_streams limit reached (%" PRIu64 ")",
+                (uint64_t)stream_manager->max_concurrent_streams);
+            return;
+        }
 
         /* Steps 1: Pending acquisitions of stream */
         while (!aws_linked_list_empty(&stream_manager->synced_data.pending_stream_acquisitions)) {
@@ -584,6 +584,7 @@ static struct aws_h2_sm_connection *s_sm_connection_new(
 
 static void s_sm_connection_release_connection(struct aws_h2_sm_connection *sm_connection) {
     AWS_ASSERT(sm_connection->num_streams_assigned == 0);
+    AWS_FATAL_ASSERT(sm_connection->connection != NULL);
     if (sm_connection->connection) {
         /* Should only be invoked from the connection thread. */
         AWS_ASSERT(aws_channel_thread_is_callers_thread(aws_http_connection_get_channel(sm_connection->connection)));
