@@ -297,9 +297,7 @@ int aws_h1_encoder_message_init_from_request(
         if (!aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Content-Length")) &&
             !aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Transfer-Encoding"))) {
             if (aws_http_headers_add(
-                    headers,
-                    aws_byte_cursor_from_c_str("Transfer-Encoding"),
-                    aws_byte_cursor_from_c_str("chunked"))) {
+                    headers, aws_byte_cursor_from_c_str("Transfer-Encoding"), aws_byte_cursor_from_c_str("chunked"))) {
                 goto error;
             }
         }
