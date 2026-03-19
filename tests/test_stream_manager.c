@@ -1120,12 +1120,12 @@ TEST_CASE(h2_sm_mock_goaway) {
     /* Fake peer send goaway */
     struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&fake_connection->peer));
-    struct aws_byte_cursor EXTRA_LOG_info;
-    AWS_ZERO_STRUCT(EXTRA_LOG_info);
+    struct aws_byte_cursor debug_info;
+    AWS_ZERO_STRUCT(debug_info);
     struct aws_http_stream *stream = NULL;
     aws_array_list_front(&s_tester.streams, &stream);
     struct aws_h2_frame *peer_frame =
-        aws_h2_frame_new_goaway(allocator, aws_http_stream_get_id(stream), AWS_HTTP2_ERR_NO_ERROR, EXTRA_LOG_info);
+        aws_h2_frame_new_goaway(allocator, aws_http_stream_get_id(stream), AWS_HTTP2_ERR_NO_ERROR, debug_info);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&fake_connection->peer, peer_frame));
     testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
 

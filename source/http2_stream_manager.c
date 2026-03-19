@@ -584,22 +584,20 @@ static struct aws_h2_sm_connection *s_sm_connection_new(
 
 static void s_sm_connection_release_connection(struct aws_h2_sm_connection *sm_connection) {
     AWS_ASSERT(sm_connection->num_streams_assigned == 0);
-    AWS_FATAL_ASSERT(sm_connection->connection != NULL);
-    if (sm_connection->connection) {
-        /* Should only be invoked from the connection thread. */
-        AWS_ASSERT(aws_channel_thread_is_callers_thread(aws_http_connection_get_channel(sm_connection->connection)));
+    AWS_ASSERT(sm_connection->connection != NULL);
+    /* Should only be invoked from the connection thread. */
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(aws_http_connection_get_channel(sm_connection->connection)));
 
-        s_lock_synced_data(sm_connection->stream_manager);
-        /* Remove this connection from the connection tracking list */
-        aws_linked_list_remove(&sm_connection->node);
-        s_unlock_synced_data(sm_connection->stream_manager);
-        int error = aws_http_connection_manager_release_connection(
-            sm_connection->stream_manager->connection_manager, sm_connection->connection);
-        AWS_ASSERT(!error);
-        (void)error;
-        sm_connection->connection = NULL;
-        aws_ref_count_release(&sm_connection->ref_count);
-    }
+    s_lock_synced_data(sm_connection->stream_manager);
+    /* Remove this connection from the connection tracking list */
+    aws_linked_list_remove(&sm_connection->node);
+    s_unlock_synced_data(sm_connection->stream_manager);
+    int error = aws_http_connection_manager_release_connection(
+        sm_connection->stream_manager->connection_manager, sm_connection->connection);
+    AWS_ASSERT(!error);
+    (void)error;
+    sm_connection->connection = NULL;
+    aws_ref_count_release(&sm_connection->ref_count);
 }
 
 static void s_sm_on_connection_acquired_failed_synced(
