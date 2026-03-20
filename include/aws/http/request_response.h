@@ -957,6 +957,7 @@ AWS_HTTP_API int aws_http_stream_write_data(
     const struct aws_http_stream_write_data_options *options);
 
 /**
+ * This API will be DEPRECATED in favor of protocol agnostic `aws_http_stream_write_data` API.
  * The stream must have specified `http2_use_manual_data_writes` during request creation.
  * For client streams, activate() must be called before any frames are submitted.
  * For server streams, the response headers must be submitted before any frames.
