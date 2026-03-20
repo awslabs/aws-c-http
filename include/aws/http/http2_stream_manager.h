@@ -154,8 +154,8 @@ struct aws_http2_stream_manager_options {
     size_t max_concurrent_streams_per_connection;
     /**
      * Required.
-     * The max number of connections will be open at same time. If all the connections are full, manager will wait until
-     * available to vender more streams
+     * The max number of connections that will be open at the same time. If all the connections are full, the manager
+     * will wait until a connection is available to vend more streams.
      */
     size_t max_connections;
     /**

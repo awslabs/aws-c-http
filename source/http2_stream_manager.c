@@ -186,10 +186,11 @@ static void s_sm_try_assign_connection_to_pending_stream_acquisition_synced(
             s_get_best_sm_connection_from_set(&stream_manager->synced_data.ideal_available_set);
         AWS_ASSERT(chosen_connection);
         pending_stream_acquisition->sm_connection = chosen_connection;
-        if (chosen_connection->num_streams_assigned++ == 0) {
+        if (chosen_connection->num_streams_assigned == 0) {
             /* If bump from 0, acquire the refcount for streams */
             aws_ref_count_acquire(&chosen_connection->ref_count);
         }
+        chosen_connection->num_streams_assigned++;
 
         STREAM_MANAGER_LOGF(
             DEBUG,
@@ -241,10 +242,11 @@ static void s_sm_try_assign_connection_to_pending_stream_acquisition_synced(
                 s_get_best_sm_connection_from_set(&stream_manager->synced_data.nonideal_available_set);
             AWS_ASSERT(chosen_connection);
             pending_stream_acquisition->sm_connection = chosen_connection;
-            if (chosen_connection->num_streams_assigned++ == 0) {
+            if (chosen_connection->num_streams_assigned == 0) {
                 /* If bump from 0, acquire the refcount for streams */
                 aws_ref_count_acquire(&chosen_connection->ref_count);
             }
+            chosen_connection->num_streams_assigned++;
 
             STREAM_MANAGER_LOGF(
                 DEBUG,
@@ -828,7 +830,8 @@ static void s_sm_connection_on_scheduled_stream_finishes(
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
         s_sm_count_decrease_synced(stream_manager, AWS_SMCT_OPEN_STREAM, 1);
-        if (--sm_connection->num_streams_assigned == 0) {
+        --sm_connection->num_streams_assigned;
+        if (sm_connection->num_streams_assigned == 0) {
             /* Release the refcount for streams */
             aws_ref_count_release(&sm_connection->ref_count);
         }
@@ -1099,8 +1102,9 @@ static void s_stream_manager_start_destroy(void *user_data) {
         /* Move to next node before potentially destroying current connection */
         node = aws_linked_list_next(node);
 
-        /* Verify this connection has no outstanding streams */
-        AWS_FATAL_ASSERT(sm_connection->num_streams_assigned == 0);
+        /* Verify this connection has no outstanding streams, which should be the precondition before stream manager
+         * start the destroy process. */
+        AWS_ASSERT(sm_connection->num_streams_assigned == 0);
         /* Release the connection back to connection manager */
         if (sm_connection->connection) {
             aws_http_connection_manager_release_connection(
