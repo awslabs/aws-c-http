@@ -44,7 +44,10 @@ struct aws_h2_sm_connection {
 
     enum aws_h2_sm_connection_state_type state;
 
-    /* Node for tracking in the sm_connections list */
+    /**
+     * Node for tracking in the all_held_connections list,
+     * NOTE: lock required to alter the state of the list.
+     */
     struct aws_linked_list_node node;
 };
 
@@ -140,21 +143,21 @@ struct aws_http2_stream_manager {
         enum aws_h2_sm_state_type state;
 
         /**
-         * A set of all connections that meet all requirement to use. Don't own the connection.
+         * A set of all connections that meet all requirement to use. Doesn't own the connection.
          *
          * Note: there will be connections not in this set, but hold by the stream manager, which can be tracked by the
-         * streams created on it. Set of `struct aws_h2_sm_connection *`
+         * all_held_connections. Set of `struct aws_h2_sm_connection *`
          */
         struct aws_random_access_set ideal_available_set;
         /**
-         * A set of all available connections that exceed the soft limits set by users. . Don't own the connection.
+         * A set of all available connections that exceed the soft limits set by users. Doesn't own the connection.
          *
          * Note: there will be connections not in this set, but hold by the stream manager, which can be tracked by the
-         * streams created. Set of `struct aws_h2_sm_connection *`
+         * all_held_connections. Set of `struct aws_h2_sm_connection *`
          */
         struct aws_random_access_set nonideal_available_set;
-        /* We don't mantain set for connections that is full or "dead" (Cannot make any new streams). We have streams
-         * opening from the connection tracking them */
+        /* We don't mantain set for connections that is full or "dead" (Cannot make any new streams). We have
+         * all_held_connections tracking them */
 
         /**
          * The set of all incomplete stream acquisition requests (haven't decide what connection to make the request
@@ -168,7 +171,7 @@ struct aws_http2_stream_manager {
          * it back.
          * list of `struct aws_h2_sm_connection*`
          */
-        struct aws_linked_list sm_connections;
+        struct aws_linked_list all_held_connections;
 
         /**
          * The number of connections acquired from connection manager and not released yet.

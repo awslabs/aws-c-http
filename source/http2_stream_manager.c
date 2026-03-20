@@ -589,9 +589,10 @@ static void s_sm_connection_release_connection(struct aws_h2_sm_connection *sm_c
     AWS_ASSERT(aws_channel_thread_is_callers_thread(aws_http_connection_get_channel(sm_connection->connection)));
 
     s_lock_synced_data(sm_connection->stream_manager);
-    /* Remove this connection from the connection tracking list */
+    /* Remove this connection from the connection tracking list within the lock as altering the list in synced_data. */
     aws_linked_list_remove(&sm_connection->node);
     s_unlock_synced_data(sm_connection->stream_manager);
+
     int error = aws_http_connection_manager_release_connection(
         sm_connection->stream_manager->connection_manager, sm_connection->connection);
     AWS_ASSERT(!error);
@@ -669,8 +670,8 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
             should_release_connection = true;
         } else {
             struct aws_h2_sm_connection *sm_connection = s_sm_connection_new(stream_manager, connection);
-            /* Add this connection to the sm_connections tracking list */
-            aws_linked_list_push_back(&stream_manager->synced_data.sm_connections, &sm_connection->node);
+            /* Add this connection to the all_held_connections tracking list */
+            aws_linked_list_push_back(&stream_manager->synced_data.all_held_connections, &sm_connection->node);
             bool added = false;
             re_error |=
                 aws_random_access_set_add(&stream_manager->synced_data.ideal_available_set, sm_connection, &added);
@@ -1087,8 +1088,12 @@ static void s_stream_manager_start_destroy(void *user_data) {
     AWS_ASSERT(stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION] == 0);
 
     /* Iterate through all connections and clean up any that remain */
-    struct aws_linked_list_node *node = aws_linked_list_begin(&stream_manager->synced_data.sm_connections);
-    const struct aws_linked_list_node *end_node = aws_linked_list_end(&stream_manager->synced_data.sm_connections);
+    struct aws_linked_list_node *node = aws_linked_list_begin(&stream_manager->synced_data.all_held_connections);
+
+    /* No lock needed when stream manager started destroying process. Since there should have no other threads still
+     * working. */
+    const struct aws_linked_list_node *end_node =
+        aws_linked_list_end(&stream_manager->synced_data.all_held_connections);
     while (node != end_node) {
         struct aws_h2_sm_connection *sm_connection = AWS_CONTAINER_OF(node, struct aws_h2_sm_connection, node);
         /* Move to next node before potentially destroying current connection */
@@ -1104,16 +1109,13 @@ static void s_stream_manager_start_destroy(void *user_data) {
             --stream_manager->synced_data.holding_connections_count;
         }
 
-        s_lock_synced_data(sm_connection->stream_manager);
         /* Remove this connection from the connection tracking list */
         aws_linked_list_remove(&sm_connection->node);
-        s_unlock_synced_data(sm_connection->stream_manager);
-
         aws_ref_count_release(&sm_connection->ref_count);
     }
 
     /* All connections should be cleaned up now */
-    AWS_ASSERT(aws_linked_list_empty(&stream_manager->synced_data.sm_connections));
+    AWS_ASSERT(aws_linked_list_empty(&stream_manager->synced_data.all_held_connections));
     AWS_ASSERT(stream_manager->synced_data.holding_connections_count == 0);
 
     AWS_ASSERT(stream_manager->connection_manager);
@@ -1160,7 +1162,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         aws_mem_calloc(allocator, 1, sizeof(struct aws_http2_stream_manager));
     stream_manager->allocator = allocator;
     aws_linked_list_init(&stream_manager->synced_data.pending_stream_acquisitions);
-    aws_linked_list_init(&stream_manager->synced_data.sm_connections);
+    aws_linked_list_init(&stream_manager->synced_data.all_held_connections);
 
     if (aws_mutex_init(&stream_manager->synced_data.lock)) {
         goto on_error;
