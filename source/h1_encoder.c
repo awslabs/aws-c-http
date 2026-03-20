@@ -1067,7 +1067,6 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
             aws_last_error(),
             aws_error_name(aws_last_error()));
         error_code = aws_last_error();
-        aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, error_code);
         encoder->message->current_data_write = NULL;
         goto error;
     }
@@ -1077,8 +1076,6 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
         encoder->progress_bytes > encoder->message->content_length) {
         ENCODER_LOGF(
             ERROR, encoder, "Manual data writes exceeded Content-Length: %" PRIu64, encoder->message->content_length);
-        aws_h1_data_write_complete_and_destroy(
-            data_write, encoder->current_stream, AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
         encoder->message->current_data_write = NULL;
         error_code = AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT;
         goto error;
@@ -1103,7 +1100,6 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
             aws_last_error(),
             aws_error_name(aws_last_error()));
         error_code = aws_last_error();
-        aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, error_code);
         encoder->message->current_data_write = NULL;
         goto error;
     }
@@ -1138,6 +1134,7 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
     return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT);
 
 error:
+    aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, error_code);
     return aws_raise_error(error_code);
 }
 

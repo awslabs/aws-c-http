@@ -78,9 +78,6 @@ struct aws_h1_stream {
         /* List of `struct aws_h1_data_write` which have been moved from synced_data for processing */
         struct aws_linked_list pending_data_write_list;
 
-        /* Whether the stream is using manual data writes instead of input_stream */
-        bool using_manual_data_writes : 1;
-
         /* Whether the final data write (with is_end_stream=true) has been received */
         bool has_final_data_write : 1;
 
