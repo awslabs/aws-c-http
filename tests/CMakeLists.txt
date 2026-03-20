@@ -694,6 +694,9 @@ add_net_test_case(h2_sm_mock_goaway)
 add_net_test_case(h2_sm_connection_ping)
 add_net_test_case(h2_sm_with_flow_control_err)
 add_net_test_case(h2_sm_with_initial_settings)
+add_net_test_case(h2_sm_mock_max_concurrent_streams)
+add_net_test_case(h2_sm_mock_max_concurrent_streams_multiple_connections)
+add_net_test_case(h2_sm_mock_max_concurrent_streams_zero_means_no_limit)
 
 # Tests against real world server
 add_net_test_case(h2_sm_acquire_stream)
