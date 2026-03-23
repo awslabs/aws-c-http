@@ -277,6 +277,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     AWS_PRECONDITION(options);
 
     struct aws_h2_stream *stream = aws_mem_calloc(client_connection->alloc, 1, sizeof(struct aws_h2_stream));
+    stream->on_remote_complete = options->on_remote_complete;
 
     /* Initialize base stream */
     stream->base.vtable = &s_h2_stream_vtable;
@@ -1271,6 +1272,10 @@ struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *strea
                 return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR));
             }
         }
+    }
+
+    if (stream->on_remote_complete) {
+        stream->on_remote_complete(stream, stream->base.user_data);
     }
 
     if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL) {
