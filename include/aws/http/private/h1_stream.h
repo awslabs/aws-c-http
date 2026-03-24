@@ -148,12 +148,6 @@ void aws_h1_stream_cancel(struct aws_http_stream *stream, int error_code);
 
 int aws_h1_stream_send_response(struct aws_h1_stream *stream, struct aws_http_message *response);
 
-struct aws_h1_data_write *aws_h1_data_write_new(
-    struct aws_allocator *allocator,
-    const struct aws_http_stream_write_data_options *options);
-
-void aws_h1_data_write_destroy(struct aws_h1_data_write *data_write);
-
 void aws_h1_data_write_complete_and_destroy(
     struct aws_h1_data_write *data_write,
     struct aws_http_stream *http_stream,

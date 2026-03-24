@@ -13,7 +13,7 @@
 
 #include <inttypes.h>
 
-struct aws_h1_data_write *aws_h1_data_write_new(
+static struct aws_h1_data_write *s_data_write_new(
     struct aws_allocator *allocator,
     const struct aws_http_stream_write_data_options *options) {
     struct aws_h1_data_write *data_write = aws_mem_calloc(allocator, 1, sizeof(struct aws_h1_data_write));
@@ -25,7 +25,7 @@ struct aws_h1_data_write *aws_h1_data_write_new(
     return data_write;
 }
 
-void aws_h1_data_write_destroy(struct aws_h1_data_write *data_write) {
+static void s_data_write_destroy(struct aws_h1_data_write *data_write) {
     aws_input_stream_release(data_write->data);
     aws_mem_release(data_write->allocator, data_write);
 }
@@ -37,7 +37,7 @@ void aws_h1_data_write_complete_and_destroy(
     AWS_PRECONDITION(data_write);
     aws_http_stream_write_complete_fn *on_complete = data_write->on_complete;
     void *user_data = data_write->user_data;
-    aws_h1_data_write_destroy(data_write);
+    s_data_write_destroy(data_write);
     if (on_complete) {
         on_complete(http_stream, error_code, user_data);
     }
@@ -413,8 +413,8 @@ static int s_stream_write_data(
 
         is_chunked = stream->synced_data.using_chunked_encoding;
 
-        if (!is_chunked && options->data) {
-            struct aws_h1_data_write *data_write = aws_h1_data_write_new(stream_base->alloc, options);
+        if (!is_chunked && (options->data || options->end_stream)) {
+            struct aws_h1_data_write *data_write = s_data_write_new(stream_base->alloc, options);
 
             aws_linked_list_push_back(&stream->synced_data.pending_data_write_list, &data_write->node);
             should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
@@ -441,9 +441,13 @@ static int s_stream_write_data(
             struct aws_http1_chunk_options chunk_opts = {
                 .chunk_data = options->data,
                 .chunk_data_size = (uint64_t)data_len,
-                .on_complete = options->on_complete,
-                .user_data = options->user_data,
             };
+
+            /* If no termination chunk follows, put callback on this chunk */
+            if (!options->end_stream) {
+                chunk_opts.on_complete = options->on_complete;
+                chunk_opts.user_data = options->user_data;
+            }
 
             if (aws_http1_stream_write_chunk(stream_base, &chunk_opts)) {
                 AWS_LOGF_ERROR(
@@ -460,6 +464,8 @@ static int s_stream_write_data(
         if (options->end_stream) {
             struct aws_http1_chunk_options termination_opts;
             AWS_ZERO_STRUCT(termination_opts);
+            termination_opts.on_complete = options->on_complete;
+            termination_opts.user_data = options->user_data;
             if (aws_http1_stream_write_chunk(stream_base, &termination_opts)) {
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,

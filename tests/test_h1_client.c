@@ -5495,7 +5495,8 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_multiple) {
     return AWS_OP_SUCCESS;
 }
 
-/* Test: write_data with NULL data and end_stream=true on Content-Length stream */
+/* Test: write_data with NULL data and end_stream=true on Content-Length stream.
+ * Also verifies NULL data + end_stream=false is a no-op. */
 H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_content_length) {
     (void)ctx;
     struct write_data_test_fixture fixture;
@@ -5505,9 +5506,20 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_content_length) {
     };
     ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
 
+    /* NULL data without end_stream should be a no-op */
+    struct aws_http_stream_write_data_options noop_options = {
+        .data = NULL,
+        .end_stream = false,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &noop_options));
+
+    /* NULL data with end_stream should complete the stream */
+    struct write_data_callback_tester callback_tester = {0};
     struct aws_http_stream_write_data_options write_options = {
         .data = NULL,
         .end_stream = true,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester,
     };
     ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
 
@@ -5515,6 +5527,9 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_content_length) {
 
     ASSERT_SUCCESS(testing_channel_check_written_messages_str(
         &fixture.tester.testing_channel, allocator, "POST /upload HTTP/1.1\r\nContent-Length: 0\r\n\r\n"));
+
+    ASSERT_INT_EQUALS(1, callback_tester.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
 
     ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
@@ -5536,9 +5551,12 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_chunked) {
     };
     ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
 
+    struct write_data_callback_tester callback_tester = {0};
     struct aws_http_stream_write_data_options write_options = {
         .data = NULL,
         .end_stream = true,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester,
     };
     ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
 
@@ -5551,47 +5569,15 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_chunked) {
                            "\r\n";
     ASSERT_SUCCESS(testing_channel_check_written_messages_str(&fixture.tester.testing_channel, allocator, expected));
 
+    ASSERT_INT_EQUALS(1, callback_tester.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
+
     ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
 
     ASSERT_TRUE(fixture.stream_tester.complete);
     ASSERT_INT_EQUALS(200, fixture.stream_tester.response_status);
 
-    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
-    return AWS_OP_SUCCESS;
-}
-
-/* Test: write_data with NULL data and end_stream=false is a no-op */
-H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_no_end_stream) {
-    (void)ctx;
-    struct write_data_test_fixture fixture;
-    struct aws_http_header headers[] = {
-        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
-         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("5")},
-    };
-    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
-
-    /* NULL data without end_stream should be a no-op (return success, do nothing) */
-    struct aws_http_stream_write_data_options write_options = {
-        .data = NULL,
-        .end_stream = false,
-    };
-    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
-
-    /* Should still be able to write real data after the no-op */
-    struct aws_byte_cursor data = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("hello");
-    struct aws_input_stream *input_stream = aws_input_stream_new_from_cursor(allocator, &data);
-    struct aws_http_stream_write_data_options real_write = {
-        .data = input_stream,
-        .end_stream = true,
-    };
-    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &real_write));
-    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
-
-    ASSERT_SUCCESS(testing_channel_check_written_messages_str(
-        &fixture.tester.testing_channel, allocator, "POST /upload HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello"));
-
-    aws_input_stream_release(input_stream);
     ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
     return AWS_OP_SUCCESS;
 }
