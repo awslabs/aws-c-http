@@ -80,6 +80,7 @@ struct aws_h2_stream {
      * to keep flow continues.
      */
     int32_t window_size_threshold_to_send_update;
+    aws_http2_on_remote_end_stream_fn *on_h2_remote_end_stream;
 
     /* Only the event-loop thread may touch this data */
     struct {
