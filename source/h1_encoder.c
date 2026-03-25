@@ -1053,10 +1053,6 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
     }
 
     /* Read from stream */
-    ENCODER_LOG(TRACE, encoder, "Reading from manual data write stream");
-    const size_t prev_len = dst->len;
-    int err = aws_input_stream_read(data_write->data, dst);
-    const size_t amount_read = dst->len - prev_len;
     int error_code = AWS_OP_ERR;
 
     ENCODER_LOG(TRACE, encoder, "Reading from manual data write stream");
