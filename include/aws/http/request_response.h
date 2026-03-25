@@ -190,13 +190,29 @@ typedef int(
 typedef int(aws_http_on_incoming_request_done_fn)(struct aws_http_stream *stream, void *user_data);
 
 /**
+ * Invoked when the remote peer sends END_STREAM on an HTTP/2 stream.
+ * This is always invoked on the HTTP connection's event-loop thread.
+ *
+ * **HTTP/2 ONLY** - This callback is only supported for HTTP/2 request.
+ *
+ * This callback is invoked when the remote peer finishes sending by setting the END_STREAM
+ * flag on the final HEADERS or DATA frame. This indicates that no more data will be received from the
+ * remote peer for this stream.
+ *
+ * Note: If the server sends RST_STREAM instead of END_STREAM, `on_remote_end_stream` will NOT fire,
+ * but `on_complete` will fire with an error code.
+ *
+ * @param stream The HTTP/2 stream
+ * @param user_data User data provided in aws_http_make_request_options
+ */
+typedef void(aws_http2_on_remote_end_stream_fn)(struct aws_http_stream *stream, void *user_data);
+
+/**
  * Invoked when a request/response stream is complete, whether successful or unsuccessful
  * This is always invoked on the HTTP connection's event-loop thread.
  * This will not be invoked if the stream is never activated.
  */
 typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
-
-typedef void(aws_http2_on_remote_stream_complete_fn)(struct aws_http_stream *stream, void *user_data);
 
 /**
  * Invoked when request/response stream destroy completely.
@@ -293,13 +309,21 @@ struct aws_http_make_request_options {
     aws_http_on_stream_metrics_fn *on_metrics;
 
     /**
+     * Invoked when the remote peer sends END_STREAM on an HTTP/2 stream (HTTP/2 ONLY).
+     * Optional.
+     * See `aws_http2_on_remote_end_stream_fn`.
+     *
+     * This callback fires when the remote peer sends END_STREAM, which happens BEFORE `on_complete`.
+     * Ignored for HTTP/1.x connections.
+     */
+    aws_http2_on_remote_end_stream_fn *on_h2_remote_end_stream;
+
+    /**
      * Invoked when request/response stream is complete, whether successful or unsuccessful
      * Optional.
      * See `aws_http_on_stream_complete_fn`.
      */
     aws_http_on_stream_complete_fn *on_complete;
-
-    aws_http2_on_remote_stream_complete_fn *on_remote_complete;
 
     /* Callback for when the request/response stream is completely destroyed. */
     aws_http_on_stream_destroy_fn *on_destroy;

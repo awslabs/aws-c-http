@@ -515,6 +515,12 @@ add_test_case(h2_client_batch_auto_window_update)
 add_test_case(h2_client_batch_manual_window_update)
 add_test_case(h2_client_cap_manual_window_update)
 
+# on_h2_remote_end_stream callback tests
+add_test_case(h2_client_on_h2_remote_end_stream_fires)
+add_test_case(h2_client_on_h2_remote_end_stream_not_fired_on_rst_stream)
+add_test_case(h2_client_on_h2_remote_end_stream_early_server_response)
+add_test_case(h2_client_on_h2_remote_end_stream_with_body_data)
+
 add_test_case(server_new_destroy)
 add_test_case(server_new_destroy_tcp)
 add_test_case(connection_setup_shutdown)
