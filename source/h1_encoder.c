@@ -1053,37 +1053,38 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
     }
 
     /* Read from stream */
-    size_t amount_read = 0;
+    ENCODER_LOG(TRACE, encoder, "Reading from manual data write stream");
+    const size_t prev_len = dst->len;
+    int err = aws_input_stream_read(data_write->data, dst);
+    const size_t amount_read = dst->len - prev_len;
     int error_code = AWS_OP_ERR;
 
-    if (data_write->data) {
-        ENCODER_LOG(TRACE, encoder, "Reading from manual data write stream");
-        const size_t prev_len = dst->len;
-        int err = aws_input_stream_read(data_write->data, dst);
-        amount_read = dst->len - prev_len;
+    ENCODER_LOG(TRACE, encoder, "Reading from manual data write stream");
+    const size_t prev_len = dst->len;
+    int err = aws_input_stream_read(data_write->data, dst);
+    amount_read = dst->len - prev_len;
 
-        if (err) {
-            ENCODER_LOGF(
-                ERROR,
-                encoder,
-                "Failed to read data write stream, error %d (%s)",
-                aws_last_error(),
-                aws_error_name(aws_last_error()));
-            error_code = aws_last_error();
-            goto error;
-        }
+    if (err) {
+        ENCODER_LOGF(
+            ERROR,
+            encoder,
+            "Failed to read data write stream, error %d (%s)",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        error_code = aws_last_error();
+        goto error;
+    }
 
-        /* Increment progress_bytes and check we haven't exceeded Content-Length */
-        if (aws_add_u64_checked(encoder->progress_bytes, amount_read, &encoder->progress_bytes) ||
-            encoder->progress_bytes > encoder->message->content_length) {
-            ENCODER_LOGF(
-                ERROR,
-                encoder,
-                "Manual data writes exceeded Content-Length: %" PRIu64,
-                encoder->message->content_length);
-            error_code = AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT;
-            goto error;
-        }
+    /* Increment progress_bytes and check we haven't exceeded Content-Length */
+    if (aws_add_u64_checked(encoder->progress_bytes, amount_read, &encoder->progress_bytes) ||
+        encoder->progress_bytes > encoder->message->content_length) {
+        ENCODER_LOGF(
+            ERROR,
+            encoder,
+            "Manual data writes exceeded Content-Length: %" PRIu64,
+            encoder->message->content_length);
+        error_code = AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT;
+        goto error;
     }
 
     ENCODER_LOGF(
@@ -1095,24 +1096,20 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
         encoder->message->content_length);
 
     /* If we read something or reached end of stream, check if stream is complete */
-    bool is_end_of_stream = true;
-    if (data_write->data) {
-        struct aws_stream_status status;
-        int err = aws_input_stream_get_status(data_write->data, &status);
-        if (err) {
-            ENCODER_LOGF(
-                ERROR,
-                encoder,
-                "Failed to query data write stream status, error %d (%s)",
-                aws_last_error(),
-                aws_error_name(aws_last_error()));
-            error_code = aws_last_error();
-            goto error;
-        }
-        is_end_of_stream = status.is_end_of_stream;
+    struct aws_stream_status status;
+    int err = aws_input_stream_get_status(data_write->data, &status);
+    if (err) {
+        ENCODER_LOGF(
+            ERROR,
+            encoder,
+            "Failed to query data write stream status, error %d (%s)",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        error_code = aws_last_error();
+        goto error;
     }
 
-    if (!is_end_of_stream) {
+    if (!status.is_end_of_stream) {
         /* Stream not done yet, remain in state */
         return AWS_OP_SUCCESS;
     }
