@@ -1059,7 +1059,6 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
     if (data_write->data) {
         int err = aws_input_stream_read(data_write->data, dst);
         amount_read = dst->len - prev_len;
-        int error_code = AWS_OP_ERR;
 
         if (err) {
             ENCODER_LOGF(
@@ -1077,10 +1076,7 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
     if (aws_add_u64_checked(encoder->progress_bytes, amount_read, &encoder->progress_bytes) ||
         encoder->progress_bytes > encoder->message->content_length) {
         ENCODER_LOGF(
-            ERROR,
-            encoder,
-            "Manual data writes exceeded Content-Length: %" PRIu64,
-            encoder->message->content_length);
+            ERROR, encoder, "Manual data writes exceeded Content-Length: %" PRIu64, encoder->message->content_length);
         error_code = AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT;
         goto error;
     }
