@@ -1053,12 +1053,11 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
     }
 
     /* Read from stream */
-    int error_code = AWS_OP_ERR;
-
     ENCODER_LOG(TRACE, encoder, "Reading from manual data write stream");
     const size_t prev_len = dst->len;
     int err = aws_input_stream_read(data_write->data, dst);
-    amount_read = dst->len - prev_len;
+    const size_t amount_read = dst->len - prev_len;
+    int error_code = AWS_OP_ERR;
 
     if (err) {
         ENCODER_LOGF(
@@ -1093,7 +1092,7 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
 
     /* If we read something or reached end of stream, check if stream is complete */
     struct aws_stream_status status;
-    int err = aws_input_stream_get_status(data_write->data, &status);
+    err = aws_input_stream_get_status(data_write->data, &status);
     if (err) {
         ENCODER_LOGF(
             ERROR,
