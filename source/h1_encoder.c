@@ -765,9 +765,7 @@ static int s_state_fn_head(struct aws_h1_encoder *encoder, struct aws_byte_buf *
     aws_byte_buf_clean_up(&encoder->message->outgoing_head_buf);
 
     /* Pick next state */
-    if (!encoder->message->has_chunked_encoding_header && encoder->message->has_manual_data_writes &&
-        encoder->message->content_length) {
-        /* Manual data writes with Content-Length */
+    if (!encoder->message->has_chunked_encoding_header && encoder->message->has_manual_data_writes) {
         return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT);
 
     } else if (encoder->message->body && encoder->message->content_length) {
@@ -1055,19 +1053,24 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
     /* Read from stream */
     ENCODER_LOG(TRACE, encoder, "Reading from manual data write stream");
     const size_t prev_len = dst->len;
-    int err = aws_input_stream_read(data_write->data, dst);
-    const size_t amount_read = dst->len - prev_len;
+    size_t amount_read = 0;
     int error_code = AWS_OP_ERR;
 
-    if (err) {
-        ENCODER_LOGF(
-            ERROR,
-            encoder,
-            "Failed to read data write stream, error %d (%s)",
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
-        error_code = aws_last_error();
-        goto error;
+    if (data_write->data) {
+        int err = aws_input_stream_read(data_write->data, dst);
+        amount_read = dst->len - prev_len;
+        int error_code = AWS_OP_ERR;
+
+        if (err) {
+            ENCODER_LOGF(
+                ERROR,
+                encoder,
+                "Failed to read data write stream, error %d (%s)",
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
+            error_code = aws_last_error();
+            goto error;
+        }
     }
 
     /* Increment progress_bytes and check we haven't exceeded Content-Length */
@@ -1091,22 +1094,24 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
         encoder->message->content_length);
 
     /* If we read something or reached end of stream, check if stream is complete */
-    struct aws_stream_status status;
-    err = aws_input_stream_get_status(data_write->data, &status);
-    if (err) {
-        ENCODER_LOGF(
-            ERROR,
-            encoder,
-            "Failed to query data write stream status, error %d (%s)",
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
-        error_code = aws_last_error();
-        goto error;
-    }
+    if (data_write->data) {
+        struct aws_stream_status status;
+        int err = aws_input_stream_get_status(data_write->data, &status);
+        if (err) {
+            ENCODER_LOGF(
+                ERROR,
+                encoder,
+                "Failed to query data write stream status, error %d (%s)",
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
+            error_code = aws_last_error();
+            goto error;
+        }
 
-    if (!status.is_end_of_stream) {
-        /* Stream not done yet, remain in state */
-        return AWS_OP_SUCCESS;
+        if (!status.is_end_of_stream) {
+            /* Stream not done yet, remain in state */
+            return AWS_OP_SUCCESS;
+        }
     }
 
     /* This data write is complete */

@@ -443,12 +443,6 @@ static int s_stream_write_data(
                 .chunk_data_size = (uint64_t)data_len,
             };
 
-            /* If no termination chunk follows, put callback on this chunk */
-            if (!options->end_stream) {
-                chunk_opts.on_complete = options->on_complete;
-                chunk_opts.user_data = options->user_data;
-            }
-
             if (aws_http1_stream_write_chunk(stream_base, &chunk_opts)) {
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,
