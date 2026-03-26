@@ -43,6 +43,12 @@ struct aws_h2_sm_connection {
     } thread_data;
 
     enum aws_h2_sm_connection_state_type state;
+
+    /**
+     * Node for tracking in the all_held_connections list,
+     * NOTE: lock required to alter the state of the list.
+     */
+    struct aws_linked_list_node node;
 };
 
 /* Live from the user request to acquire a stream to the stream completed. */
@@ -115,6 +121,14 @@ struct aws_http2_stream_manager {
     size_t max_concurrent_streams_per_connection;
 
     /**
+     * Optional. 0 means no limit (default).
+     * The max number of concurrent streams that can be active across all connections at the same time.
+     * When this limit is reached, the stream manager will wait for existing streams to complete
+     * before creating new ones, even if connections have available capacity.
+     */
+    size_t max_concurrent_streams;
+
+    /**
      * Task to invoke pending acquisition callbacks asynchronously if stream manager is shutting.
      */
     struct aws_event_loop *finish_pending_stream_acquisitions_task_event_loop;
@@ -129,25 +143,35 @@ struct aws_http2_stream_manager {
         enum aws_h2_sm_state_type state;
 
         /**
-         * A set of all connections that meet all requirement to use. Note: there will be connections not in this set,
-         * but hold by the stream manager, which can be tracked by the streams created on it. Set of `struct
-         * aws_h2_sm_connection *`
+         * A set of all connections that meet all requirement to use. Doesn't own the connection.
+         *
+         * Note: there will be connections not in this set, but hold by the stream manager, which can be tracked by the
+         * all_held_connections. Set of `struct aws_h2_sm_connection *`
          */
         struct aws_random_access_set ideal_available_set;
         /**
-         * A set of all available connections that exceed the soft limits set by users. Note: there will be connections
-         * not in this set, but hold by the stream manager, which can be tracked by the streams created. Set of `struct
-         * aws_h2_sm_connection *`
+         * A set of all available connections that exceed the soft limits set by users. Doesn't own the connection.
+         *
+         * Note: there will be connections not in this set, but hold by the stream manager, which can be tracked by the
+         * all_held_connections. Set of `struct aws_h2_sm_connection *`
          */
         struct aws_random_access_set nonideal_available_set;
-        /* We don't mantain set for connections that is full or "dead" (Cannot make any new streams). We have streams
-         * opening from the connection tracking them */
+        /* We don't mantain set for connections that is full or "dead" (Cannot make any new streams). We have
+         * all_held_connections tracking them */
 
         /**
          * The set of all incomplete stream acquisition requests (haven't decide what connection to make the request
          * to), list of `struct aws_h2_sm_pending_stream_acquisition*`
          */
         struct aws_linked_list pending_stream_acquisitions;
+
+        /**
+         * List of all aws_h2_sm_connection that holding the HTTP connection from connection manager.
+         * This list tracks all aws_h2_sm_connection from getting the connection from connection manager until release
+         * it back.
+         * list of `struct aws_h2_sm_connection*`
+         */
+        struct aws_linked_list all_held_connections;
 
         /**
          * The number of connections acquired from connection manager and not released yet.
