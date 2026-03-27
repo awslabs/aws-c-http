@@ -5465,13 +5465,25 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_multiple) {
     /* First write */
     struct aws_byte_cursor data1 = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write ");
     struct aws_input_stream *stream1 = aws_input_stream_new_from_cursor(allocator, &data1);
-    struct aws_http_stream_write_data_options opts1 = {.data = stream1, .end_stream = false};
+    struct write_data_callback_tester callback_tester1 = {0};
+    struct aws_http_stream_write_data_options opts1 = {
+        .data = stream1,
+        .end_stream = false,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester1,
+    };
     ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &opts1));
 
     /* Second write with end_stream=true, termination chunk should be sent automatically */
     struct aws_byte_cursor data2 = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("more tests");
     struct aws_input_stream *stream2 = aws_input_stream_new_from_cursor(allocator, &data2);
-    struct aws_http_stream_write_data_options opts2 = {.data = stream2, .end_stream = true};
+    struct write_data_callback_tester callback_tester2 = {0};
+    struct aws_http_stream_write_data_options opts2 = {
+        .data = stream2,
+        .end_stream = true,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester2,
+    };
     ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &opts2));
 
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
@@ -5488,6 +5500,11 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_multiple) {
                            "0\r\n"
                            "\r\n";
     ASSERT_SUCCESS(testing_channel_check_written_messages_str(&fixture.tester.testing_channel, allocator, expected));
+
+    ASSERT_INT_EQUALS(1, callback_tester1.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester1.last_error_code);
+    ASSERT_INT_EQUALS(1, callback_tester2.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester2.last_error_code);
 
     aws_input_stream_release(stream1);
     aws_input_stream_release(stream2);
