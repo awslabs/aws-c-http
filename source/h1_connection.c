@@ -710,8 +710,10 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
         /* Mark stream complete */
         stream->synced_data.api_state = AWS_H1_STREAM_API_STATE_COMPLETE;
 
-        /* Move chunks out of synced data */
+        /* Move chunks and data writes out of synced data */
         aws_linked_list_move_all_back(&stream->thread_data.pending_chunk_list, &stream->synced_data.pending_chunk_list);
+        aws_linked_list_move_all_back(
+            &stream->thread_data.pending_data_write_list, &stream->synced_data.pending_data_write_list);
 
         aws_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -721,6 +723,13 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.pending_chunk_list);
         struct aws_h1_chunk *chunk = AWS_CONTAINER_OF(node, struct aws_h1_chunk, node);
         aws_h1_chunk_complete_and_destroy(chunk, &stream->base, AWS_ERROR_HTTP_STREAM_HAS_COMPLETED);
+    }
+
+    /* Complete any leftover data writes */
+    while (!aws_linked_list_empty(&stream->thread_data.pending_data_write_list)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.pending_data_write_list);
+        struct aws_h1_data_write *data_write = AWS_CONTAINER_OF(node, struct aws_h1_data_write, node);
+        aws_h1_data_write_complete_and_destroy(data_write, &stream->base, AWS_ERROR_HTTP_STREAM_HAS_COMPLETED);
     }
 
     if (stream->base.on_metrics) {

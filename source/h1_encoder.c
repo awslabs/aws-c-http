@@ -1036,7 +1036,6 @@ static int s_encoder_state_data_write_next(struct aws_h1_encoder *encoder, struc
 
     struct aws_linked_list_node *node = aws_linked_list_front(encoder->message->pending_data_write_list);
     encoder->message->current_data_write = AWS_CONTAINER_OF(node, struct aws_h1_data_write, node);
-    aws_linked_list_remove(node);
 
     ENCODER_LOG(TRACE, encoder, "Begin sending manual data write");
     return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_BODY);
@@ -1113,6 +1112,7 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
     /* This data write is complete */
     ENCODER_LOG(TRACE, encoder, "Manual data write complete");
     bool is_end = data_write->is_end_stream;
+    aws_linked_list_remove(&data_write->node);
     aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, AWS_ERROR_SUCCESS);
     encoder->message->current_data_write = NULL;
 
@@ -1135,6 +1135,7 @@ static int s_encoder_state_data_write_body(struct aws_h1_encoder *encoder, struc
     return s_switch_state(encoder, AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT);
 
 error:
+    aws_linked_list_remove(&data_write->node);
     aws_h1_data_write_complete_and_destroy(data_write, encoder->current_stream, error_code);
     encoder->message->current_data_write = NULL;
     return aws_raise_error(error_code);
