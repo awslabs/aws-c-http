@@ -33,6 +33,8 @@ struct aws_h1_encoder_message {
     struct aws_byte_buf outgoing_head_buf;
     /* Single stream used for unchunked body */
     struct aws_input_stream *body;
+    /* Single async stream used for unchunked body */
+    struct aws_async_input_stream *async_body;
 
     /* Pointer to list of `struct aws_h1_chunk`, used for chunked encoding.
      * List is owned by aws_h1_stream.
@@ -55,6 +57,7 @@ enum aws_h1_encoder_state {
     AWS_H1_ENCODER_STATE_HEAD,
     /* Write streaming body, without chunked encoding, because Content-Length is known */
     AWS_H1_ENCODER_STATE_UNCHUNKED_BODY_STREAM,
+    AWS_H1_ENCODER_STATE_ASYNC_WAITING,
     /* Write streaming body, with chunked encoding, because Content-Length is unknown */
     AWS_H1_ENCODER_STATE_CHUNKED_BODY_STREAM,
     AWS_H1_ENCODER_STATE_CHUNKED_BODY_STREAM_LAST_CHUNK,
@@ -81,6 +84,12 @@ struct aws_h1_encoder {
     uint64_t chunk_count;
     /* Encoder logs with this stream ptr as the ID, and passes this ptr to the chunk_complete callback */
     struct aws_http_stream *current_stream;
+    /* Future to record pending future of async body read */
+    struct aws_future_bool *pending_async_future;
+    /* Connection to schedule again while async reading. */
+    struct aws_h1_connection *connection;
+    /* async error recorded */
+    int async_error;
 };
 
 struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const struct aws_http1_chunk_options *options);

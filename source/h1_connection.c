@@ -1030,6 +1030,17 @@ static void s_on_channel_write_complete(
      * to run again instead of calling the function directly.
      * This way, if the message completes synchronously,
      * we're not hogging the network by writing message after message in a tight loop */
+
+    /* If encoder is waiting for async body read, don't reschedule - the async callback will do it */
+    if (connection->thread_data.encoder.state == AWS_H1_ENCODER_STATE_ASYNC_WAITING) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Encoder waiting for async body, not rescheduling task.",
+            (void *)&connection->base);
+        connection->thread_data.is_outgoing_stream_task_active = false;
+        return;
+    }
+
     aws_channel_schedule_task_now(channel, &connection->outgoing_stream_task);
 }
 
@@ -1089,15 +1100,21 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
         AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Outgoing stream task has begun.", (void *)&connection->base);
     }
 
-    struct aws_io_message *msg = aws_channel_slot_acquire_max_message_for_write(connection->base.channel_slot);
-    if (!msg) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Failed to acquire message from pool, error %d (%s). Closing connection.",
-            (void *)&connection->base,
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
-        goto error;
+    struct aws_io_message *msg = NULL;
+    if (connection->thread_data.pending_async_message) {
+        msg = connection->thread_data.pending_async_message;
+        connection->thread_data.pending_async_message = NULL;
+    } else {
+        msg = aws_channel_slot_acquire_max_message_for_write(connection->base.channel_slot);
+        if (!msg) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Failed to acquire message from pool, error %d (%s). Closing connection.",
+                (void *)&connection->base,
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
+            goto error;
+        }
     }
 
     /* Set up callback so we can send another message when this one completes */
@@ -1113,7 +1130,16 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
         goto error;
     }
 
-    if (msg->message_data.len > 0) {
+    if (connection->thread_data.encoder.async_error) {
+        /* Error receiving data asynchronously. Need to note when this is happening, but for now, abandon ship */
+        if (msg) {
+            aws_mem_release(msg->allocator, msg);
+        }
+        s_shutdown_due_to_error(connection, connection->thread_data.encoder.async_error);
+        return;
+    }
+
+    if (msg->message_data.len > 0 && connection->thread_data.encoder.state != AWS_H1_ENCODER_STATE_ASYNC_WAITING) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Outgoing stream task is sending message of size %zu.",
@@ -1130,7 +1156,22 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
 
             goto error;
         }
+    } else if (connection->thread_data.encoder.message && connection->thread_data.encoder.message->async_body) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Outgoing async stream task is either complete or waiting on future. Never reschedule task.",
+            (void *)&connection->base);
 
+        if (connection->thread_data.encoder.state == AWS_H1_ENCODER_STATE_ASYNC_WAITING) {
+            connection->thread_data.pending_async_message = msg;
+        } else {
+            if (msg->message_data.len > 0) {
+                aws_channel_slot_send_message(connection->base.channel_slot, msg, AWS_CHANNEL_DIR_WRITE);
+            } else {
+                aws_mem_release(msg->allocator, msg);
+            }
+        }
+        connection->thread_data.is_outgoing_stream_task_active = false;
     } else {
         /* If message is empty, warn that no work is being done
          * and reschedule the task to try again next tick.
@@ -1551,6 +1592,9 @@ static struct aws_h1_connection *s_connection_new(
     }
 
     aws_h1_encoder_init(&connection->thread_data.encoder, alloc);
+
+    /* hacking around with adding connection to encoder. there should be a better way to do it */
+    connection->thread_data.encoder.connection = connection;
 
     aws_channel_task_init(
         &connection->outgoing_stream_task, s_outgoing_stream_task, connection, "http1_connection_outgoing_stream");
