@@ -530,6 +530,12 @@ add_test_case(h2_client_cap_manual_window_update)
 add_test_case(h2_client_unified_write_data_api)
 add_test_case(h2_client_unified_write_data_api_new_field)
 
+# on_h2_remote_end_stream callback tests
+add_test_case(h2_client_on_h2_remote_end_stream_fires)
+add_test_case(h2_client_on_h2_remote_end_stream_not_fired_on_rst_stream)
+add_test_case(h2_client_on_h2_remote_end_stream_early_server_response)
+add_test_case(h2_client_on_h2_remote_end_stream_with_body_data)
+
 add_test_case(server_new_destroy)
 add_test_case(server_new_destroy_tcp)
 add_test_case(connection_setup_shutdown)
@@ -709,6 +715,9 @@ add_net_test_case(h2_sm_mock_goaway)
 add_net_test_case(h2_sm_connection_ping)
 add_net_test_case(h2_sm_with_flow_control_err)
 add_net_test_case(h2_sm_with_initial_settings)
+add_net_test_case(h2_sm_mock_max_concurrent_streams)
+add_net_test_case(h2_sm_mock_max_concurrent_streams_multiple_connections)
+add_net_test_case(h2_sm_mock_max_concurrent_streams_zero_means_no_limit)
 
 # Tests against real world server
 add_net_test_case(h2_sm_acquire_stream)
