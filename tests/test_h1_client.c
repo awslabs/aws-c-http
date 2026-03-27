@@ -5474,6 +5474,16 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_multiple) {
     };
     ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &opts1));
 
+    /* No-op write: NULL data, end_stream=false. Callback should still fire. */
+    struct write_data_callback_tester callback_tester_noop = {0};
+    struct aws_http_stream_write_data_options opts_noop = {
+        .data = NULL,
+        .end_stream = false,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester_noop,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &opts_noop));
+
     /* Second write with end_stream=true, termination chunk should be sent automatically */
     struct aws_byte_cursor data2 = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("more tests");
     struct aws_input_stream *stream2 = aws_input_stream_new_from_cursor(allocator, &data2);
@@ -5503,6 +5513,8 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_multiple) {
 
     ASSERT_INT_EQUALS(1, callback_tester1.num_callbacks);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester1.last_error_code);
+    ASSERT_INT_EQUALS(1, callback_tester_noop.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester_noop.last_error_code);
     ASSERT_INT_EQUALS(1, callback_tester2.num_callbacks);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester2.last_error_code);
 
