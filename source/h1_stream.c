@@ -441,6 +441,8 @@ static int s_stream_write_data(
             struct aws_http1_chunk_options chunk_opts = {
                 .chunk_data = options->data,
                 .chunk_data_size = (uint64_t)data_len,
+                .on_complete = options->end_stream ? NULL : options->on_complete,
+                .user_data = options->end_stream ? NULL : options->user_data,
             };
 
             if (aws_http1_stream_write_chunk(stream_base, &chunk_opts)) {
