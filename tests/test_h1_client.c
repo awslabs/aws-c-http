@@ -5651,3 +5651,31 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_body_stream_conflict) {
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
+
+/* Test: NULL data with non-zero Content-Length should fail with length mismatch */
+H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_nonzero_content_length) {
+    (void)ctx;
+    struct write_data_test_fixture fixture;
+    struct aws_http_header headers[] = {
+        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("5")},
+    };
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
+
+    struct write_data_callback_tester callback_tester = {0};
+    struct aws_http_stream_write_data_options write_options = {
+        .data = NULL,
+        .end_stream = true,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    ASSERT_TRUE(fixture.stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT, fixture.stream_tester.on_complete_error_code);
+
+    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
+    return AWS_OP_SUCCESS;
+}
+

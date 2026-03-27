@@ -169,6 +169,7 @@ add_test_case(h1_client_write_data_null_data_content_length)
 add_test_case(h1_client_write_data_null_data_chunked)
 add_test_case(h1_client_write_data_auto_chunked)
 add_test_case(h1_client_write_data_body_stream_conflict)
+add_test_case(h1_client_write_data_null_data_nonzero_content_length)
 
 add_test_case(strutil_trim_http_whitespace)
 add_test_case(strutil_is_http_token)
