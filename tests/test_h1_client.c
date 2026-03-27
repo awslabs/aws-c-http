@@ -5678,4 +5678,3 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_nonzero_content_length) {
     ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
     return AWS_OP_SUCCESS;
 }
-
