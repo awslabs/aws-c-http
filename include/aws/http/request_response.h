@@ -529,7 +529,7 @@ typedef aws_http_stream_write_complete_fn aws_http2_stream_write_data_complete_f
      * Optional. May be NULL to write zero bytes.                                                                      \
      * If NULL and end_stream is false, the write is a no-op.                                                          \
      * If NULL and end_stream is true, the stream is completed with zero bytes written.                                \
-     * With Content-Length, total bytes across all writes must match the declared length                                \
+     * With Content-Length, total bytes across all writes must match the declared length                               \
      * or the stream fails with AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT.                                       \
      */                                                                                                                \
     struct aws_input_stream *data;                                                                                     \
@@ -543,7 +543,7 @@ typedef aws_http_stream_write_complete_fn aws_http2_stream_write_data_complete_f
      * Invoked when the data is no longer in use, whether or not it was successfully sent.                             \
      * Optional.                                                                                                       \
      * See `aws_http_stream_write_complete_fn`.                                                                        \
-     * Called with AWS_ERROR_SUCCESS if data was sent successfully.                                                     \
+     * Called with AWS_ERROR_SUCCESS if data was sent successfully.                                                    \
      * Called with AWS_ERROR_HTTP_STREAM_HAS_COMPLETED if the stream was torn down                                     \
      * before this write could be processed.                                                                           \
      * Called with another error code if this write's data caused a problem.                                           \
