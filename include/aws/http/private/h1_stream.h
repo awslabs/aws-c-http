@@ -49,6 +49,9 @@ struct aws_h1_stream {
      */
     struct aws_channel_task cross_thread_work_task;
 
+    /* Whether the stream is using manual data writes instead of input_stream */
+    bool using_manual_data_writes : 1;
+
     struct {
         /* Message (derived from outgoing request or response) to be submitted to encoder */
         struct aws_h1_encoder_message encoder_message;
@@ -120,9 +123,6 @@ struct aws_h1_stream {
 
         /* Whether the outgoing message is using chunked encoding */
         bool using_chunked_encoding : 1;
-
-        /* Whether the stream is using manual data writes instead of input_stream */
-        bool using_manual_data_writes : 1;
 
         /* Whether the final 0 length chunk has already been sent */
         bool has_final_chunk : 1;

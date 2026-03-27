@@ -382,6 +382,15 @@ static int s_stream_write_data(
         return AWS_OP_SUCCESS;
     }
 
+    if (!stream->using_manual_data_writes) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Manual writes not enabled. Set 'use_manual_data_writes' in aws_http_make_request_options.",
+            (void *)stream_base);
+        aws_raise_error(AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED);
+        goto error;
+    }
+
     bool should_schedule_task = false;
     bool is_chunked = false;
 
@@ -393,15 +402,6 @@ static int s_stream_write_data(
                                  ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
                                  : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
             aws_raise_error(error_code);
-            goto error;
-        }
-
-        if (!stream->synced_data.using_manual_data_writes) {
-            AWS_LOGF_ERROR(
-                AWS_LS_HTTP_STREAM,
-                "id=%p: Manual writes not enabled. Set 'use_manual_data_writes' in aws_http_make_request_options.",
-                (void *)stream_base);
-            aws_raise_error(AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED);
             goto error;
         }
 
@@ -580,7 +580,7 @@ struct aws_h1_stream *aws_h1_stream_new_request(
     stream->base.on_metrics = options->on_metrics;
 
     /* Set manual data writes flag from options */
-    stream->synced_data.using_manual_data_writes = options->use_manual_data_writes;
+    stream->using_manual_data_writes = options->use_manual_data_writes;
 
     /* Validate request and cache info that the encoder will eventually need */
     if (aws_h1_encoder_message_init_from_request(
@@ -589,7 +589,7 @@ struct aws_h1_stream *aws_h1_stream_new_request(
             options->request,
             &stream->thread_data.pending_chunk_list,
             &stream->thread_data.pending_data_write_list,
-            stream->synced_data.using_manual_data_writes)) {
+            stream->using_manual_data_writes)) {
         goto error;
     }
 
