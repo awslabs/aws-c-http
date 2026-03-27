@@ -374,8 +374,11 @@ static int s_stream_write_data(
     AWS_PRECONDITION(options);
     struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
 
-    /* NULL data without end_stream is a no-op */
+    /* NULL data without end_stream is a no-op, but still fire the callback */
     if (!options->data && !options->end_stream) {
+        if (options->on_complete) {
+            options->on_complete(stream_base, AWS_ERROR_SUCCESS, options->user_data);
+        }
         return AWS_OP_SUCCESS;
     }
 
