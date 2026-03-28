@@ -387,22 +387,21 @@ static int s_stream_write_data(
             AWS_LS_HTTP_STREAM,
             "id=%p: Manual writes not enabled. Set 'use_manual_data_writes' in aws_http_make_request_options.",
             (void *)stream_base);
-        aws_raise_error(AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED);
-        goto error;
+        return aws_raise_error(AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED);
     }
 
     bool should_schedule_task = false;
     bool is_chunked = false;
+    int error_code = AWS_ERROR_SUCCESS;
 
     { /* BEGIN CRITICAL SECTION */
         s_stream_lock_synced_data(stream);
 
         if (stream->synced_data.api_state != AWS_H1_STREAM_API_STATE_ACTIVE) {
-            int error_code = (stream->synced_data.api_state == AWS_H1_STREAM_API_STATE_INIT)
+            error_code = (stream->synced_data.api_state == AWS_H1_STREAM_API_STATE_INIT)
                                  ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
                                  : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
-            aws_raise_error(error_code);
-            goto error;
+            goto unlock;
         }
 
         if (stream->synced_data.has_final_data_write) {
@@ -410,13 +409,26 @@ static int s_stream_write_data(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Cannot write data after final write (end_stream=true).",
                 (void *)stream_base);
-            aws_raise_error(AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED);
-            goto error;
+            error_code = AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED;
+            goto unlock;
         }
 
         is_chunked = stream->synced_data.using_chunked_encoding;
 
-        if (!is_chunked && (options->data || options->end_stream)) {
+        if (!is_chunked && !options->data) {
+            /* data=NULL with end_stream=true (the !end_stream case already returned above).
+             * Check if 0 bytes matches the Content-Length. */
+            stream->synced_data.has_final_data_write = true;
+            if (options->on_complete) {
+                options->on_complete(stream_base, error_code, options->user_data);
+            }
+            if (stream->thread_data.encoder_message.content_length != 0) {
+                error_code = AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT;
+            }
+            goto unlock;
+        }
+
+        if (!is_chunked) {
             struct aws_h1_data_write *data_write = s_data_write_new(stream_base->alloc, options);
 
             aws_linked_list_push_back(&stream->synced_data.pending_data_write_list, &data_write->node);
@@ -426,8 +438,22 @@ static int s_stream_write_data(
 
         stream->synced_data.has_final_data_write = options->end_stream;
 
-        s_stream_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
+
+unlock:
+    s_stream_unlock_synced_data(stream);
+
+    if (error_code != AWS_ERROR_SUCCESS) {
+        if (error_code == AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT) {
+            aws_h1_stream_cancel(stream_base, AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+            return AWS_OP_SUCCESS;
+        }
+        AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Could not complete write data successfully.",
+                (void *)stream_base);
+        return aws_raise_error(error_code);
+    }
 
     if (is_chunked) {
         /* Send user's data as a chunk if present */
@@ -485,9 +511,6 @@ static int s_stream_write_data(
     }
 
     return AWS_OP_SUCCESS;
-error:
-    s_stream_unlock_synced_data(stream);
-    return AWS_OP_ERR;
 }
 
 static const struct aws_http_stream_vtable s_stream_vtable = {
