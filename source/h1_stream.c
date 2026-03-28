@@ -399,8 +399,8 @@ static int s_stream_write_data(
 
         if (stream->synced_data.api_state != AWS_H1_STREAM_API_STATE_ACTIVE) {
             error_code = (stream->synced_data.api_state == AWS_H1_STREAM_API_STATE_INIT)
-                                 ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
-                                 : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
+                             ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
+                             : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
             goto unlock;
         }
 
@@ -448,10 +448,7 @@ unlock:
             aws_h1_stream_cancel(stream_base, AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
             return AWS_OP_SUCCESS;
         }
-        AWS_LOGF_ERROR(
-                AWS_LS_HTTP_STREAM,
-                "id=%p: Could not complete write data successfully.",
-                (void *)stream_base);
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Could not complete write data successfully.", (void *)stream_base);
         return aws_raise_error(error_code);
     }
 
