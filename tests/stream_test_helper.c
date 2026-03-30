@@ -208,6 +208,7 @@ int client_stream_tester_init(
         .on_complete = s_on_complete,
         .on_destroy = s_on_destroy,
         .http2_use_manual_data_writes = options->http2_manual_write,
+        .use_manual_data_writes = options->use_manual_data_writes,
         .on_h2_remote_end_stream = options->on_h2_remote_end_stream ? s_on_h2_remote_end_stream : NULL,
     };
     tester->stream = aws_http_connection_make_request(options->connection, &request_options);
