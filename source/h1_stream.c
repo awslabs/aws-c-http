@@ -415,19 +415,6 @@ static int s_stream_write_data(
 
         is_chunked = stream->synced_data.using_chunked_encoding;
 
-        if (!is_chunked && !options->data) {
-            /* data=NULL with end_stream=true (the !end_stream case already returned above).
-             * Check if 0 bytes matches the Content-Length. */
-            stream->synced_data.has_final_data_write = true;
-            if (options->on_complete) {
-                options->on_complete(stream_base, error_code, options->user_data);
-            }
-            if (stream->thread_data.encoder_message.content_length != 0) {
-                error_code = AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT;
-            }
-            goto unlock;
-        }
-
         if (!is_chunked) {
             struct aws_h1_data_write *data_write = s_data_write_new(stream_base->alloc, options);
 

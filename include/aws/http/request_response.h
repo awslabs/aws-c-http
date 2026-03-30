@@ -344,6 +344,7 @@ struct aws_http_make_request_options {
      * - With `Transfer-Encoding: chunked`: no length validation, data sent as chunks.
      *
      * HTTP/2: No `Content-Length` or `Transfer-Encoding` header required. Data sent via DATA frames.
+     * Note: When this variable is set, we expect request to be ended with a data write with end_stream=true.
      */
     bool use_manual_data_writes;
 
