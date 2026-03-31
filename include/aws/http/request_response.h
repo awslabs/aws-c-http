@@ -1230,6 +1230,12 @@ uint32_t aws_http_stream_get_id(const struct aws_http_stream *stream);
  */
 AWS_HTTP_API
 void aws_http_stream_cancel(struct aws_http_stream *stream, int error_code);
+/**
+ * Cancel the stream with default error code.
+ * Equivalent to invoke aws_http_stream_cancel with AWS_ERROR_HTTP_STREAM_CANCELLED.
+ */
+AWS_HTTP_API
+void aws_http_stream_cancel_default_error(struct aws_http_stream *stream);
 
 /**
  * Reset the HTTP/2 stream (HTTP/2 only).

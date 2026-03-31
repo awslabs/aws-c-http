@@ -4542,12 +4542,12 @@ TEST_CASE(h2_client_stream_cancel_stream) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* Cancel the request */
-    aws_http_stream_cancel(stream_tester.stream, AWS_ERROR_COND_VARIABLE_ERROR_UNKNOWN);
+    aws_http_stream_cancel_default_error(stream_tester.stream);
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
     ASSERT_TRUE(stream_tester.complete);
-    ASSERT_INT_EQUALS(AWS_ERROR_COND_VARIABLE_ERROR_UNKNOWN, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_CANCELLED, stream_tester.on_complete_error_code);
     /* validate that stream sent RST_STREAM */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
     struct h2_decoded_frame *rst_stream_frame =
