@@ -710,8 +710,10 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
         /* Mark stream complete */
         stream->synced_data.api_state = AWS_H1_STREAM_API_STATE_COMPLETE;
 
-        /* Move chunks out of synced data */
+        /* Move chunks and data writes out of synced data */
         aws_linked_list_move_all_back(&stream->thread_data.pending_chunk_list, &stream->synced_data.pending_chunk_list);
+        aws_linked_list_move_all_back(
+            &stream->thread_data.pending_data_write_list, &stream->synced_data.pending_data_write_list);
 
         aws_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -721,6 +723,13 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.pending_chunk_list);
         struct aws_h1_chunk *chunk = AWS_CONTAINER_OF(node, struct aws_h1_chunk, node);
         aws_h1_chunk_complete_and_destroy(chunk, &stream->base, AWS_ERROR_HTTP_STREAM_HAS_COMPLETED);
+    }
+
+    /* Complete any leftover data writes */
+    while (!aws_linked_list_empty(&stream->thread_data.pending_data_write_list)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.pending_data_write_list);
+        struct aws_h1_data_write *data_write = AWS_CONTAINER_OF(node, struct aws_h1_data_write, node);
+        aws_h1_data_write_complete_and_destroy(data_write, &stream->base, AWS_ERROR_HTTP_STREAM_HAS_COMPLETED);
     }
 
     if (stream->base.on_metrics) {
@@ -1072,14 +1081,17 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
      * The outgoing stream task will be kicked off again when user adds more data (new stream, new chunk, etc) */
     struct aws_h1_stream *outgoing_stream = s_update_outgoing_stream_ptr(connection);
     bool waiting_for_chunks = aws_h1_encoder_is_waiting_for_chunks(&connection->thread_data.encoder);
-    if (!outgoing_stream || waiting_for_chunks) {
+    bool waiting_for_data_writes = aws_h1_encoder_is_waiting_for_data_writes(&connection->thread_data.encoder);
+    if (!outgoing_stream || waiting_for_chunks || waiting_for_data_writes) {
         if (!first_try) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION,
-                "id=%p: Outgoing stream task stopped. outgoing_stream=%p waiting_for_chunks:%d",
+                "id=%p: Outgoing stream task stopped. outgoing_stream=%p waiting_for_chunks:%d "
+                "waiting_for_data_writes:%d",
                 (void *)&connection->base,
                 outgoing_stream ? (void *)&outgoing_stream->base : NULL,
-                waiting_for_chunks);
+                waiting_for_chunks,
+                waiting_for_data_writes);
         }
         connection->thread_data.is_outgoing_stream_task_active = false;
         return;
