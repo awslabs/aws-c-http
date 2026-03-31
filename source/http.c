@@ -157,6 +157,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED,
         "Max pending acquisitions reached"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_CANCELLED,
+        "In-flight HTTP-stream has been cancelled by user."),
 };
 /* clang-format on */
 

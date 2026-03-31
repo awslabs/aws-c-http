@@ -1207,6 +1207,10 @@ void aws_http_stream_cancel(struct aws_http_stream *stream, int error_code) {
     stream->vtable->cancel(stream, error_code);
 }
 
+void aws_http_stream_cancel_default_error(struct aws_http_stream *stream) {
+    stream->vtable->cancel(stream, AWS_ERROR_HTTP_STREAM_CANCELLED);
+}
+
 int aws_http2_stream_reset(struct aws_http_stream *http2_stream, uint32_t http2_error) {
     AWS_PRECONDITION(http2_stream);
     AWS_PRECONDITION(http2_stream->vtable);
