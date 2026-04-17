@@ -198,7 +198,7 @@ async def send_response(wrapper, request):
         # Build the raw HTTP response
         response_lines = [
             b"HTTP/1.1 200 OK",
-            b"Server: echo-server",
+            b"Server: crt-local-server",
             b"Content-Type: text/plain; charset=utf-8",
             b"Connection: close",
             b"",  # Empty line separates headers from body
@@ -212,7 +212,7 @@ async def send_response(wrapper, request):
         # We simulate the response flow through h11's state machine without actually sending bytes
         wrapper.info("Updating h11 state to MUST_CLOSE after raw response with Connection: close")
         headers = [
-            ("Server", "echo-server"),
+            ("Server", "crt-local-server"),
             ("Content-Type", "text/plain; charset=utf-8"),
             ("Connection", "close"),
         ]

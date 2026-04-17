@@ -217,6 +217,7 @@ static void s_reset_state(struct aws_h1_decoder *decoder) {
     decoder->doing_trailers = false;
     decoder->is_done = false;
     decoder->body_headers_ignored = false;
+    decoder->body_headers_ignored_on_2xx = false;
     decoder->body_headers_forbidden = false;
     decoder->content_length_received = false;
     decoder->response_body_indeterminate_length = false;
@@ -382,7 +383,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                 !decoder->is_decoding_requests && !decoder->content_length_received &&
                 !decoder->body_headers_forbidden && !decoder->body_headers_ignored_on_2xx) {
                 /* RFC-7230 3.3.3: If a message is received without Transfer-Encoding and without Content-Length and NOT
-                 * determined by the response lien to have no body, then the message body length is determined by
+                 * determined by the response line to have no body, then the message body length is determined by
                  * reading the stream until connection closure. Note: This only applies to responses. A request without
                  * Content-Length or Transfer-Encoding has no message body (per RFC 7230 section 3.3.3). */
                 /* The failure response for CONNECT with body is undefined, and since the client will handle the CONNECT
@@ -715,7 +716,7 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
     /* RFC-7230 section 3.3 Message Body */
     decoder->body_headers_ignored |= code_val == AWS_HTTP_STATUS_CODE_304_NOT_MODIFIED;
     if (decoder->body_headers_ignored_on_2xx) {
-        decoder->body_headers_ignored |= code_val / 200 == 1;
+        decoder->body_headers_ignored |= code_val / 100 == 2;
     }
     decoder->body_headers_forbidden = code_val == AWS_HTTP_STATUS_CODE_204_NO_CONTENT || code_val / 100 == 1;
 

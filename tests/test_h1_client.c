@@ -5141,3 +5141,126 @@ H1_CLIENT_TEST_CASE(h1_client_connection_close_before_request_finishes_with_buff
     (void)ctx;
     return s_h1_client_connection_close_before_request_finishes_with_buffer_force_shutdown_helper(allocator, false);
 }
+
+/* Test: Response with no Content-Length or Transfer-Encoding has its body determined by connection closure */
+H1_CLIENT_TEST_CASE(h1_client_response_indeterminate_length_body) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    aws_http_message_destroy(request);
+
+    /* send response with no Content-Length or Transfer-Encoding */
+    ASSERT_SUCCESS(testing_channel_push_read_str(
+        &tester.testing_channel,
+        "HTTP/1.1 200 OK\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "hello "));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* stream should NOT be complete yet - waiting for connection close */
+    ASSERT_FALSE(stream_tester.complete);
+    ASSERT_UINT_EQUALS(6, stream_tester.response_body.len);
+
+    /* send more body data */
+    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, "world"));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    ASSERT_FALSE(stream_tester.complete);
+    ASSERT_UINT_EQUALS(11, stream_tester.response_body.len);
+
+    /* close the connection - this should complete the stream */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(200, stream_tester.response_status);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&stream_tester.response_body, "hello world"));
+
+    /* clean up */
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: Response with no Content-Length and empty body - connection closes right after headers */
+H1_CLIENT_TEST_CASE(h1_client_response_indeterminate_length_empty_body) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    aws_http_message_destroy(request);
+
+    /* send response headers only, no body, no Content-Length */
+    ASSERT_SUCCESS(testing_channel_push_read_str(
+        &tester.testing_channel,
+        "HTTP/1.1 200 OK\r\n"
+        "\r\n"));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* stream should NOT be complete yet */
+    ASSERT_FALSE(stream_tester.complete);
+
+    /* close connection */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(200, stream_tester.response_status);
+    ASSERT_UINT_EQUALS(0, stream_tester.response_body.len);
+
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: 1xx and 204 responses must NOT enter indeterminate-length mode (body_headers_forbidden) */
+H1_CLIENT_TEST_CASE(h1_client_response_204_no_indeterminate_length) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    aws_http_message_destroy(request);
+
+    /* 204 with no Content-Length should complete immediately, not wait for connection close */
+    ASSERT_SUCCESS(testing_channel_push_read_str(
+        &tester.testing_channel,
+        "HTTP/1.1 204 No Content\r\n"
+        "\r\n"));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* stream should be complete immediately - 204 has no body */
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(204, stream_tester.response_status);
+    ASSERT_UINT_EQUALS(0, stream_tester.response_body.len);
+
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
