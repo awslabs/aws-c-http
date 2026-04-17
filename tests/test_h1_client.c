@@ -5226,7 +5226,8 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_single_chunk) {
     ASSERT_INT_EQUALS(1, callback_tester.num_callbacks);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
 
-    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
 
     ASSERT_TRUE(fixture.stream_tester.complete);
@@ -5285,7 +5286,8 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_multiple_chunks) {
     ASSERT_INT_EQUALS(1, callback_tester2.num_callbacks);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester2.last_error_code);
 
-    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
 
     ASSERT_TRUE(fixture.stream_tester.complete);
@@ -5455,7 +5457,8 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_single) {
     ASSERT_INT_EQUALS(1, callback_tester.num_callbacks);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
 
-    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
 
     ASSERT_TRUE(fixture.stream_tester.complete);
@@ -5587,7 +5590,8 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_content_length) {
     ASSERT_INT_EQUALS(3, callback_tester.num_callbacks);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
 
-    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
 
     ASSERT_TRUE(fixture.stream_tester.complete);
@@ -5629,7 +5633,8 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_chunked) {
     ASSERT_INT_EQUALS(1, callback_tester.num_callbacks);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
 
-    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
 
     ASSERT_TRUE(fixture.stream_tester.complete);
