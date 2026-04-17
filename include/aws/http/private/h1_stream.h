@@ -22,6 +22,15 @@ enum aws_h1_stream_api_state {
     AWS_H1_STREAM_API_STATE_COMPLETE,
 };
 
+struct aws_h1_data_write {
+    struct aws_allocator *allocator;
+    struct aws_input_stream *data;
+    aws_http_stream_write_complete_fn *on_complete;
+    void *user_data;
+    struct aws_linked_list_node node;
+    bool is_end_stream;
+};
+
 struct aws_h1_stream {
     struct aws_http_stream base;
 
@@ -39,6 +48,9 @@ struct aws_h1_stream {
      *   - schedule the task
      */
     struct aws_channel_task cross_thread_work_task;
+
+    /* Whether the stream is using manual data writes instead of input_stream */
+    bool using_manual_data_writes : 1;
 
     struct {
         /* Message (derived from outgoing request or response) to be submitted to encoder */
@@ -66,6 +78,12 @@ struct aws_h1_stream {
          * Only body data (not headers, etc) counts against the stream's flow-control window. */
         uint64_t stream_window;
 
+        /* List of `struct aws_h1_data_write` which have been moved from synced_data for processing */
+        struct aws_linked_list pending_data_write_list;
+
+        /* Whether the final data write (with is_end_stream=true) has been received */
+        bool has_final_data_write : 1;
+
         /* Whether a "request handler" stream has a response to send.
          * Has mirror variable in synced_data */
         bool has_outgoing_response : 1;
@@ -82,6 +100,10 @@ struct aws_h1_stream {
         /* List of `struct aws_h1_chunk` which have been submitted by user,
          * but haven't yet moved to thread_data.encoder_message.pending_chunk_list where the encoder will find them. */
         struct aws_linked_list pending_chunk_list;
+
+        /* List of `struct aws_h1_data_write` which have been submitted by user,
+         * but haven't yet moved to thread_data.pending_data_write_list where the encoder will find them. */
+        struct aws_linked_list pending_data_write_list;
 
         /* trailing headers which have been submitted by user,
          * but haven't yet moved to thread_data.encoder_message where the encoder will find them. */
@@ -105,6 +127,9 @@ struct aws_h1_stream {
         /* Whether the final 0 length chunk has already been sent */
         bool has_final_chunk : 1;
 
+        /* Whether the final data write (with is_end_stream=true) has been received */
+        bool has_final_data_write : 1;
+
         /* Whether the chunked trailer has already been sent */
         bool has_added_trailer : 1;
     } synced_data;
@@ -122,5 +147,10 @@ int aws_h1_stream_activate(struct aws_http_stream *stream);
 void aws_h1_stream_cancel(struct aws_http_stream *stream, int error_code);
 
 int aws_h1_stream_send_response(struct aws_h1_stream *stream, struct aws_http_message *response);
+
+void aws_h1_data_write_complete_and_destroy(
+    struct aws_h1_data_write *data_write,
+    struct aws_http_stream *http_stream,
+    int error_code);
 
 #endif /* AWS_HTTP_H1_STREAM_H */

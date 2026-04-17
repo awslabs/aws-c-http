@@ -46,12 +46,18 @@ struct client_stream_tester {
     struct aws_http_stream_metrics metrics;
 
     bool destroyed;
+
+    /* HTTP/2 only: Whether on_h2_remote_end_stream fired */
+    bool on_h2_remote_end_stream_invoked;
 };
 
 struct client_stream_tester_options {
     struct aws_http_message *request;
     struct aws_http_connection *connection;
     bool http2_manual_write;
+    bool use_manual_data_writes;
+    /* Optional: pointer to bool to track if on_h2_remote_end_stream fires */
+    bool *on_h2_remote_end_stream;
 };
 
 int client_stream_tester_init(

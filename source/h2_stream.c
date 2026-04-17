@@ -23,7 +23,7 @@ static int s_stream_get_received_error_code(struct aws_http_stream *stream_base,
 static int s_stream_get_sent_error_code(struct aws_http_stream *stream_base, uint32_t *out_http2_error);
 static int s_stream_write_data(
     struct aws_http_stream *stream_base,
-    const struct aws_http2_stream_write_data_options *options);
+    const struct aws_http_stream_write_data_options *options);
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error);
@@ -42,7 +42,7 @@ struct aws_http_stream_vtable s_h2_stream_vtable = {
     .http2_reset_stream = s_stream_reset_stream,
     .http2_get_received_error_code = s_stream_get_received_error_code,
     .http2_get_sent_error_code = s_stream_get_sent_error_code,
-    .http2_write_data = s_stream_write_data,
+    .write_data = s_stream_write_data,
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state) {
@@ -277,6 +277,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     AWS_PRECONDITION(options);
 
     struct aws_h2_stream *stream = aws_mem_calloc(client_connection->alloc, 1, sizeof(struct aws_h2_stream));
+    stream->on_h2_remote_end_stream = options->on_h2_remote_end_stream;
 
     /* Initialize base stream */
     stream->base.vtable = &s_h2_stream_vtable;
@@ -333,8 +334,9 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
     /* stream end is implicit if the request isn't using manual data writes */
-    stream->synced_data.manual_write_ended = !options->http2_use_manual_data_writes;
-    stream->manual_write = options->http2_use_manual_data_writes;
+    bool manual_write = options->use_manual_data_writes || options->http2_use_manual_data_writes;
+    stream->synced_data.manual_write_ended = !manual_write;
+    stream->manual_write = manual_write;
 
     /* if there's a request body to write, add it as the first outgoing write */
     struct aws_input_stream *body_stream = aws_http_message_get_body_stream(options->request);
@@ -1273,6 +1275,10 @@ struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *strea
         }
     }
 
+    if (stream->on_h2_remote_end_stream) {
+        stream->on_h2_remote_end_stream(&stream->base, stream->base.user_data);
+    }
+
     if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL) {
         /* Both sides have sent END_STREAM */
         stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
@@ -1345,7 +1351,7 @@ struct aws_h2err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *strea
 
 static int s_stream_write_data(
     struct aws_http_stream *stream_base,
-    const struct aws_http2_stream_write_data_options *options) {
+    const struct aws_http_stream_write_data_options *options) {
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     if (!stream->manual_write) {
         AWS_H2_STREAM_LOG(

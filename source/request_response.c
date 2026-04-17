@@ -796,15 +796,26 @@ int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, const str
     return http1_stream->vtable->http1_write_chunk(http1_stream, options);
 }
 
+int aws_http_stream_write_data(
+    struct aws_http_stream *stream,
+    const struct aws_http_stream_write_data_options *options) {
+    AWS_PRECONDITION(stream);
+    AWS_PRECONDITION(stream->vtable);
+    AWS_PRECONDITION(stream->vtable->write_data);
+    AWS_PRECONDITION(options);
+
+    return stream->vtable->write_data(stream, options);
+}
+
 int aws_http2_stream_write_data(
     struct aws_http_stream *http2_stream,
     const struct aws_http2_stream_write_data_options *options) {
     AWS_PRECONDITION(http2_stream);
     AWS_PRECONDITION(http2_stream->vtable);
-    AWS_PRECONDITION(http2_stream->vtable->http2_write_data);
+    AWS_PRECONDITION(http2_stream->vtable->write_data);
     AWS_PRECONDITION(options);
 
-    return http2_stream->vtable->http2_write_data(http2_stream, options);
+    return http2_stream->vtable->write_data(http2_stream, (const struct aws_http_stream_write_data_options *)options);
 }
 
 int aws_http1_stream_add_chunked_trailer(
@@ -1205,6 +1216,10 @@ uint32_t aws_http_stream_get_id(const struct aws_http_stream *stream) {
 
 void aws_http_stream_cancel(struct aws_http_stream *stream, int error_code) {
     stream->vtable->cancel(stream, error_code);
+}
+
+void aws_http_stream_cancel_default_error(struct aws_http_stream *stream) {
+    stream->vtable->cancel(stream, AWS_ERROR_HTTP_STREAM_CANCELLED);
 }
 
 int aws_http2_stream_reset(struct aws_http_stream *http2_stream, uint32_t http2_error) {
