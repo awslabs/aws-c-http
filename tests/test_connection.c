@@ -696,11 +696,11 @@ static int s_test_connection_customized_alpn(struct aws_allocator *allocator, vo
     tester.wait_server_connection_num = 1;
     ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_setup_pred));
 
-#ifndef __APPLE__ /* Server side ALPN doesn't work for MacOS */
-    /* Assert that we have the negotiated protocol and the expected version */
-    ASSERT_INT_EQUALS(tester.connection_version, expected_version);
-    ASSERT_TRUE(aws_byte_buf_eq_c_str(&tester.negotiated_protocol, customized_alpn_string));
-#endif
+    if (!s_is_apple_with_secure_transport(tester.alloc)) {
+        /* Assert that we have the negotiated protocol and the expected version */
+        ASSERT_INT_EQUALS(tester.connection_version, expected_version);
+        ASSERT_TRUE(aws_byte_buf_eq_c_str(&tester.negotiated_protocol, customized_alpn_string));
+    }
     /* clean up */
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
@@ -751,14 +751,14 @@ static int s_test_connection_customized_alpn_error_with_unknown_return_string(
     tester.wait_client_connection_num = 1;
     tester.wait_server_connection_num = 1;
 
-#ifndef __APPLE__ /* Server side ALPN doesn't work for MacOS */
-    ASSERT_FAILS(s_tester_wait(&tester, s_tester_connection_setup_pred));
-    /* Assert that we have the negotiated protocol and error returned from callback */
-    ASSERT_TRUE(aws_byte_buf_eq_c_str(&tester.negotiated_protocol, customized_alpn_string));
-    ASSERT_INT_EQUALS(aws_last_error(), AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
-#else
-    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_setup_pred));
-#endif
+    if (!s_is_apple_with_secure_transport(tester.alloc)) {
+        ASSERT_FAILS(s_tester_wait(&tester, s_tester_connection_setup_pred));
+        /* Assert that we have the negotiated protocol and error returned from callback */
+        ASSERT_TRUE(aws_byte_buf_eq_c_str(&tester.negotiated_protocol, customized_alpn_string));
+        ASSERT_INT_EQUALS(aws_last_error(), AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
+    } else {
+        ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_setup_pred));
+    }
     /* clean up */
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
