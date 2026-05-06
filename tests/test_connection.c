@@ -10,6 +10,7 @@
 
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
+#include <aws/common/environment.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/logging.h>
 #include <aws/common/string.h>
@@ -159,6 +160,21 @@ done:
     aws_condition_variable_notify_one(&tester->wait_cvar);
 }
 
+bool s_is_apple_with_secure_transport(struct aws_allocator *allocator) {
+    (void)allocator;
+#ifdef __APPLE__
+    struct aws_string *use_non_fips_13 = aws_get_env_nonempty(allocator, "AWS_CRT_USE_NON_FIPS_TLS_13");
+    if (use_non_fips_13) {
+        aws_string_destroy(use_non_fips_13);
+        return false;
+    } else {
+        return true;
+    }
+#else
+    return false;
+#endif
+}
+
 static void s_tester_on_client_connection_setup(
     struct aws_http_connection *connection,
     int error_code,
@@ -275,14 +291,14 @@ static int s_tls_client_opt_tester_init(
 
 static int s_tls_server_opt_tester_init(struct tester *tester, const char *alpn_list) {
 
-#ifdef __APPLE__
-    struct aws_byte_cursor pwd_cur = aws_byte_cursor_from_c_str("1234");
-    ASSERT_SUCCESS(aws_tls_ctx_options_init_server_pkcs12_from_path(
-        &tester->server_ctx_options, tester->alloc, "unittests.p12", &pwd_cur));
-#else
-    ASSERT_SUCCESS(aws_tls_ctx_options_init_default_server_from_path(
-        &tester->server_ctx_options, tester->alloc, "unittests.crt", "unittests.key"));
-#endif /* __APPLE__ */
+    if (s_is_apple_with_secure_transport(tester->alloc)) {
+        struct aws_byte_cursor pwd_cur = aws_byte_cursor_from_c_str("1234");
+        ASSERT_SUCCESS(aws_tls_ctx_options_init_server_pkcs12_from_path(
+            &tester->server_ctx_options, tester->alloc, "unittests.p12", &pwd_cur));
+    } else {
+        ASSERT_SUCCESS(aws_tls_ctx_options_init_default_server_from_path(
+            &tester->server_ctx_options, tester->alloc, "unittests.crt", "unittests.key"));
+    }
     aws_tls_ctx_options_set_alpn_list(&tester->server_ctx_options, alpn_list);
     tester->server_ctx = aws_tls_server_ctx_new(tester->alloc, &tester->server_ctx_options);
     ASSERT_NOT_NULL(tester->server_ctx);
