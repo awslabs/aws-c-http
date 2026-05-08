@@ -1868,6 +1868,13 @@ error:
 static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h2_stream *stream, int error_code) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
+    /* Guard against double-completion (e.g. GOAWAY completes stream, then pending cancel task fires) */
+    if (stream->thread_data.is_complete) {
+        AWS_H2_STREAM_LOG(DEBUG, stream, "stream already completed, ignoring.");
+        return;
+    }
+    stream->thread_data.is_complete = true;
+
     /* Nice logging */
     if (error_code) {
         AWS_H2_STREAM_LOGF(

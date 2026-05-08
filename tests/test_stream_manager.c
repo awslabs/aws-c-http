@@ -1152,6 +1152,58 @@ TEST_CASE(h2_sm_mock_goaway) {
     return s_tester_clean_up();
 }
 
+/* Test that cancelling a stream after GOAWAY does not crash from double stream completion.
+ * Reproduces P428540711: cancel() schedules cross-thread task, but s_finish_shutdown already
+ * completed the stream. The cross-thread task then invokes on_complete a second time. */
+TEST_CASE(h2_sm_mock_cancel_after_goaway_no_double_complete) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 1,
+        .max_concurrent_streams_per_connection = 1,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+
+    /* Acquire 1 stream */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1));
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+
+    struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&fake_connection->peer));
+    testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
+
+    /* Get the stream handle */
+    struct aws_http_stream *stream = NULL;
+    aws_array_list_front(&s_tester.streams, &stream);
+    ASSERT_NOT_NULL(stream);
+
+    /* Send GOAWAY with last_stream_id=0, meaning our stream (id=1) is rejected */
+    struct aws_byte_cursor debug_info;
+    AWS_ZERO_STRUCT(debug_info);
+    struct aws_h2_frame *goaway_frame =
+        aws_h2_frame_new_goaway(allocator, 0 /*last_stream_id*/, AWS_HTTP2_ERR_INTERNAL_ERROR, debug_info);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&fake_connection->peer, goaway_frame));
+
+    /* Cancel the stream BEFORE draining tasks.
+     * This schedules the cross-thread work task (reset_called=true).
+     * When we drain, both the GOAWAY processing (which completes the stream)
+     * and the cancel cross-thread task will run, causing double on_complete. */
+    aws_http_stream_cancel_default_error(stream);
+
+    /* Drain tasks - this should NOT crash from double stream completion */
+    testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
+
+    /* Stream should be completed with error at least once */
+    ASSERT_TRUE(s_tester.stream_completed_count >= 1);
+    ASSERT_TRUE(s_tester.stream_complete_errors >= 1);
+
+    return s_tester_clean_up();
+}
+
 /* Test that PING works as expected. */
 TEST_CASE(h2_sm_connection_ping) {
     (void)ctx;
