@@ -1194,7 +1194,12 @@ TEST_CASE(h2_sm_mock_cancel_after_goaway_no_double_complete) {
      * and the cancel cross-thread task will run, causing double on_complete. */
     aws_http_stream_cancel_default_error(stream);
 
-    /* Drain tasks - this should NOT crash from double stream completion */
+    /* User releases their ref on the stream (simulates real usage: cancel then release).
+     * The stream must stay alive until the cross-thread task completes. */
+    aws_http_stream_release(stream);
+    aws_array_list_clear(&s_tester.streams);
+
+    /* Drain tasks - this should NOT crash from double stream completion or use-after-free */
     testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
 
     /* Stream should be completed with error at least once */
