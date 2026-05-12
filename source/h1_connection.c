@@ -142,6 +142,11 @@ static void s_stop(
     AWS_ASSERT(stop_reading || stop_writing || schedule_shutdown); /* You are required to stop at least 1 thing */
 
     if (stop_reading) {
+        /* signal the decoder that the connection has closed. */
+        if (aws_h1_decoder_on_connection_closed(connection->thread_data.incoming_stream_decoder)) {
+            error_code = aws_last_error();
+        }
+
         if (connection->thread_data.read_state == AWS_CONNECTION_READ_OPEN) {
             connection->thread_data.read_state = AWS_CONNECTION_READ_SHUT_DOWN_COMPLETE;
         } else if (connection->thread_data.read_state == AWS_CONNECTION_READ_SHUTTING_DOWN) {
@@ -2037,6 +2042,16 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
 
     bool body_headers_ignored = incoming_stream->base.request_method == AWS_HTTP_METHOD_HEAD;
     aws_h1_decoder_set_body_headers_ignored(connection->thread_data.incoming_stream_decoder, body_headers_ignored);
+    /**
+     * RFC-7230 3.3.3
+     * 2. Any 2xx (Successful) response to a CONNECT request implies that
+     * the connection will become a tunnel immediately after the empty
+     * line that concludes the header fields.  A client MUST ignore any
+     * Content-Length or Transfer-Encoding header fields received in
+     * such a message. . */
+    aws_h1_decoder_set_body_headers_ignored_on_2xx(
+        connection->thread_data.incoming_stream_decoder,
+        incoming_stream->base.request_method == AWS_HTTP_METHOD_CONNECT);
 
     if (incoming_stream->base.metrics.receive_start_timestamp_ns == -1) {
         /* That's the first time for the stream receives any message */

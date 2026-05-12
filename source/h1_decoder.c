@@ -37,9 +37,11 @@ struct aws_h1_decoder {
     uint64_t chunk_size;
     bool doing_trailers;
     bool is_done;
+    bool body_headers_ignored_on_2xx;
     bool body_headers_ignored;
     bool body_headers_forbidden;
     bool content_length_received;
+    bool response_body_indeterminate_length;
 
     enum aws_http_header_block header_block;
     const void *logging_id;
@@ -215,10 +217,26 @@ static void s_reset_state(struct aws_h1_decoder *decoder) {
     decoder->doing_trailers = false;
     decoder->is_done = false;
     decoder->body_headers_ignored = false;
+    decoder->body_headers_ignored_on_2xx = false;
     decoder->body_headers_forbidden = false;
     decoder->content_length_received = false;
+    decoder->response_body_indeterminate_length = false;
     /* set to normal by default */
     decoder->header_block = AWS_HTTP_HEADER_BLOCK_MAIN;
+}
+
+/* State for body with indeterminate length - consumes all data until connection closes */
+static int s_state_indeterminate_length_body(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input) {
+    /* indeterminate length only valid for response. */
+    AWS_ASSERT(!decoder->is_decoding_requests);
+    if (input->len > 0) {
+        struct aws_byte_cursor body = aws_byte_cursor_advance(input, input->len);
+        int err = decoder->vtable.on_body(&body, false, decoder->user_data);
+        if (err) {
+            return AWS_OP_ERR;
+        }
+    }
+    return AWS_OP_SUCCESS;
 }
 
 static int s_state_unchunked_body(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input) {
@@ -361,6 +379,22 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                 s_set_line_state(decoder, s_linestate_chunk_size);
             } else if (decoder->content_length > 0) {
                 s_set_state(decoder, s_state_unchunked_body);
+            } else if (
+                !decoder->is_decoding_requests && !decoder->content_length_received &&
+                !decoder->body_headers_forbidden && !decoder->body_headers_ignored_on_2xx) {
+                /* RFC-7230 3.3.3: If a message is received without Transfer-Encoding and without Content-Length and NOT
+                 * determined by the response line to have no body, then the message body length is determined by
+                 * reading the stream until connection closure. Note: This only applies to responses. A request without
+                 * Content-Length or Transfer-Encoding has no message body (per RFC 7230 section 3.3.3). */
+                /* The failure response for CONNECT with body is undefined, and since the client will handle the CONNECT
+                 * request, don't read the body to keep it simple. */
+                decoder->response_body_indeterminate_length = true;
+                s_set_state(decoder, s_state_indeterminate_length_body);
+                AWS_LOGF_DEBUG(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Response has no Content-Length or Transfer-Encoding, body length will be determined by "
+                    "connection closure.",
+                    decoder->logging_id);
             } else {
                 err = s_mark_done(decoder);
                 if (err) {
@@ -536,13 +570,6 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                     return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
                 }
             }
-
-            /* TODO: deal with body of indeterminate length, marking it as successful when connection is closed:
-             *
-             * A response that has neither chunked transfer coding nor Content-Length is terminated by closure of
-             * the connection and, thus, is considered complete regardless of the number of message body octets
-             * received, provided that the header section was received intact.
-             * RFC-7230 3.4 */
         } break;
 
         default:
@@ -688,6 +715,9 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
 
     /* RFC-7230 section 3.3 Message Body */
     decoder->body_headers_ignored |= code_val == AWS_HTTP_STATUS_CODE_304_NOT_MODIFIED;
+    if (decoder->body_headers_ignored_on_2xx) {
+        decoder->body_headers_ignored |= code_val / 100 == 2;
+    }
     decoder->body_headers_forbidden = code_val == AWS_HTTP_STATUS_CODE_204_NO_CONTENT || code_val / 100 == 1;
 
     if (s_check_info_response_status_code(code_val)) {
@@ -776,4 +806,39 @@ void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, const void *i
 
 void aws_h1_decoder_set_body_headers_ignored(struct aws_h1_decoder *decoder, bool body_headers_ignored) {
     decoder->body_headers_ignored = body_headers_ignored;
+}
+
+void aws_h1_decoder_set_body_headers_ignored_on_2xx(struct aws_h1_decoder *decoder, bool body_headers_ignored_on_2xx) {
+    decoder->body_headers_ignored_on_2xx = body_headers_ignored_on_2xx;
+}
+
+int aws_h1_decoder_on_connection_closed(struct aws_h1_decoder *decoder) {
+    if (!decoder) {
+        return AWS_OP_SUCCESS;
+    }
+
+    if (!decoder->response_body_indeterminate_length || decoder->is_done) {
+        /* nothing to do */
+        return AWS_OP_SUCCESS;
+    }
+    /* If the decoder is processing the indeterminate length response, the connection close marks the response ends. */
+    /* Signal final body callback with finished=true */
+    struct aws_byte_cursor empty_cursor = {.ptr = NULL, .len = 0};
+    int err = decoder->vtable.on_body(&empty_cursor, true, decoder->user_data);
+    if (err) {
+        return AWS_OP_ERR;
+    }
+
+    /* Mark the message as complete */
+    err = s_mark_done(decoder);
+    if (err) {
+        return AWS_OP_ERR;
+    }
+
+    AWS_LOGF_DEBUG(
+        AWS_LS_HTTP_STREAM,
+        "id=%p: Response with indeterminate body length completed via connection closure.",
+        decoder->logging_id);
+
+    return AWS_OP_SUCCESS;
 }

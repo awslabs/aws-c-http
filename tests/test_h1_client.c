@@ -2272,6 +2272,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_headers) {
         "HTTP/1.1 308 Permanent Redirect\r\n"
         "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
         "Location: /index.html\r\n"
+        "Content-Length: 0\r\n"
         "\r\n"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -2280,9 +2281,10 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_headers) {
     ASSERT_TRUE(stream_tester.complete);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
     ASSERT_INT_EQUALS(308, stream_tester.response_status);
-    ASSERT_UINT_EQUALS(2, aws_http_headers_count(stream_tester.response_headers));
+    ASSERT_UINT_EQUALS(3, aws_http_headers_count(stream_tester.response_headers));
     ASSERT_SUCCESS(s_check_header(stream_tester.response_headers, 0, "Date", "Fri, 01 Mar 2019 17:18:55 GMT"));
     ASSERT_SUCCESS(s_check_header(stream_tester.response_headers, 1, "Location", "/index.html"));
+    ASSERT_SUCCESS(s_check_header(stream_tester.response_headers, 2, "Content-Length", "0"));
     ASSERT_UINT_EQUALS(0, stream_tester.response_body.len);
 
     /* clean up */
@@ -2722,7 +2724,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
     aws_input_stream_release(body_stream);
 
     /* send response */
-    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_push_read_str(&tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
 
     /* tick loop until body finishes sending.*/
     while (body_sender.cursor.len > 0) {
@@ -2745,7 +2748,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
     ASSERT_TRUE(stream_tester.complete);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
     ASSERT_INT_EQUALS(200, stream_tester.response_status);
-    ASSERT_UINT_EQUALS(0, aws_http_headers_count(stream_tester.response_headers));
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(stream_tester.response_headers));
     ASSERT_UINT_EQUALS(0, stream_tester.response_body.len);
 
     /* clean up */
@@ -2788,7 +2791,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_chunks_done_sendin
     testing_channel_run_currently_queued_tasks(&tester.testing_channel);
 
     /* send response */
-    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_push_read_str(&tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
 
     testing_channel_run_currently_queued_tasks(&tester.testing_channel);
 
@@ -2826,7 +2830,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_chunks_done_sendin
     ASSERT_TRUE(stream_tester.complete);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
     ASSERT_INT_EQUALS(200, stream_tester.response_status);
-    ASSERT_UINT_EQUALS(0, aws_http_headers_count(stream_tester.response_headers));
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(stream_tester.response_headers));
     ASSERT_UINT_EQUALS(0, stream_tester.response_body.len);
 
     /* clean up */
@@ -2841,7 +2845,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_without_request_shuts_down_connection) {
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
-    ASSERT_SUCCESS(testing_channel_push_read_str_ignore_errors(&tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
+    ASSERT_SUCCESS(testing_channel_push_read_str_ignore_errors(
+        &tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
@@ -2874,6 +2879,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_close_header_ends_connection) {
     ASSERT_SUCCESS(testing_channel_push_read_str(
         &tester.testing_channel,
         "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 0\r\n"
         "Connection: close\r\n"
         "\r\n"));
 
@@ -2938,6 +2944,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_close_header_ends_connection) {
     ASSERT_SUCCESS(testing_channel_push_read_str(
         &tester.testing_channel,
         "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 0\r\n"
         "\r\n"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -2983,9 +2990,11 @@ H1_CLIENT_TEST_CASE(h1_client_response_close_header_with_pipelining) {
         &tester.testing_channel,
         /* Response 1 */
         "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 0\r\n"
         "\r\n"
         /* Response 2 */
         "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 0\r\n"
         "Connection: close\r\n"
         "\r\n"));
 
@@ -3069,9 +3078,11 @@ H1_CLIENT_TEST_CASE(h1_client_request_close_header_with_pipelining) {
         &tester.testing_channel,
         /* Response 1 */
         "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 0\r\n"
         "\r\n"
         /* Response 2 */
         "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 0\r\n"
         "\r\n"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -3175,9 +3186,11 @@ H1_CLIENT_TEST_CASE(h1_client_request_close_header_with_chunked_encoding_and_pip
         &tester.testing_channel,
         /* Response 1 */
         "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 0\r\n"
         "\r\n"
         /* Response 2 */
         "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 0\r\n"
         "\r\n"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -4786,6 +4799,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_close_connection_before_request_finishes)
         &tester.testing_channel,
         "HTTP/1.1 404 Not Found\r\n"
         "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
+        "Content-Length: 0\r\n"
         "Connection: close\r\n"
         "\r\n"));
 
@@ -5212,7 +5226,8 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_single_chunk) {
     ASSERT_INT_EQUALS(1, callback_tester.num_callbacks);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
 
-    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
 
     ASSERT_TRUE(fixture.stream_tester.complete);
@@ -5271,7 +5286,8 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_multiple_chunks) {
     ASSERT_INT_EQUALS(1, callback_tester2.num_callbacks);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester2.last_error_code);
 
-    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
 
     ASSERT_TRUE(fixture.stream_tester.complete);
@@ -5441,7 +5457,8 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_single) {
     ASSERT_INT_EQUALS(1, callback_tester.num_callbacks);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
 
-    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
 
     ASSERT_TRUE(fixture.stream_tester.complete);
@@ -5573,7 +5590,8 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_content_length) {
     ASSERT_INT_EQUALS(3, callback_tester.num_callbacks);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
 
-    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
 
     ASSERT_TRUE(fixture.stream_tester.complete);
@@ -5615,7 +5633,8 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_chunked) {
     ASSERT_INT_EQUALS(1, callback_tester.num_callbacks);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
 
-    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
     testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
 
     ASSERT_TRUE(fixture.stream_tester.complete);
@@ -5658,12 +5677,62 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_auto_chunked) {
     return AWS_OP_SUCCESS;
 }
 
+/* Test: Response with no Content-Length or Transfer-Encoding has its body determined by connection closure */
+H1_CLIENT_TEST_CASE(h1_client_response_indeterminate_length_body) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    aws_http_message_destroy(request);
+
+    /* send response with no Content-Length or Transfer-Encoding */
+    ASSERT_SUCCESS(testing_channel_push_read_str(
+        &tester.testing_channel,
+        "HTTP/1.1 200 OK\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "hello "));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* stream should NOT be complete yet - waiting for connection close */
+    ASSERT_FALSE(stream_tester.complete);
+    ASSERT_UINT_EQUALS(6, stream_tester.response_body.len);
+
+    /* send more body data */
+    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, "world"));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    ASSERT_FALSE(stream_tester.complete);
+    ASSERT_UINT_EQUALS(11, stream_tester.response_body.len);
+
+    /* close the connection - this should complete the stream */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(200, stream_tester.response_status);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&stream_tester.response_body, "hello world"));
+
+    /* clean up */
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 /* Test: body stream + use_manual_data_writes is rejected */
 H1_CLIENT_TEST_CASE(h1_client_write_data_body_stream_conflict) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-
     struct aws_http_message *request = aws_http_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
     ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("POST")));
@@ -5695,6 +5764,77 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_body_stream_conflict) {
     return AWS_OP_SUCCESS;
 }
 
+/* Test: Response with no Content-Length and empty body - connection closes right after headers */
+H1_CLIENT_TEST_CASE(h1_client_response_indeterminate_length_empty_body) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    aws_http_message_destroy(request);
+
+    /* send response headers only, no body, no Content-Length */
+    ASSERT_SUCCESS(testing_channel_push_read_str(
+        &tester.testing_channel,
+        "HTTP/1.1 200 OK\r\n"
+        "\r\n"));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* stream should NOT be complete yet */
+    ASSERT_FALSE(stream_tester.complete);
+
+    /* close connection */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(200, stream_tester.response_status);
+    ASSERT_UINT_EQUALS(0, stream_tester.response_body.len);
+
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: 1xx and 204 responses must NOT enter indeterminate-length mode (body_headers_forbidden) */
+H1_CLIENT_TEST_CASE(h1_client_response_204_no_indeterminate_length) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    aws_http_message_destroy(request);
+
+    /* 204 with no Content-Length should complete immediately, not wait for connection close */
+    ASSERT_SUCCESS(testing_channel_push_read_str(
+        &tester.testing_channel,
+        "HTTP/1.1 204 No Content\r\n"
+        "\r\n"));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* stream should be complete immediately - 204 has no body */
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(204, stream_tester.response_status);
+    ASSERT_UINT_EQUALS(0, stream_tester.response_body.len);
+
+    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
 /* Test: NULL data with non-zero Content-Length should fail with length mismatch */
 H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_nonzero_content_length) {
     (void)ctx;
