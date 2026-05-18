@@ -414,7 +414,7 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     }
 
     /* If we're out of space in the buffer, grow it */
-    if (context->dynamic_table.num_e lements == context->dynamic_table.buffer_capacity) {
+    if (context->dynamic_table.num_elements == context->dynamic_table.buffer_capacity) {
         /* If the buffer is currently of 0 size, reset it back to its initial size */
         const size_t new_size =
             context->dynamic_table.buffer_capacity
