@@ -297,6 +297,7 @@ add_test_case(hpack_dynamic_table_get)
 add_test_case(hpack_decode_indexed_from_dynamic_table)
 add_test_case(hpack_dynamic_table_empty_value)
 add_test_case(hpack_dynamic_table_with_empty_header)
+add_test_case(hpack_dynamic_table_growth_corner_case)
 add_test_case(hpack_dynamic_table_size_update_from_setting)
 
 if(ENABLE_LOCALHOST_INTEGRATION_TESTS)
