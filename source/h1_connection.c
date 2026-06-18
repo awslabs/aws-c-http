@@ -272,12 +272,14 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
 static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base) {
     struct aws_h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h1_connection, base);
     int new_stream_error_code;
+    size_t num_streams_in_progress;
     { /* BEGIN CRITICAL SECTION */
         aws_h1_connection_lock_synced_data(connection);
         new_stream_error_code = connection->synced_data.new_stream_error_code;
+        num_streams_in_progress = connection->synced_data.num_streams_in_progress;
         aws_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
-    return new_stream_error_code == 0;
+    return new_stream_error_code == 0 && num_streams_in_progress == 0;
 }
 
 static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response) {
@@ -407,6 +409,7 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
         h1_stream->synced_data.api_state = AWS_H1_STREAM_API_STATE_ACTIVE;
 
         aws_linked_list_push_back(&connection->synced_data.new_client_stream_list, &h1_stream->node);
+        connection->synced_data.num_streams_in_progress++;
         if (!connection->synced_data.is_cross_thread_work_task_scheduled) {
             connection->synced_data.is_cross_thread_work_task_scheduled = true;
             should_schedule_task = true;
@@ -665,6 +668,13 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
 
     /* Remove stream from list. */
     aws_linked_list_remove(&stream->node);
+
+    { /* BEGIN CRITICAL SECTION */
+        aws_h1_connection_lock_synced_data(connection);
+        AWS_ASSERT(connection->synced_data.num_streams_in_progress > 0);
+        connection->synced_data.num_streams_in_progress--;
+        aws_h1_connection_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
 
     /* Nice logging */
     if (error_code) {

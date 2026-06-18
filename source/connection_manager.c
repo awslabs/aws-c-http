@@ -1374,6 +1374,15 @@ int aws_http_connection_manager_release_connection(
     int result = AWS_OP_ERR;
     bool should_release_connection = !manager->system_vtable->aws_http_connection_new_requests_allowed(connection);
 
+    if (should_release_connection && aws_http_connection_is_open(connection)) {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "id=%p: Connection (id=%p) released with active stream(s) still in progress. "
+            "Connection will be destroyed, not recycled.",
+            (void *)manager,
+            (void *)connection);
+    }
+
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_CONNECTION_MANAGER,
         "id=%p: User releasing connection (id=%p)",
