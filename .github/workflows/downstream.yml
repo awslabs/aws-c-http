@@ -1,0 +1,35 @@
+name: Downstream
+
+on:
+  push:
+    branches-ignore:
+      - 'main'
+
+env:
+  BUILDER_VERSION: v0.9.92
+  BUILDER_SOURCE: releases
+  BUILDER_HOST: https://d19elf31gohf1l.cloudfront.net
+  PACKAGE_NAME: aws-c-http
+  RUN: ${{ github.run_id }}-${{ github.run_number }}
+  CRT_CI_ROLE: ${{ secrets.CRT_CI_ROLE_ARN }}
+  AWS_DEFAULT_REGION: us-east-1
+
+permissions:
+  id-token: write # This is required for requesting the JWT
+
+jobs:
+  # Test downstream repos.
+  # This should not be required because we can run into a chicken and egg problem if there is a change that needs some fix in a downstream repo.
+  # bump to ubuntu-22 since ubuntu 18 failed to install the mock server deps with python3.6
+  downstream:
+    runs-on: ubuntu-24.04 # latest
+    steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ env.CRT_CI_ROLE }}
+        aws-region: ${{ env.AWS_DEFAULT_REGION }}
+    # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
+    - name: Build ${{ env.PACKAGE_NAME }}
+      run: |
+        aws s3 cp s3://aws-crt-test-stuff/ci/${{ env.BUILDER_VERSION }}/linux-container-ci.sh ./linux-container-ci.sh && chmod a+x ./linux-container-ci.sh
+        ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-ubuntu-22-x64 build downstream -p ${{ env.PACKAGE_NAME }}
