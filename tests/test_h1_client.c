@@ -5722,60 +5722,7 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_nonzero_content_length) {
     return AWS_OP_SUCCESS;
 }
 
-/* Test that new_requests_allowed returns false while a stream is in progress.
- * This prevents the connection manager from recycling a connection that has a stalled stream. */
-H1_CLIENT_TEST_CASE(h1_client_new_requests_not_allowed_while_stream_active) {
-    (void)ctx;
-    struct tester_options tester_opts = {
-        .manual_window_management = true,
-        .initial_stream_window_size = 5,
-        .read_buffer_capacity = SIZE_MAX,
-    };
-    struct tester tester;
-    ASSERT_SUCCESS(s_tester_init_ex(&tester, allocator, &tester_opts));
 
-    /* Before any streams, new requests are allowed */
-    ASSERT_TRUE(aws_http_connection_new_requests_allowed(tester.connection));
-
-    /* Create a stream */
-    struct aws_http_message *request = s_new_default_get_request(allocator);
-    struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    /* Stream is active — new requests should NOT be allowed */
-    ASSERT_FALSE(aws_http_connection_new_requests_allowed(tester.connection));
-
-    /* Send a response that fills the window (body > window size) */
-    const char *response_str = "HTTP/1.1 200 OK\r\n"
-                               "Content-Length: 10\r\n"
-                               "\r\n"
-                               "0123456789";
-    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, response_str));
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    /* Window is full, stream is stalled — still not allowed */
-    struct aws_h1_window_stats window_stats = aws_h1_connection_window_stats(tester.connection);
-    ASSERT_UINT_EQUALS(0, window_stats.stream_window);
-    ASSERT_FALSE(aws_http_connection_new_requests_allowed(tester.connection));
-
-    /* Open the window to let stream complete */
-    aws_http_stream_update_window(stream_tester.stream, SIZE_MAX);
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    /* Stream should now be complete */
-    ASSERT_TRUE(stream_tester.complete);
-    ASSERT_SUCCESS(stream_tester.on_complete_error_code);
-
-    /* Now that stream is done, new requests are allowed again */
-    ASSERT_TRUE(aws_http_connection_new_requests_allowed(tester.connection));
-
-    /* clean up */
-    client_stream_tester_clean_up(&stream_tester);
-    aws_http_message_destroy(request);
-    ASSERT_SUCCESS(s_tester_clean_up(&tester));
-    return AWS_OP_SUCCESS;
-}
 
 /* Test that new_requests_allowed remains true while streams are in progress.
  * This verifies HTTP pipelining is not broken -- callers must be able to queue
