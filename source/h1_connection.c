@@ -669,17 +669,6 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     /* Remove stream from list. */
     aws_linked_list_remove(&stream->node);
 
-    /* Only decrement for client streams. Server streams are not tracked by num_streams_in_progress
-     * because they are created internally. */
-    if (stream->base.client_data) {
-        { /* BEGIN CRITICAL SECTION */
-            aws_h1_connection_lock_synced_data(connection);
-            AWS_ASSERT(connection->synced_data.num_streams_in_progress > 0);
-            connection->synced_data.num_streams_in_progress--;
-            aws_h1_connection_unlock_synced_data(connection);
-        } /* END CRITICAL SECTION */
-    }
-
     /* Nice logging */
     if (error_code) {
         AWS_LOGF_DEBUG(
@@ -728,6 +717,15 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
         aws_linked_list_move_all_back(&stream->thread_data.pending_chunk_list, &stream->synced_data.pending_chunk_list);
         aws_linked_list_move_all_back(
             &stream->thread_data.pending_data_write_list, &stream->synced_data.pending_data_write_list);
+
+        /* Only decrement for client streams.
+         * Server streams are not tracked by num_streams_in_progress because they are created internally. */
+        if (stream->base.client_data) {
+            {
+                AWS_ASSERT(connection->synced_data.num_streams_in_progress > 0);
+                connection->synced_data.num_streams_in_progress--;
+            }
+        }
 
         aws_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
