@@ -35,7 +35,7 @@ jobs:
       - name: Check ABI
         # Pointing at the fork branch while the builder change is in review.
         # Switch to awslabs/aws-crt-builder/.github/actions/check-abi@main once merged.
-        uses: azkrishpy/aws-crt-builder/.github/actions/check-abi@abi-check
+        uses: awslabs/aws-crt-builder/.github/actions/check-abi@abi-check
         with:
           lib-name: ${{ env.PACKAGE_NAME }}
           builder-version: abi-check
