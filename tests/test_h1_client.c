@@ -5776,3 +5776,70 @@ H1_CLIENT_TEST_CASE(h1_client_new_requests_not_allowed_while_stream_active) {
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
+
+/* Test that new_requests_allowed remains true while streams are in progress.
+ * This verifies HTTP pipelining is not broken -- callers must be able to queue
+ * multiple requests on a single connection. */
+H1_CLIENT_TEST_CASE(h1_client_new_requests_allowed_during_pipelining) {
+    (void)ctx;
+    struct tester_options tester_opts = {
+        .manual_window_management = true,
+        .initial_stream_window_size = 5,
+        .read_buffer_capacity = SIZE_MAX,
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init_ex(&tester, allocator, &tester_opts));
+
+    /* Before any streams, new requests are allowed */
+    ASSERT_TRUE(aws_http_connection_new_requests_allowed(tester.connection));
+
+    /* Create stream 1 */
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+    struct client_stream_tester stream_tester1;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester1, &tester, request));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Stream 1 is active -- new_requests_allowed must still return true for pipelining */
+    ASSERT_TRUE(aws_http_connection_new_requests_allowed(tester.connection));
+
+    /* Create stream 2 (pipelining) while stream 1 is still active */
+    struct client_stream_tester stream_tester2;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester2, &tester, request));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Both streams active -- still must allow new requests */
+    ASSERT_TRUE(aws_http_connection_new_requests_allowed(tester.connection));
+
+    /* Send response for stream 1 */
+    const char *response_str = "HTTP/1.1 200 OK\r\n"
+                               "Content-Length: 5\r\n"
+                               "\r\n"
+                               "hello";
+    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, response_str));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Open window to let stream 1 complete */
+    aws_http_stream_update_window(stream_tester1.stream, SIZE_MAX);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    ASSERT_TRUE(stream_tester1.complete);
+
+    /* Stream 2 still active -- must still allow new requests */
+    ASSERT_TRUE(aws_http_connection_new_requests_allowed(tester.connection));
+
+    /* Send response for stream 2 and complete it */
+    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, response_str));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    aws_http_stream_update_window(stream_tester2.stream, SIZE_MAX);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    ASSERT_TRUE(stream_tester2.complete);
+
+    /* All streams done -- still allowed */
+    ASSERT_TRUE(aws_http_connection_new_requests_allowed(tester.connection));
+
+    /* clean up */
+    client_stream_tester_clean_up(&stream_tester1);
+    client_stream_tester_clean_up(&stream_tester2);
+    aws_http_message_destroy(request);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
