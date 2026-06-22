@@ -721,10 +721,8 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
         /* Only decrement for client streams.
          * Server streams are not tracked by num_streams_in_progress because they are created internally. */
         if (stream->base.client_data) {
-            {
-                AWS_ASSERT(connection->synced_data.num_streams_in_progress > 0);
-                connection->synced_data.num_streams_in_progress--;
-            }
+            AWS_ASSERT(connection->synced_data.num_streams_in_progress > 0);
+            connection->synced_data.num_streams_in_progress--;
         }
 
         aws_h1_connection_unlock_synced_data(connection);
