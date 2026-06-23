@@ -43,6 +43,7 @@ struct aws_http_connection_vtable {
     void (*stop_new_requests)(struct aws_http_connection *connection);
     bool (*is_open)(const struct aws_http_connection *connection);
     bool (*new_requests_allowed)(const struct aws_http_connection *connection);
+    bool (*is_connection_idle)(const struct aws_http_connection *connection);
 
     /* HTTP/2 specific functions */
     void (*update_window)(struct aws_http_connection *connection, uint32_t increment_size);

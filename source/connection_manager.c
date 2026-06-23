@@ -47,6 +47,7 @@ static struct aws_http_connection_manager_system_vtable s_default_system_vtable 
     .aws_http_connection_release = aws_http_connection_release,
     .aws_http_connection_close = aws_http_connection_close,
     .aws_http_connection_new_requests_allowed = aws_http_connection_new_requests_allowed,
+    .aws_http_connection_is_connection_idle = aws_http_connection_is_connection_idle,
     .aws_high_res_clock_get_ticks = aws_high_res_clock_get_ticks,
     .aws_channel_thread_is_callers_thread = aws_channel_thread_is_callers_thread,
     .aws_http_connection_get_channel = aws_http_connection_get_channel,
@@ -58,7 +59,7 @@ const struct aws_http_connection_manager_system_vtable *g_aws_http_connection_ma
 
 bool aws_http_connection_manager_system_vtable_is_valid(const struct aws_http_connection_manager_system_vtable *table) {
     return table->aws_http_client_connect && table->aws_http_connection_close && table->aws_http_connection_release &&
-           table->aws_http_connection_new_requests_allowed;
+           table->aws_http_connection_new_requests_allowed && table->aws_http_connection_is_connection_idle;
 }
 
 enum aws_http_connection_manager_state_type { AWS_HCMST_UNINITIALIZED, AWS_HCMST_READY, AWS_HCMST_SHUTTING_DOWN };
@@ -1373,6 +1374,12 @@ int aws_http_connection_manager_release_connection(
 
     int result = AWS_OP_ERR;
     bool should_release_connection = !manager->system_vtable->aws_http_connection_new_requests_allowed(connection);
+
+    /* Even if the connection allows new requests, don't recycle if streams are still in progress.
+     * An H1 connection with orphaned streams will stall all future streams on the same connection. */
+    if (!should_release_connection) {
+        should_release_connection = !manager->system_vtable->aws_http_connection_is_connection_idle(connection);
+    }
 
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_CONNECTION_MANAGER,

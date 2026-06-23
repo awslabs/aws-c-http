@@ -60,6 +60,7 @@ static void s_connection_close(struct aws_http_connection *connection_base);
 static void s_connection_stop_new_request(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
+static bool s_connection_is_idle(const struct aws_http_connection *connection_base);
 static int s_decoder_on_request(
     enum aws_http_method method_enum,
     const struct aws_byte_cursor *method_str,
@@ -95,6 +96,7 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .stop_new_requests = s_connection_stop_new_request,
     .is_open = s_connection_is_open,
     .new_requests_allowed = s_connection_new_requests_allowed,
+    .is_connection_idle = s_connection_is_idle,
     .change_settings = NULL,
     .send_ping = NULL,
     .send_goaway = NULL,
@@ -278,6 +280,17 @@ static bool s_connection_new_requests_allowed(const struct aws_http_connection *
         aws_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
     return new_stream_error_code == 0;
+}
+
+static bool s_connection_is_idle(const struct aws_http_connection *connection_base) {
+    struct aws_h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h1_connection, base);
+    size_t num_streams_in_progress;
+    { /* BEGIN CRITICAL SECTION */
+        aws_h1_connection_lock_synced_data(connection);
+        num_streams_in_progress = connection->synced_data.num_streams_in_progress;
+        aws_h1_connection_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+    return num_streams_in_progress == 0;
 }
 
 static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response) {

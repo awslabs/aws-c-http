@@ -57,6 +57,7 @@ static void s_connection_close(struct aws_http_connection *connection_base);
 static void s_connection_stop_new_request(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
+static bool s_h2_connection_is_idle(const struct aws_http_connection *connection_base);
 static void s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size);
 static int s_connection_change_settings(
     struct aws_http_connection *connection_base,
@@ -174,6 +175,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .stop_new_requests = s_connection_stop_new_request,
     .is_open = s_connection_is_open,
     .new_requests_allowed = s_connection_new_requests_allowed,
+    .is_connection_idle = s_h2_connection_is_idle,
     .update_window = s_connection_update_window,
     .change_settings = s_connection_change_settings,
     .send_ping = s_connection_send_ping,
@@ -2264,6 +2266,13 @@ static bool s_connection_new_requests_allowed(const struct aws_http_connection *
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
     return new_stream_error_code == 0;
+}
+
+static bool s_h2_connection_is_idle(const struct aws_http_connection *connection_base) {
+    /* HTTP/2 multiplexes streams and handles cleanup via GOAWAY.
+     * The connection manager uses separate H2-specific mechanisms for lifecycle management. */
+    (void)connection_base;
+    return true;
 }
 
 static void s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size) {
