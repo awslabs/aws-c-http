@@ -5722,8 +5722,6 @@ H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_nonzero_content_length) {
     return AWS_OP_SUCCESS;
 }
 
-
-
 /* Test that new_requests_allowed remains true while streams are in progress.
  * This verifies HTTP pipelining is not broken -- callers must be able to queue
  * multiple requests on a single connection. */
