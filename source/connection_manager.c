@@ -6,8 +6,8 @@
 #include <aws/http/connection_manager.h>
 
 #include <aws/http/connection.h>
-#include <aws/http/private/connection_manager_system_vtable.h>
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/private/connection_manager_system_vtable.h>
 #include <aws/http/private/connection_monitor.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/proxy_impl.h>
