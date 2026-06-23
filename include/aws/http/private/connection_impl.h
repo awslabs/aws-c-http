@@ -207,6 +207,13 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
     const struct aws_http2_connection_options *http2_options,
     void *connection_user_data);
 
+/**
+ * Return whether the connection has no streams in progress.
+ * Used internally by the connection manager to decide whether to recycle or destroy a connection on release.
+ */
+AWS_HTTP_API
+bool aws_http_connection_is_connection_idle(const struct aws_http_connection *connection);
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_CONNECTION_IMPL_H */
