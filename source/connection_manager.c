@@ -1376,9 +1376,12 @@ int aws_http_connection_manager_release_connection(
     int result = AWS_OP_ERR;
     bool should_release_connection = !manager->system_vtable->aws_http_connection_new_requests_allowed(connection);
 
-    /* Even if the connection allows new requests, don't recycle if streams are still in progress.
-     * An H1 connection with orphaned streams will stall all future streams on the same connection. */
-    if (!should_release_connection) {
+    /* Even if the connection allows new requests, don't recycle if an H1 connection has streams still in progress.
+     * An H1 connection with orphaned streams will stall all future streams due to FIFO processing.
+     * H2 connections are exempt: multiplexed streams are independent and the H2 stream manager
+     * guarantees all streams complete before releasing. */
+    if (!should_release_connection &&
+        manager->system_vtable->aws_http_connection_get_version(connection) == AWS_HTTP_VERSION_1_1) {
         should_release_connection = !manager->system_vtable->aws_http_connection_is_connection_idle(connection);
     }
 
