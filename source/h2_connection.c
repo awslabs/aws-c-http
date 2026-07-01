@@ -2269,9 +2269,27 @@ static bool s_connection_new_requests_allowed(const struct aws_http_connection *
 }
 
 static bool s_h2_connection_is_idle(const struct aws_http_connection *connection_base) {
-    /* HTTP/2 multiplexes streams and handles cleanup via GOAWAY.
-     * The connection manager uses separate H2-specific mechanisms for lifecycle management. */
-    (void)connection_base;
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
+
+    /* First we can check the pending_stream_list */
+    bool has_pending_streams;
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+        has_pending_streams = !aws_linked_list_empty(&connection->synced_data.pending_stream_list);
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+
+    if (has_pending_streams) {
+        return false;
+    }
+
+    /* If we're on the event-loop thread, also check active_streams_map */
+    if (connection->base.channel_slot != NULL &&
+        aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel)) {
+        return aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0;
+    }
+
+    /* If not on the event-loop thread, pending_stream_list was our best effort to check. */
     return true;
 }
 
