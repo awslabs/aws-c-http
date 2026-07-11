@@ -22,10 +22,6 @@
 
 #include "h2_test_helper.h"
 
-#ifdef _MSC_VER
-#    pragma warning(disable : 4996) /* Disable warnings about sprintf() being insecure */
-#endif
-
 static int s_tester_on_headers(
     struct aws_http_stream *stream,
     enum aws_http_header_block header_block,
@@ -82,7 +78,6 @@ struct tester {
     size_t stream_completed_count;
     size_t stream_complete_errors;
     size_t stream_200_count;
-    size_t stream_4xx_count;
     size_t stream_status_not_200_count;
 
     uint64_t num_sen_received;
@@ -98,7 +93,10 @@ struct tester {
 static struct tester s_tester;
 
 #define DEFINE_HEADER(NAME, VALUE)                                                                                     \
-    { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
+    {                                                                                                                  \
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME),                                                           \
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE),                                                         \
+    }
 
 enum {
     TESTER_TIMEOUT_SEC = 60, /* Give enough time for non-sudo users to enter password */
@@ -188,10 +186,9 @@ static void s_tester_on_stream_completed(struct aws_http_stream *stream, int err
             ++s_tester.stream_complete_errors;
             s_tester.stream_completed_error_code = aws_last_error();
         } else {
-            if (status == 200) {
+            if (status / 100 == 2) {
                 s_tester.stream_completed_with_200 = true;
                 ++s_tester.stream_200_count;
-            } else if (status / 100 == 4) {
             } else {
                 ++s_tester.stream_status_not_200_count;
             }
@@ -249,7 +246,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
         .allocator = allocator,
         .bootstrap = tester->client_bootstrap,
         .host_name = host_name,
-        .port = 8443,
+        .port = 3443,
         .socket_options = &socket_options,
         .user_data = tester,
         .tls_options = &tester->tls_connection_options,
@@ -332,10 +329,10 @@ static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool comp
             aws_device_random_u64(&random_64_bit_num);
 
             size_t headers = (size_t)random_64_bit_num % headers_pool_size;
-            sprintf(test_header_str, "crttest-%zu", headers);
+            snprintf(test_header_str, sizeof(test_header_str), "crttest-%zu", headers);
             char test_value_str[256];
             size_t value = (size_t)random_64_bit_num % values_pool_size;
-            sprintf(test_value_str, "value-%zu", value);
+            snprintf(test_value_str, sizeof(test_value_str), "value-%zu", value);
 
             struct aws_http_header request_header = {
                 .compression =
@@ -373,6 +370,11 @@ static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool comp
     }
 
     aws_string_destroy(http_localhost_host);
+    const struct aws_socket_endpoint *remote_endpoint = aws_http_connection_get_remote_endpoint(s_tester.connection);
+    ASSERT_NOT_NULL(remote_endpoint);
+    struct aws_byte_cursor remote_ip = aws_byte_cursor_from_c_str(remote_endpoint->address);
+    /* Local host IP should always be 127.0.0.1 */
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&remote_ip, "127.0.0.1"));
     return s_tester_clean_up(&s_tester);
 }
 
@@ -392,9 +394,16 @@ static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws
 
     (void)stream;
     (void)user_data;
-    struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.alloc, data);
-    s_tester.num_sen_received = (uint64_t)strtoull((const char *)content_length_header_str->bytes, NULL, 10);
-    aws_string_destroy(content_length_header_str);
+    /* Response is JSON as string: "{\n \"bytes\": 2500000000\n}" - extract the number */
+    struct aws_byte_cursor bytes_key = aws_byte_cursor_from_c_str("\"bytes\": ");
+    struct aws_byte_cursor found;
+
+    if (aws_byte_cursor_find_exact(data, &bytes_key, &found) == AWS_OP_SUCCESS) {
+        struct aws_byte_cursor value_cursor = *data;
+        value_cursor.ptr = found.ptr + bytes_key.len;
+        value_cursor.len = data->len - (size_t)(found.ptr - data->ptr) - bytes_key.len - 2;
+        aws_byte_cursor_utf8_parse_u64(value_cursor, &s_tester.num_sen_received);
+    }
 
     return AWS_OP_SUCCESS;
 }
@@ -406,12 +415,6 @@ static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, v
     s_tester.alloc = allocator;
 
     size_t length = 2500000000UL;
-#ifdef AWS_OS_LINUX
-    /* Using Python hyper h2 server frame work, met a weird upload performance issue on Linux. Our client against nginx
-     * platform has not met the same issue. We assume it's because the server framework implementation.  Use lower
-     * number of linux */
-    length = 250000000UL;
-#endif
 
     struct aws_string *http_localhost_host = NULL;
     if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
@@ -429,7 +432,7 @@ static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, v
     struct aws_http_header request_headers_src[] = {
         DEFINE_HEADER(":method", "PUT"),
         DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":path", "/upload_test.txt"),
+        DEFINE_HEADER(":path", "/echo"),
         {
             .name = aws_byte_cursor_from_c_str(":authority"),
             .value = host_name,
@@ -438,6 +441,7 @@ static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, v
             .name = aws_byte_cursor_from_c_str("content_length"),
             .value = aws_byte_cursor_from_c_str(content_length_sprintf_buffer),
         },
+        DEFINE_HEADER("x-upload-test", "true"),
     };
     struct aws_http_message *request = aws_http2_message_new_request(allocator);
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
@@ -495,13 +499,20 @@ static int s_localhost_integ_h2_download_stress(struct aws_allocator *allocator,
     /* wait for connection connected */
     ASSERT_SUCCESS(s_wait_on_connection_connected(&s_tester));
 
+    char length_sprintf_buffer[128] = "";
+    snprintf(length_sprintf_buffer, sizeof(length_sprintf_buffer), "%zu", length);
+
     struct aws_http_header request_headers_src[] = {
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":path", "/downloadTest"),
+        DEFINE_HEADER(":path", "/echo"),
         {
             .name = aws_byte_cursor_from_c_str(":authority"),
             .value = host_name,
+        },
+        {
+            .name = aws_byte_cursor_from_c_str("x-repeat-data"),
+            .value = aws_byte_cursor_from_c_str(length_sprintf_buffer),
         },
     };
     struct aws_http_message *request = aws_http2_message_new_request(allocator);

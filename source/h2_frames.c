@@ -13,7 +13,7 @@
 
 #include <inttypes.h>
 
-#if _MSC_VER
+#ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
@@ -318,16 +318,18 @@ int aws_h2_encode_data_frame(
     bool body_ends_stream,
     uint8_t pad_length,
     int32_t *stream_window_size_peer,
-    size_t *connection_window_size_peer,
+    uint32_t *connection_window_size_peer,
     struct aws_byte_buf *output,
     bool *body_complete,
-    bool *body_stalled) {
+    bool *body_stalled,
+    bool *body_failed) {
 
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(body_stream);
     AWS_PRECONDITION(output);
     AWS_PRECONDITION(body_complete);
     AWS_PRECONDITION(body_stalled);
+    AWS_PRECONDITION(body_failed);
     AWS_PRECONDITION(*stream_window_size_peer > 0);
 
     if (aws_h2_validate_stream_id(stream_id)) {
@@ -336,6 +338,7 @@ int aws_h2_encode_data_frame(
 
     *body_complete = false;
     *body_stalled = false;
+    *body_failed = false;
     uint8_t flags = 0;
 
     /*
@@ -375,15 +378,16 @@ int aws_h2_encode_data_frame(
     /* Use a sub-buffer to limit where body can go */
     struct aws_byte_buf body_sub_buf =
         aws_byte_buf_from_empty_array(output->buffer + output->len + bytes_preceding_body, max_body);
-
     /* Read body into sub-buffer */
     if (aws_input_stream_read(body_stream, &body_sub_buf)) {
+        *body_failed = true;
         goto error;
     }
 
     /* Check if we've reached the end of the body */
     struct aws_stream_status body_status;
     if (aws_input_stream_get_status(body_stream, &body_status)) {
+        *body_failed = true;
         goto error;
     }
 
@@ -396,12 +400,12 @@ int aws_h2_encode_data_frame(
         if (body_sub_buf.len < body_sub_buf.capacity) {
             /* Body stream was unable to provide as much data as it could have */
             *body_stalled = true;
-
-            if (body_sub_buf.len == 0) {
-                /* This frame would have no useful information, don't even bother sending it */
-                goto handle_nothing_to_send_right_now;
-            }
         }
+    }
+
+    if (body_sub_buf.len == 0 && !(flags & AWS_H2_FRAME_F_END_STREAM)) {
+        /* This frame would have no useful information, don't even bother sending it */
+        goto handle_nothing_to_send_right_now;
     }
 
     ENCODER_LOGF(
@@ -438,7 +442,7 @@ int aws_h2_encode_data_frame(
 
     /* update the connection window size now, we will update stream window size when this function returns */
     AWS_ASSERT(payload_len <= min_window_size);
-    *connection_window_size_peer -= payload_len;
+    *connection_window_size_peer -= (uint32_t)payload_len;
     *stream_window_size_peer -= (int32_t)payload_len;
 
     AWS_ASSERT(writes_ok);

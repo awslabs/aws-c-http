@@ -50,7 +50,9 @@ struct aws_h2err {
 };
 
 #define AWS_H2ERR_SUCCESS                                                                                              \
-    (struct aws_h2err) { .h2_code = 0, .aws_code = 0 }
+    (struct aws_h2err) {                                                                                               \
+        .h2_code = 0, .aws_code = 0                                                                                    \
+    }
 
 #define AWS_H2_PAYLOAD_MAX (0x00FFFFFF)       /* must fit in 3 bytes */
 #define AWS_H2_WINDOW_UPDATE_MAX (0x7FFFFFFF) /* cannot use high bit */
@@ -205,6 +207,7 @@ int aws_h2_encode_frame(
  * body_complete will be set true if encoder reaches the end of the body_stream.
  * body_stalled will be true if aws_input_stream_read() stopped early (didn't
  * complete, though more space was available).
+ * body_failed will be true if the aws_input_stream was the cause of an error.
  *
  * Each call to this function encodes a complete DATA frame, or nothing at all,
  * so it's always safe to encode a different frame type or the body of a different stream
@@ -218,10 +221,11 @@ int aws_h2_encode_data_frame(
     bool body_ends_stream,
     uint8_t pad_length,
     int32_t *stream_window_size_peer,
-    size_t *connection_window_size_peer,
+    uint32_t *connection_window_size_peer,
     struct aws_byte_buf *output,
     bool *body_complete,
-    bool *body_stalled);
+    bool *body_stalled,
+    bool *body_failed);
 
 AWS_HTTP_API
 void aws_h2_frame_destroy(struct aws_h2_frame *frame);

@@ -5,6 +5,7 @@
 
 #include <aws/http/private/h2_stream.h>
 
+#include <aws/common/clock.h>
 #include <aws/http/private/h2_connection.h>
 #include <aws/http/private/strutil.h>
 #include <aws/http/status_code.h>
@@ -22,21 +23,26 @@ static int s_stream_get_received_error_code(struct aws_http_stream *stream_base,
 static int s_stream_get_sent_error_code(struct aws_http_stream *stream_base, uint32_t *out_http2_error);
 static int s_stream_write_data(
     struct aws_http_stream *stream_base,
-    const struct aws_http2_stream_write_data_options *options);
+    const struct aws_http_stream_write_data_options *options);
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error);
-static int s_stream_reset_stream_internal(struct aws_http_stream *stream_base, struct aws_h2err stream_error);
+static int s_stream_reset_stream_internal(
+    struct aws_http_stream *stream_base,
+    struct aws_h2err stream_error,
+    bool cancelling);
+static void s_stream_cancel(struct aws_http_stream *stream, int error_code);
 
 struct aws_http_stream_vtable s_h2_stream_vtable = {
     .destroy = s_stream_destroy,
     .update_window = s_stream_update_window,
     .activate = aws_h2_stream_activate,
+    .cancel = s_stream_cancel,
     .http1_write_chunk = NULL,
     .http2_reset_stream = s_stream_reset_stream,
     .http2_get_received_error_code = s_stream_get_received_error_code,
     .http2_get_sent_error_code = s_stream_get_sent_error_code,
-    .http2_write_data = s_stream_write_data,
+    .write_data = s_stream_write_data,
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state) {
@@ -203,24 +209,64 @@ static struct aws_h2err s_check_state_allows_frame_type(
     return aws_h2err_from_h2_code(h2_error_code);
 }
 
-static int s_stream_send_update_window_frame(struct aws_h2_stream *stream, size_t increment_size) {
+static int s_stream_send_update_window_if_needed(struct aws_h2_stream *stream, uint64_t window_update_size) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
-    AWS_PRECONDITION(increment_size <= AWS_H2_WINDOW_UPDATE_MAX);
 
-    struct aws_h2_connection *connection = s_get_h2_connection(stream);
-    struct aws_h2_frame *stream_window_update_frame =
-        aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, (uint32_t)increment_size);
-
-    if (!stream_window_update_frame) {
-        AWS_H2_STREAM_LOGF(
-            ERROR,
-            stream,
-            "Failed to create WINDOW_UPDATE frame on connection, error %s",
-            aws_error_name(aws_last_error()));
-        return AWS_OP_ERR;
+    /* Only send a WINDOW_UPDATE frame if the stream window is below the threshold
+     * If the pending amount is greater than uin64 max. Probably an unexpected error, ignores it and cap it. */
+    stream->thread_data.pending_window_update_size_self =
+        aws_add_u64_saturating(stream->thread_data.pending_window_update_size_self, window_update_size);
+    if (stream->thread_data.pending_window_update_size_self == 0) {
+        /* Nothing to do */
+        return AWS_OP_SUCCESS;
     }
-    aws_h2_connection_enqueue_outgoing_frame(connection, stream_window_update_frame);
+    if (stream->thread_data.window_size_self >= (int32_t)stream->window_size_threshold_to_send_update) {
+        AWS_H2_STREAM_LOGF(
+            TRACE,
+            stream,
+            "Ignoring sending WINDOW_UPDATE update of size %" PRIu64 ". Current size: %" PRIi32 ", threshold: %" PRIu32
+            " pending: %" PRIu64,
+            window_update_size,
+            stream->thread_data.window_size_self,
+            stream->window_size_threshold_to_send_update,
+            stream->thread_data.pending_window_update_size_self);
+        return AWS_OP_SUCCESS;
+    }
 
+    /* Cap the window to AWS_H2_WINDOW_UPDATE_MAX */
+    uint32_t window_delta = aws_h2_calculate_cap_window_update_delta(
+        stream->thread_data.window_size_self, stream->thread_data.pending_window_update_size_self);
+
+    if (window_delta != stream->thread_data.pending_window_update_size_self) {
+        AWS_H2_STREAM_LOGF(
+            DEBUG,
+            stream,
+            "Capping window update delta from %" PRIu64 " to %" PRIu32,
+            stream->thread_data.pending_window_update_size_self,
+            window_delta);
+    }
+
+    if (window_delta > 0) {
+        struct aws_h2_frame *stream_window_update_frame =
+            aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, window_delta);
+        if (!stream_window_update_frame) {
+            AWS_H2_STREAM_LOGF(
+                ERROR,
+                stream,
+                "WINDOW_UPDATE frame on stream failed to be sent, error %s",
+                aws_error_name(aws_last_error()));
+            return AWS_OP_ERR;
+        }
+        AWS_H2_STREAM_LOGF(TRACE, stream, "Sending WINDOW_UPDATE by %" PRIu32 ".", window_delta);
+
+        aws_h2_connection_enqueue_outgoing_frame(s_get_h2_connection(stream), stream_window_update_frame);
+        /* The real size should be delta plus previous window size. Since the math in
+         * aws_h2_calculate_cap_window_update_delta, no overflow should happen. */
+        stream->thread_data.window_size_self += (uint32_t)window_delta;
+        AWS_ASSERT(stream->thread_data.window_size_self <= AWS_H2_WINDOW_UPDATE_MAX);
+        AWS_ASSERT(window_delta <= stream->thread_data.pending_window_update_size_self);
+        stream->thread_data.pending_window_update_size_self -= window_delta;
+    }
     return AWS_OP_SUCCESS;
 }
 
@@ -231,6 +277,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     AWS_PRECONDITION(options);
 
     struct aws_h2_stream *stream = aws_mem_calloc(client_connection->alloc, 1, sizeof(struct aws_h2_stream));
+    stream->on_h2_remote_end_stream = options->on_h2_remote_end_stream;
 
     /* Initialize base stream */
     stream->base.vtable = &s_h2_stream_vtable;
@@ -240,16 +287,17 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     stream->base.on_incoming_headers = options->on_response_headers;
     stream->base.on_incoming_header_block_done = options->on_response_header_block_done;
     stream->base.on_incoming_body = options->on_response_body;
+    stream->base.on_metrics = options->on_metrics;
     stream->base.on_complete = options->on_complete;
     stream->base.on_destroy = options->on_destroy;
     stream->base.client_data = &stream->base.client_or_server_data.client;
     stream->base.client_data->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
-    struct aws_byte_cursor method;
-    AWS_ZERO_STRUCT(method);
-    if (aws_http_message_get_request_method(options->request, &method)) {
-        goto error;
-    }
-    stream->base.request_method = aws_http_str_to_method(method);
+    stream->base.metrics.send_start_timestamp_ns = -1;
+    stream->base.metrics.send_end_timestamp_ns = -1;
+    stream->base.metrics.sending_duration_ns = -1;
+    stream->base.metrics.receive_start_timestamp_ns = -1;
+    stream->base.metrics.receive_end_timestamp_ns = -1;
+    stream->base.metrics.receiving_duration_ns = -1;
     aws_linked_list_init(&stream->thread_data.outgoing_writes);
     aws_linked_list_init(&stream->synced_data.pending_write_list);
 
@@ -276,12 +324,19 @@ struct aws_h2_stream *aws_h2_stream_new_request(
             aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
             goto error;
     }
+    struct aws_byte_cursor method;
+    AWS_ZERO_STRUCT(method);
+    if (aws_http_message_get_request_method(options->request, &method)) {
+        goto error;
+    }
+    stream->base.request_method = aws_http_str_to_method(method);
 
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
     /* stream end is implicit if the request isn't using manual data writes */
-    stream->synced_data.manual_write_ended = !options->http2_use_manual_data_writes;
-    stream->manual_write = options->http2_use_manual_data_writes;
+    bool manual_write = options->use_manual_data_writes || options->http2_use_manual_data_writes;
+    stream->synced_data.manual_write_ended = !manual_write;
+    stream->manual_write = manual_write;
 
     /* if there's a request body to write, add it as the first outgoing write */
     struct aws_input_stream *body_stream = aws_http_message_get_body_stream(options->request);
@@ -289,7 +344,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
         struct aws_h2_stream_data_write *body_write =
             aws_mem_calloc(stream->base.alloc, 1, sizeof(struct aws_h2_stream_data_write));
         body_write->data_stream = aws_input_stream_acquire(body_stream);
-        body_write->end_stream = true;
+        body_write->end_stream = !stream->manual_write;
         aws_linked_list_push_back(&stream->thread_data.outgoing_writes, &body_write->node);
     }
 
@@ -330,7 +385,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     /* Not sending window update at half closed remote state */
     bool ignore_window_update = (aws_h2_stream_get_state(stream) == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE);
     bool reset_called;
-    size_t window_update_size;
+    uint64_t window_update_size;
     struct aws_h2err reset_error;
 
     struct aws_linked_list pending_writes;
@@ -341,8 +396,8 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         stream->synced_data.is_cross_thread_work_task_scheduled = false;
 
         /* window_update_size is ensured to be not greater than AWS_H2_WINDOW_UPDATE_MAX */
-        window_update_size = stream->synced_data.window_update_size;
-        stream->synced_data.window_update_size = 0;
+        window_update_size = stream->synced_data.pending_window_update_size_self;
+        stream->synced_data.pending_window_update_size_self = 0;
         reset_called = stream->synced_data.reset_called;
         reset_error = stream->synced_data.reset_error;
 
@@ -353,15 +408,11 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     } /* END CRITICAL SECTION */
 
     if (window_update_size > 0 && !ignore_window_update) {
-        if (s_stream_send_update_window_frame(stream, window_update_size)) {
+        if (s_stream_send_update_window_if_needed(stream, window_update_size)) {
             /* Treat this as a connection error */
             aws_h2_connection_shutdown_due_to_write_err(connection, aws_last_error());
         }
     }
-
-    /* The largest legal value will be 2 * max window size, which is way less than INT64_MAX, so if the window_size_self
-     * overflows, remote peer will find it out. So just apply the change and ignore the possible overflow.*/
-    stream->thread_data.window_size_self += window_update_size;
 
     if (reset_called) {
         struct aws_h2err returned_h2err = s_send_rst_and_close_stream(stream, reset_error);
@@ -394,6 +445,7 @@ static void s_stream_data_write_destroy(
 
     AWS_PRECONDITION(stream);
     AWS_PRECONDITION(write);
+    AWS_PRECONDITION(!aws_linked_list_node_is_in_list(&stream->node));
     if (write->on_complete) {
         write->on_complete(&stream->base, error_code, write->user_data);
     }
@@ -446,6 +498,9 @@ void aws_h2_stream_complete(struct aws_h2_stream *stream, int error_code) {
     s_h2_stream_destroy_pending_writes(stream);
 
     /* Invoke callback */
+    if (stream->base.on_metrics) {
+        stream->base.on_metrics(&stream->base, &stream->base.metrics, stream->base.user_data);
+    }
     if (stream->base.on_complete) {
         stream->base.on_complete(&stream->base, error_code, stream->base.user_data);
     }
@@ -465,21 +520,17 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
         return;
     }
 
-    int err = 0;
     bool stream_is_init;
     bool cross_thread_work_should_schedule = false;
-    size_t sum_size;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream);
-
-        err |= aws_add_size_checked(stream->synced_data.window_update_size, increment_size, &sum_size);
-        err |= sum_size > AWS_H2_WINDOW_UPDATE_MAX;
         stream_is_init = stream->synced_data.api_state == AWS_H2_STREAM_API_STATE_INIT;
 
-        if (!err && !stream_is_init) {
+        if (!stream_is_init) {
             cross_thread_work_should_schedule = !stream->synced_data.is_cross_thread_work_task_scheduled;
             stream->synced_data.is_cross_thread_work_task_scheduled = true;
-            stream->synced_data.window_update_size = sum_size;
+            stream->synced_data.pending_window_update_size_self =
+                aws_add_u64_saturating(stream->synced_data.pending_window_update_size_self, increment_size);
         }
         s_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
@@ -500,27 +551,13 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
         aws_raise_error(AWS_ERROR_INVALID_STATE);
         return;
     }
-
-    if (err) {
-        /* The increment_size is still not 100% safe, since we cannot control the incoming data frame. So just
-         * ruled out the value that is obviously wrong values */
-        AWS_H2_STREAM_LOG(
-            ERROR,
-            stream,
-            "The stream's flow-control window has been incremented beyond 2**31 -1, the max for HTTP/2. The stream "
-            "will close.");
-        aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
-        struct aws_h2err stream_error = {
-            .aws_code = AWS_ERROR_OVERFLOW_DETECTED,
-            .h2_code = AWS_HTTP2_ERR_INTERNAL_ERROR,
-        };
-        /* Only when stream is not initialized reset will fail. So, we can assert it to be succeed. */
-        AWS_FATAL_ASSERT(s_stream_reset_stream_internal(stream_base, stream_error) == AWS_OP_SUCCESS);
-    }
     return;
 }
 
-static int s_stream_reset_stream_internal(struct aws_http_stream *stream_base, struct aws_h2err stream_error) {
+static int s_stream_reset_stream_internal(
+    struct aws_http_stream *stream_base,
+    struct aws_h2err stream_error,
+    bool cancelling) {
 
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
@@ -542,21 +579,25 @@ static int s_stream_reset_stream_internal(struct aws_http_stream *stream_base, s
     } /* END CRITICAL SECTION */
 
     if (stream_is_init) {
+        if (cancelling) {
+            /* Not an error if we are just cancelling. */
+            AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "id=%p: Stream not in process, nothing to cancel.", (void *)stream);
+            return AWS_OP_SUCCESS;
+        }
         AWS_H2_STREAM_LOG(
             ERROR, stream, "Reset stream failed. Stream is in initialized state, please activate the stream first.");
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
-    }
-    if (cross_thread_work_should_schedule) {
-        AWS_H2_STREAM_LOG(TRACE, stream, "Scheduling stream cross-thread work task");
-        /* increment the refcount of stream to keep it alive until the task runs */
-        aws_atomic_fetch_add(&stream->base.refcount, 1);
-        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &stream->cross_thread_work_task);
-        return AWS_OP_SUCCESS;
     }
     if (reset_called) {
         AWS_H2_STREAM_LOG(DEBUG, stream, "Reset stream ignored. Reset stream has been called already.");
     }
 
+    if (cross_thread_work_should_schedule) {
+        AWS_H2_STREAM_LOG(TRACE, stream, "Scheduling stream cross-thread work task");
+        /* increment the refcount of stream to keep it alive until the task runs */
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &stream->cross_thread_work_task);
+    }
     return AWS_OP_SUCCESS;
 }
 
@@ -572,7 +613,16 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t h
         (void *)stream_base,
         aws_http2_error_code_to_str(http2_error),
         http2_error);
-    return s_stream_reset_stream_internal(stream_base, stream_error);
+    return s_stream_reset_stream_internal(stream_base, stream_error, false /*cancelling*/);
+}
+
+void s_stream_cancel(struct aws_http_stream *stream_base, int error_code) {
+    struct aws_h2err stream_error = {
+        .aws_code = error_code,
+        .h2_code = AWS_HTTP2_ERR_CANCEL,
+    };
+    s_stream_reset_stream_internal(stream_base, stream_error, true /*cancelling*/);
+    return;
 }
 
 static int s_stream_get_received_error_code(struct aws_http_stream *stream_base, uint32_t *out_http2_error) {
@@ -630,9 +680,13 @@ static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream
     return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2err aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed, bool self) {
+struct aws_h2err aws_h2_stream_window_size_change_direct(
+    struct aws_h2_stream *stream,
+    int32_t size_changed,
+    bool self) {
+    /* If settings causing the flow control windows to overflow, error out. */
     if (self) {
-        if (stream->thread_data.window_size_self + size_changed > AWS_H2_WINDOW_UPDATE_MAX) {
+        if ((int64_t)stream->thread_data.window_size_self + size_changed > AWS_H2_WINDOW_UPDATE_MAX) {
             return aws_h2err_from_h2_code(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR);
         }
         stream->thread_data.window_size_self += size_changed;
@@ -649,35 +703,11 @@ static inline bool s_h2_stream_has_outgoing_writes(struct aws_h2_stream *stream)
     return !aws_linked_list_empty(&stream->thread_data.outgoing_writes);
 }
 
-static void s_h2_stream_write_data_complete(struct aws_h2_stream *stream, bool *waiting_writes) {
-    AWS_PRECONDITION(waiting_writes);
-    AWS_PRECONDITION(s_h2_stream_has_outgoing_writes(stream));
-
-    /* finish/clean up the current write operation */
-    struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
-    struct aws_h2_stream_data_write *write_op = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
-    const bool ending_stream = write_op->end_stream;
-    s_stream_data_write_destroy(stream, write_op, AWS_OP_SUCCESS);
-
-    /* check to see if there are more queued writes or stream_end was called */
-    *waiting_writes = !ending_stream && !s_h2_stream_has_outgoing_writes(stream);
-}
-
 static struct aws_h2_stream_data_write *s_h2_stream_get_current_write(struct aws_h2_stream *stream) {
     AWS_PRECONDITION(s_h2_stream_has_outgoing_writes(stream));
     struct aws_linked_list_node *node = aws_linked_list_front(&stream->thread_data.outgoing_writes);
     struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
     return write;
-}
-
-static struct aws_input_stream *s_h2_stream_get_data_stream(struct aws_h2_stream *stream) {
-    struct aws_h2_stream_data_write *write = s_h2_stream_get_current_write(stream);
-    return write->data_stream;
-}
-
-static bool s_h2_stream_does_current_write_end_stream(struct aws_h2_stream *stream) {
-    struct aws_h2_stream_data_write *write = s_h2_stream_get_current_write(stream);
-    return write->end_stream;
 }
 
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_body_state *body_state) {
@@ -706,12 +736,63 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
         AWS_H2_STREAM_LOGF(ERROR, stream, "Failed to create HEADERS frame: %s", aws_error_name(aws_last_error()));
         goto error;
     }
-
+    AWS_ASSERT(stream->base.metrics.send_start_timestamp_ns == -1);
+    aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_start_timestamp_ns);
     /* Initialize the flow-control window size */
     stream->thread_data.window_size_peer =
         connection->thread_data.settings_peer[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
     stream->thread_data.window_size_self =
         connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
+
+    if (connection->stream_window_size_threshold_to_send_update) {
+        stream->window_size_threshold_to_send_update = connection->stream_window_size_threshold_to_send_update;
+    } else {
+        /* Set reasonable default of: 50% initial window size (same as Netty's DEFAULT_WINDOW_UPDATE_RATIO) */
+        stream->window_size_threshold_to_send_update =
+            connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] / 2;
+    }
+
+    /* Log the headers that we are sending out. */
+    for (size_t i = 0; i < aws_http_headers_count(h2_headers); i++) {
+        struct aws_http_header header;
+        aws_http_headers_get_index(h2_headers, i, &header);
+        enum aws_http_header_name name_enum = aws_http_str_to_header_name(header.name);
+        switch (name_enum) {
+            case AWS_HTTP_HEADER_CONNECTION:
+            case AWS_HTTP_HEADER_TRANSFER_ENCODING:
+            case AWS_HTTP_HEADER_UPGRADE:
+            case AWS_HTTP_HEADER_KEEP_ALIVE:
+            case AWS_HTTP_HEADER_PROXY_CONNECTION:
+                /**
+                 * An endpoint MUST NOT generate an HTTP/2 message containing connection-specific header fields.
+                 * (RFC=9113 8.2.2)
+                 */
+                AWS_H2_STREAM_LOGF(
+                    TRACE,
+                    stream,
+                    "Found connection-specific header that is allowed in HTTP/2. : " PRInSTR ": " PRInSTR "",
+                    AWS_BYTE_CURSOR_PRI(header.name),
+                    AWS_BYTE_CURSOR_PRI(header.value));
+                aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
+                goto error;
+            case AWS_HTTP_HEADER_AUTHORIZATION:
+            case AWS_HTTP_HEADER_SIGNING_SECURITY_TOKEN:
+            case AWS_HTTP_HEADER_SIGNING_S3SESSION_TOKEN:
+                /* TODO: move the filter to SDKs, not the http client. */
+                /* Sensitive header, do not log the value of the header */
+                AWS_H2_STREAM_LOGF(TRACE, stream, "Sending header: " PRInSTR ": ***", AWS_BYTE_CURSOR_PRI(header.name));
+                break;
+            default:
+                /* Log the headers we are sending out */
+                AWS_H2_STREAM_LOGF(
+                    TRACE,
+                    stream,
+                    "Sending header: " PRInSTR ": " PRInSTR "",
+                    AWS_BYTE_CURSOR_PRI(header.name),
+                    AWS_BYTE_CURSOR_PRI(header.value));
+                break;
+        }
+    }
 
     if (with_data) {
         /* If stream has DATA to send, put it in the outgoing_streams_list, and we'll send data later */
@@ -721,6 +802,11 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
         /* If stream has no body, then HEADERS frame marks the end of outgoing data */
         stream->thread_data.state = AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL;
         AWS_H2_STREAM_LOG(TRACE, stream, "Sending HEADERS with END_STREAM. State -> HALF_CLOSED_LOCAL");
+        /* There is no further frames to be sent, now is the end timestamp of sending. */
+        AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == -1);
+        aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_end_timestamp_ns);
+        stream->base.metrics.sending_duration_ns =
+            stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
     }
 
     if (s_h2_stream_has_outgoing_writes(stream)) {
@@ -760,12 +846,14 @@ int aws_h2_stream_encode_data_frame(
     }
 
     *data_encode_status = AWS_H2_DATA_ENCODE_COMPLETE;
-    struct aws_input_stream *input_stream = s_h2_stream_get_data_stream(stream);
+    struct aws_h2_stream_data_write *current_write = s_h2_stream_get_current_write(stream);
+    struct aws_input_stream *input_stream = current_write->data_stream;
     AWS_ASSERT(input_stream);
 
     bool input_stream_complete = false;
     bool input_stream_stalled = false;
-    bool ends_stream = s_h2_stream_does_current_write_end_stream(stream);
+    bool input_stream_failed = false;
+    bool ends_stream = current_write->end_stream;
     if (aws_h2_encode_data_frame(
             encoder,
             stream->base.id,
@@ -776,20 +864,30 @@ int aws_h2_stream_encode_data_frame(
             &connection->thread_data.window_size_peer,
             output,
             &input_stream_complete,
-            &input_stream_stalled)) {
+            &input_stream_stalled,
+            &input_stream_failed)) {
+
+        int error_code = aws_last_error();
+
+        /* If error cause caused aws_input_stream, report that specific error in its write-completion callback */
+        if (input_stream_failed) {
+            aws_linked_list_remove(&current_write->node);
+            s_stream_data_write_destroy(stream, current_write, error_code);
+        }
 
         /* Failed to write DATA, treat it as a Stream Error */
-        AWS_H2_STREAM_LOGF(ERROR, stream, "Error encoding stream DATA, %s", aws_error_name(aws_last_error()));
-        struct aws_h2err returned_h2err = s_send_rst_and_close_stream(stream, aws_h2err_from_last_error());
+        AWS_H2_STREAM_LOGF(ERROR, stream, "Error encoding stream DATA, %s", aws_error_name(error_code));
+        struct aws_h2err returned_h2err = s_send_rst_and_close_stream(stream, aws_h2err_from_aws_code(error_code));
         if (aws_h2err_failed(returned_h2err)) {
             aws_h2_connection_shutdown_due_to_write_err(connection, returned_h2err.aws_code);
         }
         return AWS_OP_SUCCESS;
     }
 
-    bool waiting_writes = false;
     if (input_stream_complete) {
-        s_h2_stream_write_data_complete(stream, &waiting_writes);
+        /* finish/clean up the current write operation */
+        aws_linked_list_remove(&current_write->node);
+        s_stream_data_write_destroy(stream, current_write, AWS_ERROR_SUCCESS);
     }
 
     /*
@@ -798,6 +896,11 @@ int aws_h2_stream_encode_data_frame(
      */
     if (input_stream_complete && ends_stream) {
         /* Done sending data. No more data will be sent. */
+        AWS_ASSERT(stream->base.metrics.send_end_timestamp_ns == -1);
+        aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_end_timestamp_ns);
+        stream->base.metrics.sending_duration_ns =
+            stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
+
         if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE) {
             /* Both sides have sent END_STREAM */
             stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
@@ -823,10 +926,11 @@ int aws_h2_stream_encode_data_frame(
              * from outgoing list */
             *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED;
         }
-        if (waiting_writes) {
+        if (!s_h2_stream_has_outgoing_writes(stream)) {
             /* if window stalled and we waiting for manual writes, we take waiting writes status, which will be handled
              * properly if more writes coming, but windows is still stalled. But not the other way around. */
             AWS_ASSERT(input_stream_complete);
+            AWS_ASSERT(!ends_stream);
             *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING_WAITING_FOR_WRITES;
         }
     }
@@ -841,6 +945,7 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *st
     if (aws_h2err_failed(stream_err)) {
         return s_send_rst_and_close_stream(stream, stream_err);
     }
+    aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.receive_start_timestamp_ns);
 
     return AWS_H2ERR_SUCCESS;
 }
@@ -996,23 +1101,6 @@ struct aws_h2err aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *str
     return AWS_H2ERR_SUCCESS;
 }
 
-static int s_stream_send_update_window(struct aws_h2_stream *stream, uint32_t window_size) {
-    struct aws_h2_frame *stream_window_update_frame =
-        aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, window_size);
-    if (!stream_window_update_frame) {
-        AWS_H2_STREAM_LOGF(
-            ERROR,
-            stream,
-            "WINDOW_UPDATE frame on stream failed to be sent, error %s",
-            aws_error_name(aws_last_error()));
-        return AWS_OP_ERR;
-    }
-
-    aws_h2_connection_enqueue_outgoing_frame(s_get_h2_connection(stream), stream_window_update_frame);
-    stream->thread_data.window_size_self += window_size;
-    return AWS_OP_SUCCESS;
-}
-
 struct aws_h2err aws_h2_stream_on_decoder_data_begin(
     struct aws_h2_stream *stream,
     uint32_t payload_len,
@@ -1059,12 +1147,20 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
         AWS_H2_STREAM_LOGF(
             ERROR,
             stream,
-            "DATA length=%" PRIu32 " exceeds flow-control window=%" PRIi64,
+            "DATA length=%" PRIu32 " exceeds flow-control window=%" PRIi32,
             payload_len,
             stream->thread_data.window_size_self);
         return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR));
     }
     stream->thread_data.window_size_self -= payload_len;
+    if (stream->thread_data.window_size_self == 0) {
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "DATA length=%" PRIu32 " exceeds flow-control window=%" PRIi32,
+            payload_len,
+            stream->thread_data.window_size_self);
+    }
 
     /* If stream isn't over, we may need to send automatic window updates to keep data flowing */
     if (!end_stream) {
@@ -1079,16 +1175,8 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
             auto_window_update = payload_len;
         }
 
-        if (auto_window_update != 0) {
-            if (s_stream_send_update_window(stream, auto_window_update)) {
-                return aws_h2err_from_last_error();
-            }
-            AWS_H2_STREAM_LOGF(
-                TRACE,
-                stream,
-                "Automatically updating stream window by %" PRIu32 "(%" PRIu32 " due to padding).",
-                auto_window_update,
-                total_padding_bytes);
+        if (s_stream_send_update_window_if_needed(stream, auto_window_update)) {
+            return aws_h2err_from_last_error();
         }
     }
 
@@ -1130,7 +1218,7 @@ struct aws_h2err aws_h2_stream_on_decoder_window_update(
         return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR));
     }
     int32_t old_window_size = stream->thread_data.window_size_peer;
-    stream_err = (aws_h2_stream_window_size_change(stream, window_size_increment, false /*self*/));
+    stream_err = aws_h2_stream_window_size_change_direct(stream, window_size_increment, false /*self*/);
     if (aws_h2err_failed(stream_err)) {
         /* We MUST NOT allow a flow-control window to exceed the max */
         AWS_H2_STREAM_LOG(
@@ -1149,6 +1237,13 @@ struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *strea
     /* Not calling s_check_state_allows_frame_type() here because END_STREAM isn't
      * an actual frame type. It's a flag on DATA or HEADERS frames, and we
      * already checked the legality of those frames in their respective callbacks. */
+
+    AWS_ASSERT(stream->base.metrics.receive_start_timestamp_ns != -1);
+    AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns == -1);
+    aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.receive_end_timestamp_ns);
+    AWS_ASSERT(stream->base.metrics.receive_end_timestamp_ns >= stream->base.metrics.receive_start_timestamp_ns);
+    stream->base.metrics.receiving_duration_ns =
+        stream->base.metrics.receive_end_timestamp_ns - stream->base.metrics.receive_start_timestamp_ns;
 
     if (stream->thread_data.content_length_received) {
         if (stream->base.request_method != AWS_HTTP_METHOD_HEAD &&
@@ -1178,6 +1273,10 @@ struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *strea
                 return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR));
             }
         }
+    }
+
+    if (stream->on_h2_remote_end_stream) {
+        stream->on_h2_remote_end_stream(&stream->base, stream->base.user_data);
     }
 
     if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL) {
@@ -1252,8 +1351,16 @@ struct aws_h2err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *strea
 
 static int s_stream_write_data(
     struct aws_http_stream *stream_base,
-    const struct aws_http2_stream_write_data_options *options) {
+    const struct aws_http_stream_write_data_options *options) {
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
+    if (!stream->manual_write) {
+        AWS_H2_STREAM_LOG(
+            ERROR,
+            stream,
+            "Manual writes are not enabled. You need to enable manual writes using by setting "
+            "'http2_use_manual_data_writes' to true in 'aws_http_make_request_options'");
+        return aws_raise_error(AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED);
+    }
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
 
     /* queue this new write into the pending write list for the stream */
@@ -1272,23 +1379,20 @@ static int s_stream_write_data(
         {
             if (stream->synced_data.api_state != AWS_H2_STREAM_API_STATE_ACTIVE) {
                 s_unlock_synced_data(stream);
-                s_stream_data_write_destroy(stream, pending_write, AWS_ERROR_INVALID_STATE);
-                AWS_LOGF_ERROR(
-                    AWS_LS_HTTP_STREAM,
-                    "Cannot write DATA frames to an inactive or closed stream, stream=%p",
-                    (void *)stream_base);
-                return aws_raise_error(AWS_ERROR_INVALID_STATE);
+                int error_code = stream->synced_data.api_state == AWS_H2_STREAM_API_STATE_INIT
+                                     ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
+                                     : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
+                s_stream_data_write_destroy(stream, pending_write, error_code);
+                AWS_H2_STREAM_LOG(ERROR, stream, "Cannot write DATA frames to an inactive or closed stream");
+                return aws_raise_error(error_code);
             }
 
             if (stream->synced_data.manual_write_ended) {
                 s_unlock_synced_data(stream);
-                s_stream_data_write_destroy(stream, pending_write, AWS_ERROR_INVALID_STATE);
-                AWS_LOGF_ERROR(
-                    AWS_LS_HTTP_STREAM,
-                    "Cannot write DATA frames to a stream after end, stream=%p",
-                    (void *)stream_base);
+                s_stream_data_write_destroy(stream, pending_write, AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED);
+                AWS_H2_STREAM_LOG(ERROR, stream, "Cannot write DATA frames to a stream after manual write ended");
                 /* Fail with error, otherwise, people can wait for on_complete callback that will never be invoked. */
-                return aws_raise_error(AWS_ERROR_INVALID_STATE);
+                return aws_raise_error(AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED);
             }
             /* Not setting this until we're sure we succeeded, so that callback doesn't fire on cleanup if we fail */
             if (options->end_stream) {

@@ -11,6 +11,8 @@
 #include <aws/http/request_response.h>
 #include <aws/http/status_code.h>
 
+AWS_PUSH_SANE_WARNING_LEVEL
+
 struct aws_http_client_connection_options;
 struct aws_http_connection_manager_options;
 
@@ -41,7 +43,9 @@ enum aws_http_proxy_env_var_type {
      * Enable get proxy URL from environment variable, when the manual proxy options of connection manager is not set.
      * env HTTPS_PROXY/https_proxy will be checked when the main connection use tls.
      * env HTTP_PROXY/http_proxy will be checked when the main connection NOT use tls.
-     * The lower case version has precedence.
+     * env NO_PROXY/no_proxy will be checked to bypass proxy if the host match the pattern.
+     *      Check `aws_http_host_matches_no_proxy` for detail. This function can also be used with a direct no_proxy
+     * parameter. The lower case version has precedence.
      */
     AWS_HPEV_ENABLE,
 };
@@ -112,7 +116,7 @@ struct aws_http_proxy_options {
     /**
      * Port to make the proxy connection to
      */
-    uint16_t port;
+    uint32_t port;
 
     /**
      * Optional.
@@ -148,6 +152,12 @@ struct aws_http_proxy_options {
      * Replaced by instantiating a proxy_strategy via aws_http_proxy_strategy_new_basic_auth()
      */
     struct aws_byte_cursor auth_password;
+
+    /**
+     * Optional
+     * No proxy hosts - Comma seperated list of hosts for which not to use a proxy, if one is specified.
+     */
+    struct aws_byte_cursor no_proxy_hosts;
 };
 
 /**
@@ -159,10 +169,10 @@ typedef struct aws_string *(aws_http_proxy_negotiation_get_token_sync_fn)(void *
  * Synchronous (for now) callback function to fetch a token used in modifying CONNECT request.  Includes a (byte string)
  * context intended to be used as part of a challenge-response flow.
  */
-typedef struct aws_string *(aws_http_proxy_negotiation_get_challenge_token_sync_fn)(
-    void *user_data,
-    const struct aws_byte_cursor *challenge_context,
-    int *out_error_code);
+typedef struct aws_string *(
+    aws_http_proxy_negotiation_get_challenge_token_sync_fn)(void *user_data,
+                                                            const struct aws_byte_cursor *challenge_context,
+                                                            int *out_error_code);
 
 /**
  * Proxy negotiation logic must call this function to indicate an unsuccessful outcome
@@ -305,9 +315,9 @@ struct aws_http_proxy_negotiator {
 
 /*********************************************************************************************/
 
-typedef struct aws_http_proxy_negotiator *(aws_http_proxy_strategy_create_negotiator_fn)(
-    struct aws_http_proxy_strategy *proxy_strategy,
-    struct aws_allocator *allocator);
+typedef struct aws_http_proxy_negotiator *(
+    aws_http_proxy_strategy_create_negotiator_fn)(struct aws_http_proxy_strategy *proxy_strategy,
+                                                  struct aws_allocator *allocator);
 
 struct aws_http_proxy_strategy_vtable {
     aws_http_proxy_strategy_create_negotiator_fn *create_negotiator;
@@ -507,6 +517,21 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options(
     const struct aws_http_proxy_options *options);
 
 /**
+ * Create a persistent proxy configuration from non-persistent proxy options.
+ *
+ * @param allocator memory allocator to use
+ * @param options http proxy options to source proxy configuration from
+ * @param is_tls_connection tls connection info of the main connection to determine connection_type
+ *                          when the connection_type is legacy.
+ * @return
+ */
+AWS_HTTP_API
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options_with_tls_info(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_options *proxy_options,
+    bool is_tls_connection);
+
+/**
  * Clones an existing proxy configuration.  A refactor could remove this (do a "move" between the old and new user
  * data in the one spot it's used) but that should wait until we have better test cases for the logic where this
  * gets invoked (ntlm/kerberos chains).
@@ -551,5 +576,6 @@ AWS_HTTP_API int aws_http_proxy_new_socket_channel(
     const struct aws_http_proxy_options *proxy_options);
 
 AWS_EXTERN_C_END
+AWS_POP_SANE_WARNING_LEVEL
 
 #endif /* AWS_PROXY_STRATEGY_H */

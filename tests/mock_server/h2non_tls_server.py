@@ -10,12 +10,18 @@ import h2.config
 
 def send_response(conn, event):
     stream_id = event.stream_id
+    response_data = b"success"
 
     conn.send_headers(
         stream_id=stream_id,
         headers=[
             (':status', '200'),
-        ], end_stream=True,
+        ],
+    )
+    conn.send_data(
+        stream_id=stream_id,
+        data=response_data,
+        end_stream=True
     )
 
 
@@ -42,7 +48,7 @@ def handle(sock):
 
 sock = socket.socket()
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-sock.bind(('0.0.0.0', 8080))
+sock.bind(('0.0.0.0', 3280))
 sock.listen(5)
 
 while True:

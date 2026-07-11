@@ -233,11 +233,17 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
             /* Allow body to exceed available space. Data encoder should just write what it can fit */
             struct aws_input_stream *body = aws_input_stream_new_from_cursor(allocator, &input);
+            if (input.len == 0) {
+                /* In case of empty body, make sure the end stream flag to be set, other wise, no frames should be
+                 * generated to decode. */
+                body_ends_stream = true;
+            }
 
             bool body_complete;
             bool body_stalled;
+            bool body_failed;
             int32_t stream_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
-            size_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
+            uint32_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
             AWS_FATAL_ASSERT(
                 aws_h2_encode_data_frame(
                     &encoder,
@@ -249,11 +255,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                     &connection_window_size_peer,
                     &frame_data,
                     &body_complete,
-                    &body_stalled) == AWS_OP_SUCCESS);
+                    &body_stalled,
+                    &body_failed) == AWS_OP_SUCCESS);
 
             struct aws_stream_status body_status;
             aws_input_stream_get_status(body, &body_status);
-            AWS_FATAL_ASSERT(body_complete == body_status.is_end_of_stream)
+            AWS_FATAL_ASSERT(body_complete == body_status.is_end_of_stream);
             aws_input_stream_release(body);
             break;
         }

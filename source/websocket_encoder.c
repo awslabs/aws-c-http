@@ -5,9 +5,7 @@
 
 #include <aws/http/private/websocket_encoder.h>
 
-/* TODO: encoder logging */
-/* TODO: implement masking function in aws-c-common */
-/* TODO: use nospec advance? */
+#include <inttypes.h>
 
 typedef int(state_fn)(struct aws_websocket_encoder *encoder, struct aws_byte_buf *out_buf);
 
@@ -219,6 +217,11 @@ static int s_state_payload(struct aws_websocket_encoder *encoder, struct aws_byt
     } else {
         /* Some more error-checking... */
         if (encoder->state_bytes_processed > encoder->frame.payload_length) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET,
+                "id=%p: Outgoing stream has exceeded stated payload length of %" PRIu64,
+                (void *)encoder->user_data,
+                encoder->frame.payload_length);
             return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
         }
     }
@@ -276,11 +279,20 @@ int aws_websocket_encoder_start_frame(struct aws_websocket_encoder *encoder, con
 
     /* Opcode must fit in 4bits */
     if (frame->opcode != (frame->opcode & 0x0F)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Outgoing frame has unknown opcode 0x%" PRIx8,
+            (void *)encoder->user_data,
+            frame->opcode);
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
     /* High bit of 8byte length must be clear */
     if (frame->payload_length > AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MAX_VALUE) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Outgoing frame's payload length exceeds the max",
+            (void *)encoder->user_data);
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
@@ -294,6 +306,10 @@ int aws_websocket_encoder_start_frame(struct aws_websocket_encoder *encoder, con
         bool is_continuation_frame = (AWS_WEBSOCKET_OPCODE_CONTINUATION == frame->opcode);
 
         if (encoder->expecting_continuation_data_frame != is_continuation_frame) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET,
+                "id=%p: Fragmentation error. Outgoing frame starts a new message but previous message has not ended",
+                (void *)encoder->user_data);
             return aws_raise_error(AWS_ERROR_INVALID_STATE);
         }
 
@@ -301,6 +317,11 @@ int aws_websocket_encoder_start_frame(struct aws_websocket_encoder *encoder, con
     } else {
         /* Control frames themselves MUST NOT be fragmented. */
         if (!frame->fin) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET,
+                "id=%p: It is illegal to send a fragmented control frame",
+                (void *)encoder->user_data);
+
             return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         }
     }
