@@ -434,7 +434,14 @@ static struct aws_h2_connection *s_connection_new(
         http2_options->num_initial_settings,
         http2_options->on_initial_settings_completed,
         NULL /* user_data is set later... */);
-    AWS_ASSERT(connection->thread_data.init_pending_settings);
+    if (!connection->thread_data.init_pending_settings) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Failed to create initial settings, %s",
+            aws_error_name(aws_last_error()));
+        goto error;
+    }
     /* We enqueue the inital settings when handler get installed */
     return connection;
 
