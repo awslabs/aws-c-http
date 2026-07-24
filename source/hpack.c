@@ -12,9 +12,6 @@ const size_t s_hpack_dynamic_table_initial_elements = 512;
 /* TODO: shouldn't be a hardcoded max_size, it should be driven by SETTINGS_HEADER_TABLE_SIZE */
 const size_t s_hpack_dynamic_table_max_size = 16 * 1024 * 1024;
 
-/* Used for growing the dynamic table buffer when it fills up */
-const float s_hpack_dynamic_table_buffer_growth_rate = 1.5F;
-
 struct aws_http_header s_static_header_table[] = {
 #define HEADER(_index, _name)                                                                                          \
     [_index] = {                                                                                                       \
@@ -101,7 +98,7 @@ void aws_hpack_static_table_init(struct aws_allocator *allocator) {
     }
 }
 
-void aws_hpack_static_table_clean_up() {
+void aws_hpack_static_table_clean_up(void) {
     aws_hash_table_clean_up(&s_static_header_reverse_lookup);
     aws_hash_table_clean_up(&s_static_header_reverse_lookup_name_only);
 }
@@ -421,7 +418,8 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
         /* If the buffer is currently of 0 size, reset it back to its initial size */
         const size_t new_size =
             context->dynamic_table.buffer_capacity
-                ? (size_t)(context->dynamic_table.buffer_capacity * s_hpack_dynamic_table_buffer_growth_rate)
+                /* increase buffer by 1.5 rounded up. */
+                ? (size_t)(context->dynamic_table.buffer_capacity + ((context->dynamic_table.buffer_capacity + 1) / 2))
                 : s_hpack_dynamic_table_initial_elements;
 
         if (s_dynamic_table_resize_buffer(context, new_size)) {

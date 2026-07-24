@@ -8,6 +8,7 @@
 
 #include <aws/http/http.h>
 
+#include <aws/common/hash_table.h>
 #include <aws/http/connection.h>
 #include <aws/http/proxy.h>
 #include <aws/http/status_code.h>
@@ -51,11 +52,13 @@ struct aws_http_proxy_config {
 
     struct aws_byte_buf host;
 
-    uint16_t port;
+    uint32_t port;
 
     struct aws_tls_connection_options *tls_options;
 
     struct aws_http_proxy_strategy *proxy_strategy;
+
+    struct aws_byte_buf no_proxy_hosts;
 };
 
 /*
@@ -96,15 +99,18 @@ struct aws_http_proxy_user_data {
      * Cached original connect options
      */
     struct aws_string *original_host;
-    uint16_t original_port;
+    uint32_t original_port;
     void *original_user_data;
     struct aws_tls_connection_options *original_tls_options;
     struct aws_client_bootstrap *original_bootstrap;
     struct aws_socket_options original_socket_options;
     bool original_manual_window_management;
     size_t original_initial_window_size;
+    bool prior_knowledge_http2;
     struct aws_http1_connection_options original_http1_options;
-
+    struct aws_http2_connection_options
+        original_http2_options; /* the resource within options are allocated with userdata */
+    struct aws_hash_table alpn_string_map;
     /*
      * setup/shutdown callbacks.  We enforce via fatal assert that either the http callbacks are supplied or
      * the channel callbacks are supplied but never both.
@@ -122,10 +128,16 @@ struct aws_http_proxy_user_data {
     struct aws_http_proxy_config *proxy_config;
 
     struct aws_event_loop *requested_event_loop;
+
+    const struct aws_host_resolution_config *host_resolution_config;
 };
 
+/* vtable of functions that proxy uses to interact with external systems.
+ * tests override the vtable to mock those systems */
 struct aws_http_proxy_system_vtable {
-    int (*setup_client_tls)(struct aws_channel_slot *right_of_slot, struct aws_tls_connection_options *tls_options);
+    int (*aws_channel_setup_client_tls)(
+        struct aws_channel_slot *right_of_slot,
+        struct aws_tls_connection_options *tls_options);
 };
 
 AWS_EXTERN_C_BEGIN

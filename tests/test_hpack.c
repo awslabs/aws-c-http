@@ -815,6 +815,34 @@ static int test_hpack_dynamic_table_with_empty_header(struct aws_allocator *allo
     return AWS_OP_SUCCESS;
 }
 
+AWS_TEST_CASE(hpack_dynamic_table_growth_corner_case, test_hpack_dynamic_table_growth_corner_case)
+static int test_hpack_dynamic_table_growth_corner_case(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    aws_http_library_init(allocator);
+    struct aws_hpack_context context;
+    aws_hpack_context_init(&context, allocator, AWS_LS_HTTP_GENERAL, NULL);
+
+    DEFINE_STATIC_HEADER(h1, "herp", "derp");
+    DEFINE_STATIC_HEADER(h2, "fizz", "buzz");
+
+    const size_t h1_size = aws_hpack_get_header_size(&h1);
+    const size_t h2_size = aws_hpack_get_header_size(&h2);
+
+    ASSERT_SUCCESS(aws_hpack_insert_header(&context, &h1));
+    ASSERT_UINT_EQUALS(1, aws_hpack_get_dynamic_table_num_elements(&context));
+
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(&context, h1_size + h2_size + 1));
+    ASSERT_UINT_EQUALS(1, aws_hpack_get_dynamic_table_num_elements(&context));
+
+    ASSERT_SUCCESS(aws_hpack_insert_header(&context, &h2));
+    ASSERT_UINT_EQUALS(2, aws_hpack_get_dynamic_table_num_elements(&context));
+
+    aws_hpack_context_clean_up(&context);
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
 AWS_TEST_CASE(hpack_dynamic_table_size_update_from_setting, test_hpack_dynamic_table_size_update_from_setting)
 static int test_hpack_dynamic_table_size_update_from_setting(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;

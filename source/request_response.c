@@ -14,7 +14,7 @@
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
 
-#if _MSC_VER
+#ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
@@ -91,23 +91,28 @@ void aws_http_headers_acquire(struct aws_http_headers *headers) {
 
 static int s_http_headers_add_header_impl(
     struct aws_http_headers *headers,
-    const struct aws_http_header *header,
+    const struct aws_http_header *header_orig,
     bool front) {
 
     AWS_PRECONDITION(headers);
-    AWS_PRECONDITION(header);
-    AWS_PRECONDITION(aws_byte_cursor_is_valid(&header->name) && aws_byte_cursor_is_valid(&header->value));
+    AWS_PRECONDITION(header_orig);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&header_orig->name) && aws_byte_cursor_is_valid(&header_orig->value));
 
-    if (header->name.len == 0) {
+    struct aws_http_header header_copy = *header_orig;
+
+    if (header_copy.name.len == 0) {
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_NAME);
     }
 
+    /* Whitespace around header values is ignored (RFC-7230 - Section 3.2).
+     * Trim it off here, so anyone querying this value has an easier time. */
+    header_copy.value = aws_strutil_trim_http_whitespace(header_copy.value);
+
     size_t total_len;
-    if (aws_add_size_checked(header->name.len, header->value.len, &total_len)) {
+    if (aws_add_size_checked(header_copy.name.len, header_copy.value.len, &total_len)) {
         return AWS_OP_ERR;
     }
 
-    struct aws_http_header header_copy = *header;
     /* Store our own copy of the strings.
      * We put the name and value into the same allocation. */
     uint8_t *strmem = aws_mem_acquire(headers->alloc, total_len);
@@ -302,6 +307,49 @@ int aws_http_headers_get_index(
     AWS_PRECONDITION(out_header);
 
     return aws_array_list_get_at(&headers->array_list, out_header, index);
+}
+
+/* RFC-9110 - 5.3
+ * A recipient MAY combine multiple field lines within a field section that
+ * have the same field name into one field line, without changing the semantics
+ * of the message, by appending each subsequent field line value to the initial
+ * field line value in order, separated by a comma (",") and optional whitespace
+ * (OWS, defined in Section 5.6.3). For consistency, use comma SP. */
+AWS_HTTP_API
+struct aws_string *aws_http_headers_get_all(const struct aws_http_headers *headers, struct aws_byte_cursor name) {
+
+    AWS_PRECONDITION(headers);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
+
+    struct aws_string *value_str = NULL;
+
+    const struct aws_byte_cursor separator = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(", ");
+
+    struct aws_byte_buf value_builder;
+    aws_byte_buf_init(&value_builder, headers->alloc, 0);
+    bool found = false;
+    struct aws_http_header *header = NULL;
+    const size_t count = aws_http_headers_count(headers);
+    for (size_t i = 0; i < count; ++i) {
+        aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
+        if (aws_http_header_name_eq(name, header->name)) {
+            if (!found) {
+                found = true;
+            } else {
+                aws_byte_buf_append_dynamic(&value_builder, &separator);
+            }
+            aws_byte_buf_append_dynamic(&value_builder, &header->value);
+        }
+    }
+
+    if (found) {
+        value_str = aws_string_new_from_buf(headers->alloc, &value_builder);
+    } else {
+        aws_raise_error(AWS_ERROR_HTTP_HEADER_NOT_FOUND);
+    }
+
+    aws_byte_buf_clean_up(&value_builder);
+    return value_str;
 }
 
 int aws_http_headers_get(
@@ -746,15 +794,26 @@ int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, const str
     return http1_stream->vtable->http1_write_chunk(http1_stream, options);
 }
 
+int aws_http_stream_write_data(
+    struct aws_http_stream *stream,
+    const struct aws_http_stream_write_data_options *options) {
+    AWS_PRECONDITION(stream);
+    AWS_PRECONDITION(stream->vtable);
+    AWS_PRECONDITION(stream->vtable->write_data);
+    AWS_PRECONDITION(options);
+
+    return stream->vtable->write_data(stream, options);
+}
+
 int aws_http2_stream_write_data(
     struct aws_http_stream *http2_stream,
     const struct aws_http2_stream_write_data_options *options) {
     AWS_PRECONDITION(http2_stream);
     AWS_PRECONDITION(http2_stream->vtable);
-    AWS_PRECONDITION(http2_stream->vtable->http2_write_data);
+    AWS_PRECONDITION(http2_stream->vtable->write_data);
     AWS_PRECONDITION(options);
 
-    return http2_stream->vtable->http2_write_data(http2_stream, options);
+    return http2_stream->vtable->write_data(http2_stream, (const struct aws_http_stream_write_data_options *)options);
 }
 
 int aws_http1_stream_add_chunked_trailer(
@@ -816,6 +875,11 @@ int aws_http_message_get_header(
 
     return aws_http_headers_get_index(message->headers, index, out_header);
 }
+
+AWS_FUTURE_T_POINTER_WITH_RELEASE_IMPLEMENTATION(
+    aws_future_http_message,
+    struct aws_http_message,
+    aws_http_message_release)
 
 struct aws_http_stream *aws_http_connection_make_request(
     struct aws_http_connection *client_connection,
@@ -902,8 +966,8 @@ struct aws_http_message *aws_http2_message_new_from_http1(
             scheme_cursor.ptr);
 
         /**
-         * An intermediary that forwards a request over HTTP/2 MUST construct an ":authority" pseudo-header field using
-         * the authority information from the control data of the original request. (RFC=9113 8.3.1)
+         * An intermediary that forwards a request over HTTP/2 MUST construct an ":authority" pseudo-header field
+         * using the authority information from the control data of the original request. (RFC=9113 8.3.1)
          */
         struct aws_byte_cursor host_value;
         AWS_ZERO_STRUCT(host_value);
@@ -920,7 +984,8 @@ struct aws_http_message *aws_http2_message_new_from_http1(
                 (int)host_value.len,
                 host_value.ptr);
         }
-        /* TODO: If the host headers is missing, the target URI could be the other source of the authority information
+        /* TODO: If the host headers is missing, the target URI could be the other source of the authority
+         * information
          */
 
         struct aws_byte_cursor path_cursor;
@@ -980,14 +1045,17 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         struct aws_byte_cursor lower_name_cursor = aws_byte_cursor_from_buf(&lower_name_buf);
         enum aws_http_header_name name_enum = aws_http_lowercase_str_to_header_name(lower_name_cursor);
         switch (name_enum) {
+            /**
+             * An intermediary transforming an HTTP/1.x message to HTTP/2 MUST remove connection-specific header
+             * fields as discussed in Section 7.6.1 of [HTTP]. (RFC=9113 8.2.2)
+             */
+            case AWS_HTTP_HEADER_CONNECTION:
             case AWS_HTTP_HEADER_TRANSFER_ENCODING:
             case AWS_HTTP_HEADER_UPGRADE:
             case AWS_HTTP_HEADER_KEEP_ALIVE:
             case AWS_HTTP_HEADER_PROXY_CONNECTION:
-                /**
-                 * An intermediary transforming an HTTP/1.x message to HTTP/2 MUST remove connection-specific header
-                 * fields as discussed in Section 7.6.1 of [HTTP]. (RFC=9113 8.2.2)
-                 */
+            /* Host has been converted to :authority pseudo header, skip it as well. */
+            case AWS_HTTP_HEADER_HOST:
                 AWS_LOGF_TRACE(
                     AWS_LS_HTTP_GENERAL,
                     "Skip connection-specific headers - \"%.*s\" ",
@@ -1054,6 +1122,15 @@ int aws_http_stream_send_response(struct aws_http_stream *stream, struct aws_htt
     AWS_PRECONDITION(response);
     AWS_PRECONDITION(aws_http_message_is_response(response));
     return stream->owning_connection->vtable->stream_send_response(stream, response);
+}
+
+struct aws_http_stream *aws_http_stream_acquire(struct aws_http_stream *stream) {
+    AWS_PRECONDITION(stream);
+
+    size_t prev_refcount = aws_atomic_fetch_add(&stream->refcount, 1);
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_STREAM, "id=%p: Stream refcount acquired, %zu remaining.", (void *)stream, prev_refcount + 1);
+    return stream;
 }
 
 void aws_http_stream_release(struct aws_http_stream *stream) {
@@ -1133,6 +1210,14 @@ void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increm
 
 uint32_t aws_http_stream_get_id(const struct aws_http_stream *stream) {
     return stream->id;
+}
+
+void aws_http_stream_cancel(struct aws_http_stream *stream, int error_code) {
+    stream->vtable->cancel(stream, error_code);
+}
+
+void aws_http_stream_cancel_default_error(struct aws_http_stream *stream) {
+    stream->vtable->cancel(stream, AWS_ERROR_HTTP_STREAM_CANCELLED);
 }
 
 int aws_http2_stream_reset(struct aws_http_stream *http2_stream, uint32_t http2_error) {

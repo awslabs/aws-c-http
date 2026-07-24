@@ -169,7 +169,8 @@ static int s_header_test_after(struct aws_allocator *allocator, int setup_res, v
 
 #define DEFINE_STATIC_HEADER(_key, _value, _behavior)                                                                  \
     {                                                                                                                  \
-        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_key), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_value),   \
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_key),                                                           \
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_value),                                                        \
         .compression = AWS_HTTP_HEADER_COMPRESSION_##_behavior,                                                        \
     }
 

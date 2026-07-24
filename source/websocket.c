@@ -9,6 +9,7 @@
 #include <aws/common/device_random.h>
 #include <aws/common/encoding.h>
 #include <aws/common/mutex.h>
+#include <aws/common/ref_count.h>
 #include <aws/http/private/websocket_decoder.h>
 #include <aws/http/private/websocket_encoder.h>
 #include <aws/http/request_response.h>
@@ -17,22 +18,11 @@
 
 #include <inttypes.h>
 
-#if _MSC_VER
+#ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
-/* TODO: echo payload of peer CLOSE */
-
-/* TODO: Can we be sure socket will always mark aws_io_messages as complete? */
-
 /* TODO: If something goes wrong during normal shutdown, do I change the error_code? */
-
-/* TODO: Delayed payload works by sending 0-size io_msgs down pipe and trying again when they're compele.
- *       Do something more efficient? */
-
-/* TODO: don't fire send completion until data written to socket .. which also means delaying on_shutdown cb */
-
-/* TODO: stop using the HTTP_PARSE error, give websocket its own error */
 
 struct outgoing_frame {
     struct aws_websocket_send_frame_options def;
@@ -41,6 +31,7 @@ struct outgoing_frame {
 
 struct aws_websocket {
     struct aws_allocator *alloc;
+    struct aws_ref_count ref_count;
     struct aws_channel_handler channel_handler;
     struct aws_channel_slot *channel_slot;
     size_t initial_window_size;
@@ -52,7 +43,7 @@ struct aws_websocket {
     aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
 
     struct aws_channel_task move_synced_data_to_thread_task;
-    struct aws_channel_task shutdown_channel_task;
+    struct aws_channel_task shutdown_channel_from_offthread_task;
     struct aws_channel_task increment_read_window_task;
     struct aws_channel_task waiting_on_payload_stream_task;
     struct aws_channel_task close_timeout_task;
@@ -78,6 +69,10 @@ struct aws_websocket {
         struct aws_websocket_incoming_frame *current_incoming_frame;
         struct aws_websocket_incoming_frame incoming_frame_storage;
 
+        /* Payload of incoming PING frame.
+         * The PONG frame we send in response must have an identical payload */
+        struct aws_byte_buf incoming_ping_payload;
+
         /* If current incoming frame is CONTINUATION, this is the data type it is a continuation of. */
         enum aws_websocket_opcode continuation_of_opcode;
 
@@ -90,7 +85,10 @@ struct aws_websocket {
         /* True when no more frames will be read, due to:
          * - a CLOSE frame was received
          * - decoder error
-         * - channel shutdown in read-dir */
+         * - channel shutdown in read-dir
+         * - user calling aws_websocket_close()
+         * - user dropping the last refcount
+         */
         bool is_reading_stopped;
 
         /* True when no more frames will be written, due to:
@@ -129,17 +127,14 @@ struct aws_websocket {
         /* Error-code returned by aws_websocket_send_frame() when is_writing_stopped is true */
         int send_frame_error_code;
 
-        /* Use a task to issue a channel shutdown. */
-        int shutdown_channel_task_error_code;
-        bool is_shutdown_channel_task_scheduled;
+        /* Use a task to issue a channel shutdown from off-thread. */
+        int shutdown_channel_from_offthread_task_error_code;
+        bool is_shutdown_channel_from_offthread_task_scheduled;
 
         bool is_move_synced_data_to_thread_task_scheduled;
 
         /* Mirrors variable from thread_data */
         bool is_midchannel_handler;
-
-        /* Whether aws_websocket_release() has been called */
-        bool is_released;
     } synced_data;
 };
 
@@ -168,6 +163,7 @@ static int s_handler_shutdown(
 static size_t s_handler_initial_window_size(struct aws_channel_handler *handler);
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
+static void s_websocket_on_refcount_zero(void *user_data);
 
 static int s_encoder_stream_outgoing_payload(struct aws_byte_buf *out_buf, void *user_data);
 
@@ -193,10 +189,13 @@ static bool s_midchannel_send_payload(struct aws_websocket *websocket, struct aw
 static void s_midchannel_send_complete(struct aws_websocket *websocket, int error_code, void *user_data);
 static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_increment_read_window_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
-static void s_shutdown_channel_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
+static void s_shutdown_channel_from_offthread_task(
+    struct aws_channel_task *task,
+    void *arg,
+    enum aws_task_status status);
 static void s_waiting_on_payload_stream_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_close_timeout_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
-static void s_schedule_channel_shutdown(struct aws_websocket *websocket, int error_code);
+static void s_schedule_channel_shutdown_from_offthread(struct aws_websocket *websocket, int error_code);
 static void s_shutdown_due_to_write_err(struct aws_websocket *websocket, int error_code);
 static void s_shutdown_due_to_read_err(struct aws_websocket *websocket, int error_code);
 static void s_stop_writing(struct aws_websocket *websocket, int send_frame_error_code);
@@ -249,8 +248,6 @@ static void s_unlock_synced_data(struct aws_websocket *websocket) {
 }
 
 struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handler_options *options) {
-    /* TODO: validate options */
-
     struct aws_channel_slot *slot = NULL;
     struct aws_websocket *websocket = NULL;
     int err;
@@ -271,6 +268,7 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
     }
 
     websocket->alloc = options->allocator;
+    aws_ref_count_init(&websocket->ref_count, websocket, s_websocket_on_refcount_zero);
     websocket->channel_handler.vtable = &s_channel_handler_vtable;
     websocket->channel_handler.alloc = options->allocator;
     websocket->channel_handler.impl = websocket;
@@ -293,7 +291,10 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
         websocket,
         "websocket_move_synced_data_to_thread");
     aws_channel_task_init(
-        &websocket->shutdown_channel_task, s_shutdown_channel_task, websocket, "websocket_shutdown_channel");
+        &websocket->shutdown_channel_from_offthread_task,
+        s_shutdown_channel_from_offthread_task,
+        websocket,
+        "websocket_shutdown_channel");
     aws_channel_task_init(
         &websocket->increment_read_window_task,
         s_increment_read_window_task,
@@ -308,10 +309,12 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
 
     aws_linked_list_init(&websocket->thread_data.outgoing_frame_list);
     aws_linked_list_init(&websocket->thread_data.write_completion_frames);
+    aws_byte_buf_init(&websocket->thread_data.incoming_ping_payload, websocket->alloc, 0);
 
     aws_websocket_encoder_init(&websocket->thread_data.encoder, s_encoder_stream_outgoing_payload, websocket);
 
-    aws_websocket_decoder_init(&websocket->thread_data.decoder, s_decoder_on_frame, s_decoder_on_payload, websocket);
+    aws_websocket_decoder_init(
+        &websocket->thread_data.decoder, options->allocator, s_decoder_on_frame, s_decoder_on_payload, websocket);
 
     aws_linked_list_init(&websocket->synced_data.outgoing_frame_list);
 
@@ -353,37 +356,37 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Destroying websocket.", (void *)websocket);
 
+    aws_websocket_decoder_clean_up(&websocket->thread_data.decoder);
+    aws_byte_buf_clean_up(&websocket->thread_data.incoming_ping_payload);
     aws_mutex_clean_up(&websocket->synced_data.lock);
     aws_mem_release(websocket->alloc, websocket);
 }
 
+struct aws_websocket *aws_websocket_acquire(struct aws_websocket *websocket) {
+    AWS_PRECONDITION(websocket);
+    AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Acquiring websocket ref-count.", (void *)websocket);
+    aws_ref_count_acquire(&websocket->ref_count);
+    return websocket;
+}
+
 void aws_websocket_release(struct aws_websocket *websocket) {
-    AWS_ASSERT(websocket);
-    AWS_ASSERT(websocket->channel_slot);
-
-    bool was_already_released;
-
-    /* BEGIN CRITICAL SECTION */
-    s_lock_synced_data(websocket);
-    if (websocket->synced_data.is_released) {
-        was_already_released = true;
-    } else {
-        was_already_released = false;
-        websocket->synced_data.is_released = true;
-    }
-    s_unlock_synced_data(websocket);
-    /* END CRITICAL SECTION */
-
-    if (was_already_released) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_WEBSOCKET, "id=%p: Ignoring multiple calls to websocket release.", (void *)websocket);
+    if (!websocket) {
         return;
     }
 
-    AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Websocket released, shut down if necessary.", (void *)websocket);
+    AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Releasing websocket ref-count.", (void *)websocket);
+    aws_ref_count_release(&websocket->ref_count);
+}
+
+static void s_websocket_on_refcount_zero(void *user_data) {
+    struct aws_websocket *websocket = user_data;
+    AWS_ASSERT(websocket->channel_slot);
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_WEBSOCKET, "id=%p: Websocket ref-count is zero, shut down if necessary.", (void *)websocket);
 
     /* Channel might already be shut down, but make sure */
-    s_schedule_channel_shutdown(websocket, AWS_ERROR_SUCCESS);
+    s_schedule_channel_shutdown_from_offthread(websocket, AWS_ERROR_SUCCESS);
 
     /* Channel won't destroy its slots/handlers until its refcount reaches 0 */
     aws_channel_release_hold(websocket->channel_slot->channel);
@@ -422,45 +425,9 @@ int aws_websocket_convert_to_midchannel_handler(struct aws_websocket *websocket)
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
-    bool was_released = false;
-
-    /* BEGIN CRITICAL SECTION */
-    s_lock_synced_data(websocket);
-    if (websocket->synced_data.is_released) {
-        was_released = true;
-    } else {
-        websocket->synced_data.is_midchannel_handler = true;
-    }
-    s_unlock_synced_data(websocket);
-    /* END CRITICAL SECTION */
-
-    if (was_released) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_WEBSOCKET,
-            "id=%p: Cannot convert websocket to midchannel handler because it was already released.",
-            (void *)websocket);
-        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
-    }
-
     websocket->thread_data.is_midchannel_handler = true;
 
     return AWS_OP_SUCCESS;
-}
-
-/* Insert frame into list, sorting by priority, then by age (high-priority and older frames towards the front) */
-static void s_enqueue_prioritized_frame(struct aws_linked_list *list, struct outgoing_frame *to_add) {
-    /* Iterate in reverse so that common case (a bunch of low-priority frames) is O(1) */
-    struct aws_linked_list_node *rev_iter = aws_linked_list_rbegin(list);
-    const struct aws_linked_list_node *rev_end = aws_linked_list_rend(list);
-    while (rev_iter != rev_end) {
-        struct outgoing_frame *frame_i = AWS_CONTAINER_OF(rev_iter, struct outgoing_frame, node);
-        if (to_add->def.high_priority == frame_i->def.high_priority) {
-            break;
-        }
-        rev_iter = aws_linked_list_prev(rev_iter);
-    }
-
-    aws_linked_list_insert_after(rev_iter, &to_add->node);
 }
 
 static int s_send_frame(
@@ -472,10 +439,6 @@ static int s_send_frame(
     AWS_ASSERT(options);
 
     /* Check for bad input. Log about non-obvious errors. */
-    if (options->high_priority && aws_websocket_is_data_frame(options->opcode)) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET, "id=%p: Data frames cannot be sent as high-priority.", (void *)websocket);
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-    }
     if (options->payload_length > 0 && !options->stream_outgoing_payload) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET,
@@ -527,13 +490,12 @@ static int s_send_frame(
 
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_WEBSOCKET,
-        "id=%p: Enqueuing outgoing frame with opcode=%" PRIu8 "(%s) length=%" PRIu64 " fin=%s priority=%s",
+        "id=%p: Enqueuing outgoing frame with opcode=%" PRIu8 "(%s) length=%" PRIu64 " fin=%s",
         (void *)websocket,
         options->opcode,
         aws_websocket_opcode_str(options->opcode),
         options->payload_length,
-        options->fin ? "T" : "F",
-        options->high_priority ? "high" : "normal");
+        options->fin ? "T" : "F");
 
     if (should_schedule_task) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Scheduling synced data task.", (void *)websocket);
@@ -568,12 +530,7 @@ static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, voi
     /* END CRITICAL SECTION */
 
     if (!aws_linked_list_empty(&tmp_list)) {
-        do {
-            struct aws_linked_list_node *node = aws_linked_list_pop_front(&tmp_list);
-            struct outgoing_frame *frame = AWS_CONTAINER_OF(node, struct outgoing_frame, node);
-            s_enqueue_prioritized_frame(&websocket->thread_data.outgoing_frame_list, frame);
-        } while (!aws_linked_list_empty(&tmp_list));
-
+        aws_linked_list_move_all_back(&websocket->thread_data.outgoing_frame_list, &tmp_list);
         s_try_write_outgoing_frames(websocket);
     }
 }
@@ -743,8 +700,7 @@ static void s_try_write_outgoing_frames(struct aws_websocket *websocket) {
         return;
     }
 
-    /* Prepare to send aws_io_message up the channel.
-     * Note that the write-completion callback may fire before send_message() returns */
+    /* Prepare to send aws_io_message up the channel. */
 
     /* If CLOSE frame was written, that's the last data we'll write */
     if (wrote_close_frame) {
@@ -884,7 +840,6 @@ static int s_handler_process_write_message(
 
     int err = s_send_frame(websocket, &options, false);
     if (err) {
-        /* TODO: mqtt handler needs to clean up messsages that fail to send. */
         return AWS_OP_ERR;
     }
 
@@ -951,6 +906,21 @@ static void s_complete_frame_list(struct aws_websocket *websocket, struct aws_li
     aws_linked_list_init(frames);
 }
 
+/* Set is_reading_stopped = true, all further read data will be ignored.
+ * But also increment the read window, so that channel shutdown won't deadlock
+ * due to pending read-data in an upstream handler or the underlying OS socket. */
+static void s_stop_reading_and_dont_block_shutdown(struct aws_websocket *websocket) {
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+    if (websocket->thread_data.is_reading_stopped) {
+        return;
+    }
+
+    AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Websocket will ignore any further read data.", (void *)websocket);
+    websocket->thread_data.is_reading_stopped = true;
+
+    aws_channel_slot_increment_read_window(websocket->channel_slot, SIZE_MAX);
+}
+
 static void s_stop_writing(struct aws_websocket *websocket, int send_frame_error_code) {
     AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
     AWS_ASSERT(send_frame_error_code != AWS_ERROR_SUCCESS);
@@ -1001,7 +971,7 @@ static void s_shutdown_due_to_write_err(struct aws_websocket *websocket, int err
             (void *)websocket,
             error_code,
             aws_error_name(error_code));
-        s_schedule_channel_shutdown(websocket, error_code);
+        aws_channel_shutdown(websocket->channel_slot->channel, error_code);
     }
 }
 
@@ -1015,7 +985,7 @@ static void s_shutdown_due_to_read_err(struct aws_websocket *websocket, int erro
         error_code,
         aws_error_name(error_code));
 
-    websocket->thread_data.is_reading_stopped = true;
+    s_stop_reading_and_dont_block_shutdown(websocket);
 
     /* If there's a current incoming frame, complete it with the specific error code. */
     if (websocket->thread_data.current_incoming_frame) {
@@ -1023,10 +993,14 @@ static void s_shutdown_due_to_read_err(struct aws_websocket *websocket, int erro
     }
 
     /* Tell channel to shutdown (it's ok to call this redundantly) */
-    s_schedule_channel_shutdown(websocket, error_code);
+    aws_channel_shutdown(websocket->channel_slot->channel, error_code);
 }
 
-static void s_shutdown_channel_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
+static void s_shutdown_channel_from_offthread_task(
+    struct aws_channel_task *task,
+    void *arg,
+    enum aws_task_status status) {
+
     (void)task;
 
     if (status != AWS_TASK_STATUS_RUN_READY) {
@@ -1039,34 +1013,39 @@ static void s_shutdown_channel_task(struct aws_channel_task *task, void *arg, en
     /* BEGIN CRITICAL SECTION */
     s_lock_synced_data(websocket);
 
-    error_code = websocket->synced_data.shutdown_channel_task_error_code;
+    error_code = websocket->synced_data.shutdown_channel_from_offthread_task_error_code;
 
     s_unlock_synced_data(websocket);
     /* END CRITICAL SECTION */
 
+    /* Stop reading, so that shutdown won't be blocked.
+     * If something off-thread is causing shutdown (aws_websocket_close(), refcount 0, etc),
+     * the user may never interact with the websocket again. We can't rely on them
+     * to keep the window open and prevent deadlock during shutdown. */
+    s_stop_reading_and_dont_block_shutdown(websocket);
+
     aws_channel_shutdown(websocket->channel_slot->channel, error_code);
 }
 
-/* Tell the channel to shut down. It is safe to call this multiple times.
- * The call to aws_channel_shutdown() is delayed so that a user invoking aws_websocket_close doesn't
- * have completion callbacks firing before the function call even returns */
-static void s_schedule_channel_shutdown(struct aws_websocket *websocket, int error_code) {
+/* Tell the channel to shut down, from off-thread. It is safe to call this multiple times. */
+static void s_schedule_channel_shutdown_from_offthread(struct aws_websocket *websocket, int error_code) {
     bool schedule_shutdown = false;
 
     /* BEGIN CRITICAL SECTION */
     s_lock_synced_data(websocket);
 
-    if (!websocket->synced_data.is_shutdown_channel_task_scheduled) {
+    if (!websocket->synced_data.is_shutdown_channel_from_offthread_task_scheduled) {
         schedule_shutdown = true;
-        websocket->synced_data.is_shutdown_channel_task_scheduled = true;
-        websocket->synced_data.shutdown_channel_task_error_code = error_code;
+        websocket->synced_data.is_shutdown_channel_from_offthread_task_scheduled = true;
+        websocket->synced_data.shutdown_channel_from_offthread_task_error_code = error_code;
     }
 
     s_unlock_synced_data(websocket);
     /* END CRITICAL SECTION */
 
     if (schedule_shutdown) {
-        aws_channel_schedule_task_now(websocket->channel_slot->channel, &websocket->shutdown_channel_task);
+        aws_channel_schedule_task_now(
+            websocket->channel_slot->channel, &websocket->shutdown_channel_from_offthread_task);
     }
 }
 
@@ -1087,14 +1066,13 @@ void aws_websocket_close(struct aws_websocket *websocket, bool free_scarce_resou
         return;
     }
 
-    /* TODO: aws_channel_shutdown() should let users specify error_code and "immediate" as separate parameters.
-     * Currently, any non-zero error_code results in "immediate" shutdown */
+    /* TODO: aws_channel_shutdown() should let users specify error_code and "immediate" as separate parameters. */
     int error_code = AWS_ERROR_SUCCESS;
     if (free_scarce_resources_immediately) {
         error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
     }
 
-    s_schedule_channel_shutdown(websocket, error_code);
+    s_schedule_channel_shutdown_from_offthread(websocket, error_code);
 }
 
 static int s_handler_shutdown(
@@ -1259,6 +1237,9 @@ static int s_handler_process_read_message(
     struct aws_byte_cursor cursor = aws_byte_cursor_from_buf(&message->message_data);
     int err;
 
+    /* At the end of this function we'll bump the window back up by this amount.
+     * We start off assuming we'll re-open the window by the whole amount,
+     * but this number will go down if we process any payload data that ought to shrink the window */
     websocket->thread_data.incoming_message_window_update = message->message_data.len;
 
     AWS_LOGF_TRACE(
@@ -1301,17 +1282,7 @@ static int s_handler_process_read_message(
     }
 
     if (websocket->thread_data.incoming_message_window_update > 0) {
-        err = aws_channel_slot_increment_read_window(slot, websocket->thread_data.incoming_message_window_update);
-        if (err) {
-            AWS_LOGF_ERROR(
-                AWS_LS_HTTP_WEBSOCKET,
-                "id=%p: Failed to increment read window after message processing, error %d (%s). Closing "
-                "connection.",
-                (void *)websocket,
-                aws_last_error(),
-                aws_error_name(aws_last_error()));
-            goto error;
-        }
+        aws_channel_slot_increment_read_window(slot, websocket->thread_data.incoming_message_window_update);
     }
 
     goto clean_up;
@@ -1344,9 +1315,6 @@ static int s_decoder_on_frame(const struct aws_websocket_frame *frame, void *use
     websocket->thread_data.current_incoming_frame->payload_length = frame->payload_length;
     websocket->thread_data.current_incoming_frame->opcode = frame->opcode;
     websocket->thread_data.current_incoming_frame->fin = frame->fin;
-    websocket->thread_data.current_incoming_frame->rsv[0] = frame->rsv[0];
-    websocket->thread_data.current_incoming_frame->rsv[1] = frame->rsv[1];
-    websocket->thread_data.current_incoming_frame->rsv[2] = frame->rsv[2];
 
     /* If CONTINUATION frames are expected, remember which type of data is being continued.
      * RFC-6455 Section 5.4 Fragmentation */
@@ -1358,6 +1326,15 @@ static int s_decoder_on_frame(const struct aws_websocket_frame *frame, void *use
                 websocket->thread_data.continuation_of_opcode = frame->opcode;
             }
         }
+    } else if (frame->opcode == AWS_WEBSOCKET_OPCODE_PING) {
+        /* Prepare to store payload of PING so we can echo it back in the PONG */
+        aws_byte_buf_reset(&websocket->thread_data.incoming_ping_payload, false /*zero_contents*/);
+        /* Note: we are NOT calling aws_byte_buf_reserve().
+         * This works around an attack where a malicious peer CLAIMS they'll send a huge frame,
+         * which would case OOM if we did the reserve immediately.
+         * If a malicious peer wants to run us out of memory, they'll need to do
+         * it the costly way and actually send a billion bytes.
+         * Or we could impose our own internal limits, but for now this is simpler */
     }
 
     /* Invoke user cb */
@@ -1382,6 +1359,11 @@ static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
     AWS_ASSERT(websocket->thread_data.current_incoming_frame);
     AWS_ASSERT(!websocket->thread_data.is_reading_stopped);
 
+    /* Store payload of PING so we can echo it back in the PONG */
+    if (websocket->thread_data.current_incoming_frame->opcode == AWS_WEBSOCKET_OPCODE_PING) {
+        aws_byte_buf_append_dynamic(&websocket->thread_data.incoming_ping_payload, &data);
+    }
+
     if (websocket->thread_data.is_midchannel_handler) {
         return s_decoder_on_midchannel_payload(websocket, data);
     }
@@ -1391,27 +1373,26 @@ static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
 
 /* Invoke user cb */
 static int s_decoder_on_user_payload(struct aws_websocket *websocket, struct aws_byte_cursor data) {
-    if (!websocket->on_incoming_frame_payload) {
-        return AWS_OP_SUCCESS;
+    if (websocket->on_incoming_frame_payload) {
+        if (!websocket->on_incoming_frame_payload(
+                websocket, websocket->thread_data.current_incoming_frame, data, websocket->user_data)) {
+
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET, "id=%p: Incoming payload callback has reported a failure.", (void *)websocket);
+            return aws_raise_error(AWS_ERROR_HTTP_CALLBACK_FAILURE);
+        }
     }
 
-    if (!websocket->on_incoming_frame_payload(
-            websocket, websocket->thread_data.current_incoming_frame, data, websocket->user_data)) {
+    /* If this is a "data" frame's payload, let the window shrink */
+    if (aws_websocket_is_data_frame(websocket->thread_data.current_incoming_frame->opcode) &&
+        websocket->manual_window_update) {
 
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_WEBSOCKET, "id=%p: Incoming payload callback has reported a failure.", (void *)websocket);
-        return aws_raise_error(AWS_ERROR_HTTP_CALLBACK_FAILURE);
-    }
-
-    /* If user reduced window_update_size, reduce how much the websocket will update its window */
-    if (websocket->manual_window_update) {
-        size_t reduce = data.len;
         websocket->thread_data.incoming_message_window_update -= data.len;
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_WEBSOCKET,
-            "id=%p: Incoming payload callback changed window update size, window will shrink by %zu.",
+            "id=%p: The read window is shrinking by %zu due to incoming payload from 'data' frame.",
             (void *)websocket,
-            reduce);
+            data.len);
     }
 
     return AWS_OP_SUCCESS;
@@ -1487,23 +1468,91 @@ error:
     return AWS_OP_ERR;
 }
 
+/* When the websocket sends a frame automatically (PONG, CLOSE),
+ * this holds the payload. */
+struct aws_websocket_autopayload {
+    struct aws_allocator *alloc;
+    struct aws_byte_buf buf;
+    struct aws_byte_cursor advancing_cursor;
+};
+
+static struct aws_websocket_autopayload *s_autopayload_new(
+    struct aws_allocator *alloc,
+    const struct aws_byte_buf *src) {
+
+    struct aws_websocket_autopayload *autopayload = aws_mem_calloc(alloc, 1, sizeof(struct aws_websocket_autopayload));
+    autopayload->alloc = alloc;
+    if (src->len > 0) {
+        aws_byte_buf_init_copy(&autopayload->buf, alloc, src);
+        autopayload->advancing_cursor = aws_byte_cursor_from_buf(&autopayload->buf);
+    }
+
+    return autopayload;
+}
+
+static void s_autopayload_destroy(struct aws_websocket_autopayload *autopayload) {
+    aws_byte_buf_clean_up(&autopayload->buf);
+    aws_mem_release(autopayload->alloc, autopayload);
+}
+
+static void s_autopayload_send_complete(struct aws_websocket *websocket, int error_code, void *user_data) {
+    (void)websocket;
+    (void)error_code;
+
+    struct aws_websocket_autopayload *autopayload = user_data;
+    s_autopayload_destroy(autopayload);
+}
+
+static bool s_autopayload_stream_outgoing_payload(
+    struct aws_websocket *websocket,
+    struct aws_byte_buf *out_buf,
+    void *user_data) {
+
+    (void)websocket;
+    struct aws_websocket_autopayload *autopayload = user_data;
+    aws_byte_buf_write_to_capacity(out_buf, &autopayload->advancing_cursor);
+    return true;
+}
+
 static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code, bool *out_callback_result) {
     AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
     AWS_ASSERT(websocket->thread_data.current_incoming_frame);
 
-    if (error_code == AWS_OP_SUCCESS) {
+    if (error_code == 0) {
         /* If this was a CLOSE frame, don't read any more data. */
         if (websocket->thread_data.current_incoming_frame->opcode == AWS_WEBSOCKET_OPCODE_CLOSE) {
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_WEBSOCKET,
                 "id=%p: Close frame received, any further data received will be ignored.",
                 (void *)websocket);
-            websocket->thread_data.is_reading_stopped = true;
+            s_stop_reading_and_dont_block_shutdown(websocket);
 
             /* TODO: auto-close if there's a channel-handler to the right */
-        }
 
-        /* TODO: auto-respond to PING with PONG */
+        } else if (websocket->thread_data.current_incoming_frame->opcode == AWS_WEBSOCKET_OPCODE_PING) {
+            /* Automatically respond to a PING with a PONG */
+            if (!websocket->thread_data.is_writing_stopped) {
+                /* Optimization idea: avoid allocations/copies each time we send an auto-PONG.
+                 * Maybe have a small autopayload pool, instead of allocating one each time.
+                 * Maybe encode directly to aws_io_message, instead of copying to a buf, that's copied to a msg later.
+                 * Maybe "std::move()" the aws_byte_bufs around instead of copying them. */
+                struct aws_websocket_autopayload *autopong =
+                    s_autopayload_new(websocket->alloc, &websocket->thread_data.incoming_ping_payload);
+
+                struct aws_websocket_send_frame_options pong_frame = {
+                    .opcode = AWS_WEBSOCKET_OPCODE_PONG,
+                    .fin = true,
+                    .payload_length = autopong->buf.len,
+                    .stream_outgoing_payload = s_autopayload_stream_outgoing_payload,
+                    .on_complete = s_autopayload_send_complete,
+                    .user_data = autopong,
+                };
+
+                int send_err = s_send_frame(websocket, &pong_frame, false /*from_public_api*/);
+                /* Failure should be impossible. We already checked that writing is not stopped */
+                AWS_FATAL_ASSERT(!send_err && "Unexpected failure sending websocket PONG");
+            }
+        }
     }
 
     /* Invoke user cb */
@@ -1566,35 +1615,15 @@ static int s_handler_increment_read_window(
     }
 
     if (increment != 0) {
-        int err = aws_channel_slot_increment_read_window(slot, increment);
-        if (err) {
-            goto error;
-        }
+        aws_channel_slot_increment_read_window(slot, increment);
     }
 
     return AWS_OP_SUCCESS;
 
 error:
-    websocket->thread_data.is_reading_stopped = true;
     /* Shutting down channel because I know that no one ever checks these errors */
     s_shutdown_due_to_read_err(websocket, aws_last_error());
     return AWS_OP_ERR;
-}
-
-static void s_increment_read_window_action(struct aws_websocket *websocket, size_t size) {
-    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
-
-    int err = aws_channel_slot_increment_read_window(websocket->channel_slot, size);
-    if (err) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_WEBSOCKET,
-            "id=%p: Failed to increment read window, error %d (%s). Closing websocket.",
-            (void *)websocket,
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
-
-        s_schedule_channel_shutdown(websocket, aws_last_error());
-    }
 }
 
 static void s_increment_read_window_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
@@ -1619,12 +1648,20 @@ static void s_increment_read_window_task(struct aws_channel_task *task, void *ar
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_WEBSOCKET, "id=%p: Running task to increment read window by %zu.", (void *)websocket, size);
 
-    s_increment_read_window_action(websocket, size);
+    aws_channel_slot_increment_read_window(websocket->channel_slot, size);
 }
 
 void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t size) {
     if (size == 0) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Ignoring window increment of size 0.", (void *)websocket);
+        return;
+    }
+
+    if (!websocket->manual_window_update) {
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Ignoring window increment. Manual window management (aka read backpressure) is not enabled.",
+            (void *)websocket);
         return;
     }
 
@@ -1692,8 +1729,8 @@ struct aws_http_message *aws_http_message_new_websocket_handshake_request(
     struct aws_byte_cursor host) {
 
     AWS_PRECONDITION(allocator);
-    AWS_PRECONDITION(aws_byte_cursor_is_valid(&path))
-    AWS_PRECONDITION(aws_byte_cursor_is_valid(&host))
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&path));
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&host));
 
     struct aws_http_message *request = aws_http_message_new_request(allocator);
     if (!request) {

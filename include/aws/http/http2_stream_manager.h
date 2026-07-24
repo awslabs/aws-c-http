@@ -8,6 +8,8 @@
 
 #include <aws/http/http.h>
 
+AWS_PUSH_SANE_WARNING_LEVEL
+
 struct aws_http2_stream_manager;
 struct aws_client_bootstrap;
 struct aws_http_connection;
@@ -66,7 +68,7 @@ struct aws_http2_stream_manager_options {
     bool http2_prior_knowledge;
 
     struct aws_byte_cursor host;
-    uint16_t port;
+    uint32_t port;
 
     /**
      * Optional.
@@ -77,9 +79,9 @@ struct aws_http2_stream_manager_options {
      * - For connection level window control, `conn_manual_window_management` will enable manual control. The
      * inital window size is not controllable.
      * - For stream level window control, `enable_read_back_pressure` will enable manual control. The initial window
-     * size needs to be set through `initial_settings_array`.
+     * size needs to be set through `initial_window_size` or `initial_settings_array`.
      */
-    struct aws_http2_setting *initial_settings_array;
+    const struct aws_http2_setting *initial_settings_array;
     size_t num_initial_settings;
     size_t max_closed_streams;
     bool conn_manual_window_management;
@@ -90,6 +92,16 @@ struct aws_http2_stream_manager_options {
      * The initial window size can be set by `AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE` via `initial_settings_array`
      */
     bool enable_read_back_pressure;
+    /*
+     * This value will end up being one of the initial settings for the connection,
+     * `AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE`.
+     * The corresponding settings from `initial_settings_array` will override this value.
+     * Notes:
+     *  - the setting value has the limitation of 2^31-1, otherwise the connection will be failed to be established with
+     *      AWS_ERROR_INVALID_ARGUMENT.
+     *  - when this set to 0, the initial window size will be set to 0, when `enable_read_back_pressure` is true.
+     * */
+    size_t initial_window_size;
 
     /* Connection monitor for the underlying connections made */
     const struct aws_http_connection_monitoring_options *monitoring_options;
@@ -142,9 +154,17 @@ struct aws_http2_stream_manager_options {
     size_t max_concurrent_streams_per_connection;
     /**
      * Required.
-     * The max number of connections will be open at same time. If all the connections are full, manager will wait until
-     * available to vender more streams */
+     * The max number of connections that will be open at the same time. If all the connections are full, the manager
+     * will wait until a connection is available to vend more streams.
+     */
     size_t max_connections;
+    /**
+     * Optional.
+     * The max number of concurrent streams that can be active across all connections at the same time.
+     * 0 means no limit (default). When this limit is reached, the stream manager will wait for
+     * existing streams to complete before creating new ones, even if connections have available capacity.
+     */
+    size_t max_concurrent_streams;
 };
 
 struct aws_http2_stream_manager_acquire_stream_options {
@@ -187,7 +207,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_release(struct aws_htt
 AWS_HTTP_API
 struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     struct aws_allocator *allocator,
-    struct aws_http2_stream_manager_options *options);
+    const struct aws_http2_stream_manager_options *options);
 
 /**
  * Acquire a stream from stream manager asynchronously.
@@ -212,4 +232,6 @@ void aws_http2_stream_manager_fetch_metrics(
     struct aws_http_manager_metrics *out_metrics);
 
 AWS_EXTERN_C_END
+AWS_POP_SANE_WARNING_LEVEL
+
 #endif /* AWS_HTTP2_STREAM_MANAGER_H */

@@ -10,6 +10,8 @@
 #include <aws/http/exports.h>
 #include <aws/io/io.h>
 
+AWS_PUSH_SANE_WARNING_LEVEL
+
 #define AWS_C_HTTP_PACKAGE_ID 2
 
 enum aws_http_errors {
@@ -54,6 +56,13 @@ enum aws_http_errors {
     AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN,
     AWS_ERROR_HTTP_STREAM_MANAGER_CONNECTION_ACQUIRE_FAILURE,
     AWS_ERROR_HTTP_STREAM_MANAGER_UNEXPECTED_HTTP_VERSION,
+    AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR,
+    AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED,
+    AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED,
+    AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT,
+    AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUISITION_TIMEOUT,
+    AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED,
+    AWS_ERROR_HTTP_STREAM_CANCELLED,
     AWS_ERROR_HTTP_REQUIRED_PSEUDO_HEADER_MISSING,
 
     AWS_ERROR_HTTP_END_RANGE = AWS_ERROR_ENUM_END_RANGE(AWS_C_HTTP_PACKAGE_ID)
@@ -116,6 +125,14 @@ void aws_http_library_init(struct aws_allocator *alloc);
 AWS_HTTP_API
 void aws_http_library_clean_up(void);
 
+/*
+ * This API provides a recommendation on whether an error code should be considered retryable for transient
+ * errors like host resolution, sockets, and TLS.
+ * Note: This is a recommendation only. Retry behavior should be determined based on your specific use case.
+ */
+AWS_HTTP_API
+bool aws_http_error_code_is_retryable(int error_code);
+
 /**
  * Returns the description of common status codes.
  * Ex: 404 -> "Not Found"
@@ -152,5 +169,6 @@ AWS_HTTP_API extern const struct aws_byte_cursor aws_http_scheme_http;
 AWS_HTTP_API extern const struct aws_byte_cursor aws_http_scheme_https;
 
 AWS_EXTERN_C_END
+AWS_POP_SANE_WARNING_LEVEL
 
 #endif /* AWS_HTTP_H */

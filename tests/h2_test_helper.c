@@ -27,6 +27,9 @@ static void s_frame_init(
 }
 
 static void s_frame_clean_up(struct h2_decoded_frame *frame) {
+    if (!frame) {
+        return;
+    }
     aws_http_headers_release(frame->headers);
     aws_array_list_clean_up(&frame->settings);
     aws_byte_buf_clean_up(&frame->data);
@@ -591,8 +594,9 @@ int h2_fake_peer_send_data_frame_with_padding_length(
 
     bool body_complete;
     bool body_stalled;
+    bool body_failed;
     int32_t stream_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
-    size_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
+    uint32_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
     ASSERT_SUCCESS(aws_h2_encode_data_frame(
         &peer->encoder,
         stream_id,
@@ -603,10 +607,12 @@ int h2_fake_peer_send_data_frame_with_padding_length(
         &connection_window_size_peer,
         &msg->message_data,
         &body_complete,
-        &body_stalled));
+        &body_stalled,
+        &body_failed));
 
     ASSERT_TRUE(body_complete);
     ASSERT_FALSE(body_stalled);
+    ASSERT_FALSE(body_failed);
     ASSERT_TRUE(msg->message_data.len != 0);
 
     ASSERT_SUCCESS(testing_channel_push_read_message(peer->testing_channel, msg));

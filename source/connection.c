@@ -16,17 +16,19 @@
 #include <aws/common/string.h>
 #include <aws/http/request_response.h>
 #include <aws/io/channel_bootstrap.h>
+#include <aws/io/future.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
+#include <aws/io/socket_channel_handler.h>
 #include <aws/io/tls_channel_handler.h>
 
-#if _MSC_VER
+#ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #    pragma warning(disable : 4232) /* function pointer to dll symbol */
 #endif
 
 static struct aws_http_connection_system_vtable s_default_system_vtable = {
-    .new_socket_channel = aws_client_bootstrap_new_socket_channel,
+    .aws_client_bootstrap_new_socket_channel = aws_client_bootstrap_new_socket_channel,
 };
 
 static const struct aws_http_connection_system_vtable *s_system_vtable_ptr = &s_default_system_vtable;
@@ -57,6 +59,7 @@ struct aws_http_server {
     aws_http_server_on_incoming_connection_fn *on_incoming_connection;
     aws_http_server_on_destroy_fn *on_destroy_complete;
     struct aws_socket *socket;
+    struct aws_future_void *setup_future;
 
     /* Any thread may touch this data, but the lock must be held */
     struct {
@@ -192,9 +195,11 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
             break;
         case AWS_HTTP_VERSION_2:
             if (is_server) {
-                connection = aws_http_connection_new_http2_server(alloc, manual_window_management, http2_options);
+                connection = aws_http_connection_new_http2_server(
+                    alloc, manual_window_management, initial_window_size, http2_options);
             } else {
-                connection = aws_http_connection_new_http2_client(alloc, manual_window_management, http2_options);
+                connection = aws_http_connection_new_http2_client(
+                    alloc, manual_window_management, initial_window_size, http2_options);
             }
             break;
         default:
@@ -366,6 +371,16 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
     return connection->channel_slot->channel;
 }
 
+const struct aws_socket_endpoint *aws_http_connection_get_remote_endpoint(
+    const struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    struct aws_channel *channel = connection->channel_slot->channel;
+    /* The first slot for an HTTP connection is always socket */
+    struct aws_channel_slot *socket_slot = aws_channel_get_first_slot(channel);
+    const struct aws_socket *socket = aws_socket_handler_get_socket(socket_slot->handler);
+    return &socket->remote_endpoint;
+}
+
 int aws_http_alpn_map_init(struct aws_allocator *allocator, struct aws_hash_table *map) {
     AWS_ASSERT(allocator);
     AWS_ASSERT(map);
@@ -495,7 +510,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
     if (put_err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
-            "%p: %s:%d: Failed to store connection object, error %d (%s).",
+            "%p: %s:%u: Failed to store connection object, error %d (%s).",
             (void *)server,
             server->socket->local_endpoint.address,
             server->socket->local_endpoint.port,
@@ -508,7 +523,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
     /* Tell user of successful connection. */
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
-        "id=%p: " PRInSTR " server connection established at %p %s:%d.",
+        "id=%p: " PRInSTR " server connection established at %p %s:%u.",
         (void *)connection,
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->http_version)),
         (void *)server,
@@ -565,6 +580,7 @@ static void s_http_server_clean_up(struct aws_http_server *server) {
     }
     aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
     aws_mutex_clean_up(&server->synced_data.lock);
+    aws_future_void_release(server->setup_future);
     aws_mem_release(server->alloc, server);
 }
 
@@ -610,6 +626,20 @@ static void s_server_bootstrap_on_server_listener_destroy(struct aws_server_boot
     s_http_server_clean_up(server);
 }
 
+/* the server listener has finished setup. We released the socket if error_code is not 0. */
+static void s_server_bootstrap_on_server_listener_setup(
+    struct aws_server_bootstrap *bootstrap,
+    int error_code,
+    void *user_data) {
+    (void)bootstrap;
+    struct aws_http_server *server = user_data;
+    if (error_code) {
+        aws_future_void_set_error(server->setup_future, error_code);
+    } else {
+        aws_future_void_set_result(server->setup_future);
+    }
+}
+
 struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options) {
     aws_http_fatal_assert_library_initialized();
 
@@ -643,7 +673,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     if (err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
-        goto mutex_error;
+        goto server_error;
     }
     err = aws_hash_table_init(
         &server->synced_data.channel_to_connection_map, server->alloc, 16, aws_hash_ptr, aws_ptr_eq, NULL, NULL);
@@ -653,13 +683,15 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             "static: Cannot create server, error %d (%s).",
             aws_last_error(),
             aws_error_name(aws_last_error()));
-        goto hash_table_error;
+        goto server_error;
     }
     /* Protect against callbacks firing before server->socket is set */
     s_server_lock_synced_data(server);
     if (options->tls_options) {
         server->is_using_tls = true;
     }
+
+    server->setup_future = aws_future_void_new(options->allocator);
 
     struct aws_server_socket_channel_bootstrap_options bootstrap_options = {
         .enable_read_back_pressure = options->manual_window_management,
@@ -669,40 +701,51 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
         .incoming_callback = s_server_bootstrap_on_accept_channel_setup,
         .shutdown_callback = s_server_bootstrap_on_accept_channel_shutdown,
         .destroy_callback = s_server_bootstrap_on_server_listener_destroy,
+        .setup_callback = s_server_bootstrap_on_server_listener_setup,
         .host_name = options->endpoint->address,
         .port = options->endpoint->port,
         .user_data = server,
     };
 
-    server->socket = aws_server_bootstrap_new_socket_listener(&bootstrap_options);
+    int listen_error = AWS_OP_SUCCESS;
 
+    /*
+     * WARNING & TODO!!!!
+     * aws_server_bootstrap_new_socket_listener has async callback, we would block here waiting for
+     * setup complete. aws-c-http library need to be updated with a proper async API.
+     */
+    server->socket = aws_server_bootstrap_new_socket_listener(&bootstrap_options);
+    // if server setup properly, waiting for setup callback
+    if (server->socket) {
+        aws_future_void_wait(server->setup_future, UINT64_MAX /*timeout*/);
+        listen_error = aws_future_void_get_error(server->setup_future);
+    } else {
+        listen_error = aws_last_error();
+    }
     s_server_unlock_synced_data(server);
 
-    if (!server->socket) {
+    if (listen_error) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
             "static: Failed creating new socket listener, error %d (%s). Cannot create server.",
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
+            listen_error,
+            aws_error_name(listen_error));
 
-        goto socket_error;
+        aws_raise_error(listen_error);
+        goto server_error;
     }
 
     AWS_LOGF_INFO(
         AWS_LS_HTTP_SERVER,
-        "%p %s:%d: Server setup complete, listening for incoming connections.",
+        "%p %s:%u: Server setup complete, listening for incoming connections.",
         (void *)server,
         server->socket->local_endpoint.address,
         server->socket->local_endpoint.port);
 
     return server;
 
-socket_error:
-    aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
-hash_table_error:
-    aws_mutex_clean_up(&server->synced_data.lock);
-mutex_error:
-    aws_mem_release(server->alloc, server);
+server_error:
+    s_http_server_clean_up(server);
     return NULL;
 }
 
@@ -740,7 +783,7 @@ void aws_http_server_release(struct aws_http_server *server) {
      * s_server_bootstrap_on_server_listener_destroy will be invoked, clean up of the server will be there */
     AWS_LOGF_INFO(
         AWS_LS_HTTP_SERVER,
-        "%p %s:%d: Shutting down the server.",
+        "%p %s:%u: Shutting down the server.",
         (void *)server,
         server->socket->local_endpoint.address,
         server->socket->local_endpoint.port);
@@ -749,6 +792,12 @@ void aws_http_server_release(struct aws_http_server *server) {
 
     /* wait for connections to finish shutting down
      * clean up will be called from eventloop */
+}
+
+const struct aws_socket_endpoint *aws_http_server_get_listener_endpoint(const struct aws_http_server *server) {
+    AWS_FATAL_ASSERT(server);
+
+    return &server->socket->local_endpoint;
 }
 
 /* At this point, the channel bootstrapper has established a connection to the server and set up a channel.
@@ -821,6 +870,8 @@ static void s_client_bootstrap_on_channel_setup(
     }
 
     http_bootstrap->connection->proxy_request_transform = http_bootstrap->proxy_request_transform;
+    http_bootstrap->connection->client_data->response_first_byte_timeout_ms =
+        http_bootstrap->response_first_byte_timeout_ms;
 
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
@@ -885,7 +936,7 @@ static void s_client_bootstrap_on_channel_shutdown(
     aws_http_client_bootstrap_destroy(http_bootstrap);
 }
 
-static int s_validate_http_client_connection_options(const struct aws_http_client_connection_options *options) {
+int s_validate_http_client_connection_options(const struct aws_http_client_connection_options *options) {
     if (options->self_size == 0) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, self size not initialized");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -912,7 +963,7 @@ static int s_validate_http_client_connection_options(const struct aws_http_clien
     }
 
     /* http2_options cannot be NULL here, calling function adds them if they were missing */
-    if (options->http2_options->num_initial_settings > 0 && options->http2_options->initial_settings_array) {
+    if (options->http2_options->num_initial_settings > 0 && !options->http2_options->initial_settings_array) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "static: Invalid connection options, h2 settings count is non-zero but settings array is null");
@@ -921,6 +972,11 @@ static int s_validate_http_client_connection_options(const struct aws_http_clien
 
     if (options->monitoring_options && !aws_http_connection_monitoring_options_is_valid(options->monitoring_options)) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, invalid monitoring options");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (options->prior_knowledge_http2 && options->tls_options) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: HTTP/2 prior knowledge only works with cleartext TCP.");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
@@ -962,6 +1018,15 @@ int aws_http_alpn_map_init_copy(
     struct aws_allocator *allocator,
     struct aws_hash_table *dest,
     struct aws_hash_table *src) {
+    if (!src) {
+        AWS_ZERO_STRUCT(*dest);
+        return AWS_OP_SUCCESS;
+    }
+    if (!src->p_impl) {
+        AWS_ZERO_STRUCT(*dest);
+        return AWS_OP_SUCCESS;
+    }
+
     if (aws_http_alpn_map_init(allocator, dest)) {
         return AWS_OP_ERR;
     }
@@ -996,11 +1061,6 @@ int aws_http_client_connect_internal(
 
     /* make copy of options, and add defaults for missing optional structs */
     struct aws_http_client_connection_options options = *orig_options;
-    if (options.prior_knowledge_http2 && options.tls_options) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: HTTP/2 prior knowledge only works with cleartext TCP.");
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-    }
-
     struct aws_http1_connection_options default_http1_options;
     AWS_ZERO_STRUCT(default_http1_options);
     if (options.http1_options == NULL) {
@@ -1051,6 +1111,7 @@ int aws_http_client_connect_internal(
     http_bootstrap->proxy_request_transform = proxy_request_transform;
     http_bootstrap->http1_options = *options.http1_options;
     http_bootstrap->http2_options = *options.http2_options;
+    http_bootstrap->response_first_byte_timeout_ms = options.response_first_byte_timeout_ms;
 
     /* keep a copy of the settings array if it's not NULL */
     if (options.http2_options->num_initial_settings > 0) {
@@ -1074,9 +1135,9 @@ int aws_http_client_connect_internal(
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,
-        "static: attempting to initialize a new client channel to %s:%d",
+        "static: attempting to initialize a new client channel to %s:%u",
         aws_string_c_str(host_name),
-        (int)options.port);
+        options.port);
 
     struct aws_socket_channel_bootstrap_options channel_options = {
         .bootstrap = options.bootstrap,
@@ -1089,9 +1150,10 @@ int aws_http_client_connect_internal(
         .enable_read_back_pressure = options.manual_window_management,
         .user_data = http_bootstrap,
         .requested_event_loop = options.requested_event_loop,
+        .host_resolution_override_config = options.host_resolution_config,
     };
 
-    err = s_system_vtable_ptr->new_socket_channel(&channel_options);
+    err = s_system_vtable_ptr->aws_client_bootstrap_new_socket_channel(&channel_options);
 
     if (err) {
         AWS_LOGF_ERROR(

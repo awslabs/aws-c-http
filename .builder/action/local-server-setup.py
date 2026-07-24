@@ -1,0 +1,51 @@
+"""
+Setup local server for tests
+"""
+
+import Builder
+
+import os
+import sys
+import subprocess
+import atexit
+
+
+class LocalServerSetup(Builder.Action):
+    """
+    Set up this machine for running the local h2 server test.
+    To run the local server related test, use `--cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON` from builder.
+    Not running local server tests for every CI as it takes a while.
+
+    This action should be run in the 'pre_build_steps' or 'build_steps' stage.
+    """
+
+    def run(self, env):
+        if not env.project.needs_tests(env):
+            print("Skipping local server setup because tests disabled for project")
+            return
+
+        self.env = env
+        python_path = sys.executable
+        # Install dependency for mock server.
+        # Okay to fail, and if it fails, you will know when you enable the localhost tests.
+        # We don't need it to succeed on every platform we have.
+        result = self.env.shell.exec(python_path,
+                                     '-m', 'pip', 'install', 'h11', 'h2', 'trio')
+        if result.returncode != 0:
+            print(
+                "Could not install python HTTP/2 server." +
+                " The localhost integration tests will fail if you run them.", file=sys.stderr)
+            return
+
+        base_dir = os.path.dirname(os.path.realpath(__file__))
+        dir = os.path.join(base_dir, "..", "..", "tests", "mock_server")
+        os.chdir(dir)
+
+        p_server = subprocess.Popen([python_path, "h2tls_mock_server.py"])
+        p_non_tls_server = subprocess.Popen([python_path, "h2non_tls_server.py"])
+        p_h11_server = subprocess.Popen([python_path, "h11mock_server.py"])
+
+        @atexit.register
+        def close_local_server():
+            p_server.terminate()
+            p_non_tls_server.terminate()

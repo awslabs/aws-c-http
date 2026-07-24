@@ -7,12 +7,14 @@
 
 #include <aws/http/http.h>
 
+AWS_PUSH_SANE_WARNING_LEVEL
+
 struct aws_http_header;
 struct aws_http_message;
 
 /* TODO: Document lifetime stuff */
 /* TODO: Document CLOSE frame behavior (when auto-sent during close, when auto-closed) */
-/* TODO: Document auto-pong behavior */
+/* TODO: Accept payload as aws_input_stream */
 
 /**
  * A websocket connection.
@@ -37,27 +39,35 @@ enum aws_websocket_opcode {
 #define AWS_WEBSOCKET_CLOSE_TIMEOUT 1000000000 // nanos -> 1 sec
 
 /**
- * Called when websocket setup is complete.
- * An error_code of zero indicates that setup was completely successful.
- * Called exactly once on the websocket's event-loop thread.
+ * Data passed to the websocket on_connection_setup callback.
  *
- * websocket: if successful, a valid pointer to the websocket, otherwise NULL.
- * error_code: the operation was completely successful if this value is zero.
- * handshake_response_status: The response status code of the HTTP handshake, 101 if successful,
- *                            -1 if the connection failed before a response was received.
- * handshake_response_header_array: Headers from the HTTP handshake response.
- *                            May be NULL if num_handshake_response_headers is 0.
- *                            Copy if necessary, this memory becomes invalid once the callback completes.
- * num_handshake_response_headers: Number of entries in handshake_response_header_array.
- *                            May be 0 if the response did not complete, or was invalid.
+ * An error_code of zero indicates that setup was completely successful.
+ * You own the websocket pointer now and must call aws_websocket_release() when you are done with it.
+ * You can inspect the response headers, if you're interested.
+ *
+ * A non-zero error_code indicates that setup failed.
+ * The websocket pointer will be NULL.
+ * If the server sent a response, you can inspect its status-code, headers, and body,
+ * but this data will NULL if setup failed before a full response could be received.
+ * If you wish to persist data from the response make a deep copy.
+ * The response data becomes invalid once the callback completes.
  */
-typedef void(aws_websocket_on_connection_setup_fn)(
-    struct aws_websocket *websocket,
-    int error_code,
-    int handshake_response_status,
-    const struct aws_http_header *handshake_response_header_array,
-    size_t num_handshake_response_headers,
-    void *user_data);
+struct aws_websocket_on_connection_setup_data {
+    int error_code;
+    struct aws_websocket *websocket;
+    const int *handshake_response_status;
+    const struct aws_http_header *handshake_response_header_array;
+    size_t num_handshake_response_headers;
+    const struct aws_byte_cursor *handshake_response_body;
+};
+
+/**
+ * Called when websocket setup is complete.
+ * Called exactly once on the websocket's event-loop thread.
+ * See `aws_websocket_on_connection_setup_data`.
+ */
+typedef void(
+    aws_websocket_on_connection_setup_fn)(const struct aws_websocket_on_connection_setup_data *setup, void *user_data);
 
 /**
  * Called when the websocket has finished shutting down.
@@ -74,7 +84,6 @@ struct aws_websocket_incoming_frame {
     uint64_t payload_length;
     uint8_t opcode;
     bool fin;
-    bool rsv[3];
 };
 
 /**
@@ -96,6 +105,17 @@ typedef bool(aws_websocket_on_incoming_frame_begin_fn)(
  * Invoked 0 or more times on the websocket's event-loop thread.
  * Payload data will not be valid after this call, so copy if necessary.
  * The payload data is always unmasked at this point.
+ *
+ * NOTE: If you created the websocket with `manual_window_management` set true, you must maintain the read window.
+ * Whenever the read window reaches 0, you will stop receiving anything.
+ * The websocket's `initial_window_size` determines the starting size of the read window.
+ * The read window shrinks as you receive the payload from "data" frames (TEXT, BINARY, and CONTINUATION).
+ * Use aws_websocket_increment_read_window() to increment the window again and keep frames flowing.
+ * Maintain a larger window to keep up high throughput.
+ * You only need to worry about the payload from "data" frames.
+ * The websocket automatically increments the window to account for any
+ * other incoming bytes, including other parts of a frame (opcode, payload-length, etc)
+ * and the payload of other frame types (PING, PONG, CLOSE).
  *
  * Return true to proceed normally. If false is returned, the websocket will read no further data,
  * the frame will complete with an error-code, and the connection will close.
@@ -132,7 +152,7 @@ struct aws_websocket_client_connection_options {
 
     /**
      * Required.
-     * Must outlive the connection.
+     * The connection keeps the bootstrap alive via ref-counting.
      */
     struct aws_client_bootstrap *bootstrap;
 
@@ -144,8 +164,8 @@ struct aws_websocket_client_connection_options {
 
     /**
      * Optional.
-     * aws_websocket_client_connect() deep-copies all contents except the `aws_tls_ctx`,
-     * which must outlive the the connection.
+     * aws_websocket_client_connect() deep-copies all contents,
+     * and keeps the `aws_tls_ctx` alive via ref-counting.
      */
     const struct aws_tls_connection_options *tls_options;
 
@@ -165,11 +185,11 @@ struct aws_websocket_client_connection_options {
      * Optional.
      * Defaults to 443 if tls_options is present, 80 if it is not.
      */
-    uint16_t port;
+    uint32_t port;
 
     /**
      * Required.
-     * The request must outlive the handshake process (it will be safe to release in on_connection_setup())
+     * The request will be kept alive via ref-counting until the handshake completes.
      * Suggestion: create via aws_http_message_new_websocket_handshake_request()
      *
      * The method MUST be set to GET.
@@ -186,8 +206,8 @@ struct aws_websocket_client_connection_options {
     struct aws_http_message *handshake_request;
 
     /**
-     * Initial window size for websocket.
-     * Required.
+     * Initial size of the websocket's read window.
+     * Ignored unless `manual_window_management` is true.
      * Set to 0 to prevent any incoming websocket frames until aws_websocket_increment_read_window() is called.
      */
     size_t initial_window_size;
@@ -226,14 +246,14 @@ struct aws_websocket_client_connection_options {
 
     /**
      * Called repeatedly as payload data arrives.
-     * Required if `on_incoming_frame_begin` is set.
+     * Optional.
      * See `aws_websocket_on_incoming_frame_payload_fn`.
      */
     aws_websocket_on_incoming_frame_payload_fn *on_incoming_frame_payload;
 
     /**
      * Called when done processing an incoming frame.
-     * Required if `on_incoming_frame_begin` is set.
+     * Optional.
      * See `aws_websocket_on_incoming_frame_complete_fn`.
      */
     aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
@@ -241,11 +261,17 @@ struct aws_websocket_client_connection_options {
     /**
      * Set to true to manually manage the read window size.
      *
-     * If this is false, the connection will maintain a constant window size.
+     * If this is false, no backpressure is applied and frames will arrive as fast as possible.
      *
-     * If this is true, the caller must manually increment the window size using aws_websocket_increment_read_window().
-     * If the window is not incremented, it will shrink by the amount of payload data received. If the window size
-     * reaches 0, no further data will be received.
+     * If this is true, then whenever the read window reaches 0 you will stop receiving anything.
+     * The websocket's `initial_window_size` determines the starting size of the read window.
+     * The read window shrinks as you receive the payload from "data" frames (TEXT, BINARY, and CONTINUATION).
+     * Use aws_websocket_increment_read_window() to increment the window again and keep frames flowing.
+     * Maintain a larger window to keep up high throughput.
+     * You only need to worry about the payload from "data" frames.
+     * The websocket automatically increments the window to account for any
+     * other incoming bytes, including other parts of a frame (opcode, payload-length, etc)
+     * and the payload of other frame types (PING, PONG, CLOSE).
      */
     bool manual_window_management;
 
@@ -256,6 +282,12 @@ struct aws_websocket_client_connection_options {
      * a single thread.
      */
     struct aws_event_loop *requested_event_loop;
+
+    /**
+     * Optional
+     * Host resolution override that allows the user to override DNS behavior for this particular connection.
+     */
+    const struct aws_host_resolution_config *host_resolution_config;
 };
 
 /**
@@ -284,7 +316,7 @@ typedef void(
 /**
  * Options for sending a websocket frame.
  * This structure is copied immediately by aws_websocket_send().
- * For descriptions of opcode, fin, rsv, and payload_length see in RFC-6455 Section 5.2.
+ * For descriptions of opcode, fin, and payload_length see in RFC-6455 Section 5.2.
  */
 struct aws_websocket_send_frame_options {
     /**
@@ -321,18 +353,6 @@ struct aws_websocket_send_frame_options {
      * Indicates that this is the final fragment in a message. The first fragment MAY also be the final fragment.
      */
     bool fin;
-
-    /**
-     * If true, frame will be sent before those with normal priority.
-     * Useful for opcodes like PING and PONG where low latency is important.
-     * This feature may only be used with "control" opcodes, not "data" opcodes like BINARY and TEXT.
-     */
-    bool high_priority;
-
-    /**
-     * MUST be 0 unless an extension is negotiated that defines meanings for non-zero values.
-     */
-    bool rsv[3];
 };
 
 AWS_EXTERN_C_BEGIN
@@ -351,11 +371,21 @@ AWS_HTTP_API
 int aws_websocket_client_connect(const struct aws_websocket_client_connection_options *options);
 
 /**
+ * Increment the websocket's ref-count, preventing it from being destroyed.
+ * @return Always returns the same pointer that is passed in.
+ */
+AWS_HTTP_API
+struct aws_websocket *aws_websocket_acquire(struct aws_websocket *websocket);
+
+/**
+ * Decrement the websocket's ref-count.
+ * When the ref-count reaches zero, the connection will shut down, if it hasn't already.
  * Users must release the websocket when they are done with it.
  * The websocket's memory cannot be reclaimed until this is done.
- * If the websocket connection was not already shutting down, it will be shut down.
  * Callbacks may continue firing after this is called, with "shutdown" being the final callback.
  * This function may be called from any thread.
+ *
+ * It is safe to pass NULL, nothing will happen.
  */
 AWS_HTTP_API
 void aws_websocket_release(struct aws_websocket *websocket);
@@ -380,10 +410,21 @@ AWS_HTTP_API
 int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_websocket_send_frame_options *options);
 
 /**
- * Manually increment the read window.
- * The read window shrinks as payload data is received, and reading stops when its size reaches 0.
- * Note that the read window can also be controlled from the aws_websocket_on_incoming_frame_payload_fn(),
- * callback, by manipulating the `out_increment_window` argument.
+ * Manually increment the read window to keep frames flowing.
+ *
+ * If the websocket was created with `manual_window_management` set true,
+ * then whenever the read window reaches 0 you will stop receiving data.
+ * The websocket's `initial_window_size` determines the starting size of the read window.
+ * The read window shrinks as you receive the payload from "data" frames (TEXT, BINARY, and CONTINUATION).
+ * Use aws_websocket_increment_read_window() to increment the window again and keep frames flowing.
+ * Maintain a larger window to keep up high throughput.
+ * You only need to worry about the payload from "data" frames.
+ * The websocket automatically increments the window to account for any
+ * other incoming bytes, including other parts of a frame (opcode, payload-length, etc)
+ * and the payload of other frame types (PING, PONG, CLOSE).
+ *
+ * If the websocket was created with `manual_window_management` set false, this function does nothing.
+ *
  * This function may be called from any thread.
  */
 AWS_HTTP_API
@@ -446,5 +487,6 @@ struct aws_http_message *aws_http_message_new_websocket_handshake_request(
     struct aws_byte_cursor host);
 
 AWS_EXTERN_C_END
+AWS_POP_SANE_WARNING_LEVEL
 
 #endif /* AWS_HTTP_WEBSOCKET_H */

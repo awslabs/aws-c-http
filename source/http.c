@@ -12,7 +12,7 @@
 
 #include <ctype.h>
 
-#define AWS_DEFINE_ERROR_INFO_HTTP(CODE, STR) [(CODE)-0x0800] = AWS_DEFINE_ERROR_INFO(CODE, STR, "aws-c-http")
+#define AWS_DEFINE_ERROR_INFO_HTTP(CODE, STR) [(CODE) - 0x0800] = AWS_DEFINE_ERROR_INFO(CODE, STR, "aws-c-http")
 
 /* clang-format off */
 static struct aws_error_info s_errors[] = {
@@ -139,6 +139,27 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_STREAM_MANAGER_UNEXPECTED_HTTP_VERSION,
         "Stream acquisition failed because stream manager got an unexpected version of HTTP connection"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR,
+        "Websocket protocol rules violated by peer"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED,
+        "Manual write failed because manual writes are not enabled."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED,
+        "Manual write failed because manual writes are already completed."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT,
+        "Timed out waiting for first byte of HTTP response, after sending the full request."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUISITION_TIMEOUT,
+        "Connection Manager failed to acquire a connection within the defined timeout."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED,
+        "Max pending acquisitions reached"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_CANCELLED,
+        "In-flight HTTP-stream has been cancelled by user."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_REQUIRED_PSEUDO_HEADER_MISSING,
         "The required pseudo header is missing from the HTTP message."),
@@ -323,6 +344,8 @@ static void s_headers_init(struct aws_allocator *alloc) {
     s_header_enum_to_str[AWS_HTTP_HEADER_UPGRADE] = aws_byte_cursor_from_c_str("upgrade");
     s_header_enum_to_str[AWS_HTTP_HEADER_KEEP_ALIVE] = aws_byte_cursor_from_c_str("keep-alive");
     s_header_enum_to_str[AWS_HTTP_HEADER_PROXY_CONNECTION] = aws_byte_cursor_from_c_str("proxy-connection");
+    s_header_enum_to_str[AWS_HTTP_HEADER_SIGNING_SECURITY_TOKEN] = aws_byte_cursor_from_c_str("x-amz-security-token");
+    s_header_enum_to_str[AWS_HTTP_HEADER_SIGNING_S3SESSION_TOKEN] = aws_byte_cursor_from_c_str("x-amz-s3session-token");
 
     s_init_str_to_enum_hash_table(
         &s_header_str_to_enum,
@@ -530,7 +553,7 @@ void aws_http_library_clean_up(void) {
     aws_io_library_clean_up();
 }
 
-void aws_http_fatal_assert_library_initialized() {
+void aws_http_fatal_assert_library_initialized(void) {
     if (!s_library_initialized) {
         AWS_LOGF_FATAL(
             AWS_LS_HTTP_GENERAL,
@@ -538,6 +561,19 @@ void aws_http_fatal_assert_library_initialized() {
 
         AWS_FATAL_ASSERT(s_library_initialized);
     }
+}
+
+/*
+ * This might need to get updated with more http error codes based on consensus.
+ */
+bool aws_http_error_code_is_retryable(int error_code) {
+    switch (error_code) {
+        case AWS_ERROR_HTTP_CONNECTION_CLOSED:
+        case AWS_ERROR_HTTP_SERVER_CLOSED:
+        case AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE:
+            return true;
+    }
+    return aws_io_error_code_is_retryable(error_code);
 }
 
 const struct aws_byte_cursor aws_http_method_get = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET");

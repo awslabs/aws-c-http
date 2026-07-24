@@ -39,6 +39,8 @@ struct aws_h1_decoder {
     bool is_done;
     bool body_headers_ignored;
     bool body_headers_forbidden;
+    bool content_length_received;
+
     enum aws_http_header_block header_block;
     const void *logging_id;
 
@@ -89,40 +91,6 @@ static bool s_scan_for_crlf(struct aws_h1_decoder *decoder, struct aws_byte_curs
     return false;
 }
 
-static int s_cat(struct aws_h1_decoder *decoder, struct aws_byte_cursor to_append) {
-    struct aws_byte_buf *buffer = &decoder->scratch_space;
-    int op = AWS_OP_ERR;
-    if (buffer->buffer != NULL) {
-        if ((aws_byte_buf_append(buffer, &to_append) == AWS_OP_SUCCESS)) {
-            op = AWS_OP_SUCCESS;
-        }
-    }
-
-    if (op != AWS_OP_SUCCESS) {
-        size_t new_size = buffer->capacity ? buffer->capacity : 128;
-        do {
-            new_size <<= 1;      /* new_size *= 2 */
-            if (new_size == 0) { /* check for overflow */
-                return aws_raise_error(AWS_ERROR_OOM);
-            }
-        } while (new_size < (buffer->len + to_append.len));
-
-        uint8_t *new_data = aws_mem_acquire(buffer->allocator, new_size);
-
-        if (buffer->buffer != NULL) {
-            memcpy(new_data, buffer->buffer, buffer->len);
-        }
-
-        aws_mem_release(buffer->allocator, buffer->buffer);
-        buffer->capacity = new_size;
-        buffer->buffer = new_data;
-
-        return aws_byte_buf_append(buffer, &to_append);
-    }
-
-    return op;
-}
-
 /* This state consumes an entire line, then calls a linestate_fn to process the line. */
 static int s_state_getline(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input) {
     /* If preceding runs of this state failed to find CRLF, their data is stored in the scratch_space
@@ -137,8 +105,7 @@ static int s_state_getline(struct aws_h1_decoder *decoder, struct aws_byte_curso
 
     bool use_scratch = !found_crlf | has_prev_data;
     if (AWS_UNLIKELY(use_scratch)) {
-        int err = s_cat(decoder, line);
-        if (err) {
+        if (aws_byte_buf_append_dynamic(&decoder->scratch_space, &line)) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Internal buffer write failed with error code %d (%s)",
@@ -249,6 +216,7 @@ static void s_reset_state(struct aws_h1_decoder *decoder) {
     decoder->is_done = false;
     decoder->body_headers_ignored = false;
     decoder->body_headers_forbidden = false;
+    decoder->content_length_received = false;
     /* set to normal by default */
     decoder->header_block = AWS_HTTP_HEADER_BLOCK_MAIN;
 }
@@ -336,7 +304,7 @@ static int s_linestate_chunk_size(struct aws_h1_decoder *decoder, struct aws_byt
             decoder->logging_id,
             AWS_BYTE_CURSOR_PRI(input));
 
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     int err = aws_byte_cursor_utf8_parse_u64_hex(size, &decoder->chunk_size);
@@ -446,6 +414,14 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
 
     switch (header.name) {
         case AWS_HTTP_HEADER_CONTENT_LENGTH:
+            if (decoder->content_length_received) {
+                AWS_LOGF_ERROR(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Multiple incoming headers for content-length received. This is illegal.",
+                    decoder->logging_id);
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+            }
+
             if (decoder->transfer_encoding) {
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,
@@ -476,10 +452,11 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                 return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
             }
 
+            decoder->content_length_received = true;
             break;
 
         case AWS_HTTP_HEADER_TRANSFER_ENCODING: {
-            if (decoder->content_length) {
+            if (decoder->content_length_received) {
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,
                     "id=%p: Incoming headers for both content-length and transfer-encoding received. This is illegal.",
@@ -504,7 +481,23 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
             AWS_ZERO_STRUCT(split);
             while (aws_byte_cursor_next_split(&header.value_data, ',', &split)) {
                 struct aws_byte_cursor coding = aws_strutil_trim_http_whitespace(split);
-                int prev_flags = decoder->transfer_encoding;
+
+                /* A sender MUST NOT apply chunked more than once to a message body.
+                 * If any transfer coding other than chunked is applied to a request payload body, the sender MUST
+                 * apply chunked as the final transfer coding to ensure that the message is properly framed.
+                 * RFC-7230 3.3.1 */
+                if (decoder->transfer_encoding & AWS_HTTP_TRANSFER_ENCODING_CHUNKED) {
+                    AWS_LOGF_ERROR(
+                        AWS_LS_HTTP_STREAM,
+                        "id=%p: Incoming transfer-encoding header lists a coding after 'chunked', this is illegal.",
+                        decoder->logging_id);
+                    AWS_LOGF_DEBUG(
+                        AWS_LS_HTTP_STREAM,
+                        "id=%p: Misplaced coding is '" PRInSTR "'",
+                        decoder->logging_id,
+                        AWS_BYTE_CURSOR_PRI(coding));
+                    return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+                }
 
                 if (aws_string_eq_byte_cursor_ignore_case(s_transfer_coding_chunked, &coding)) {
                     decoder->transfer_encoding |= AWS_HTTP_TRANSFER_ENCODING_CHUNKED;
@@ -535,21 +528,11 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                         decoder->logging_id,
                         AWS_BYTE_CURSOR_PRI(coding));
                     return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-                }
-
-                /* If any transfer coding other than chunked is applied to a request payload body, the sender MUST
-                 * apply chunked as the final transfer coding to ensure that the message is properly framed.
-                 * RFC-7230 3.3.1 */
-                if ((prev_flags & AWS_HTTP_TRANSFER_ENCODING_CHUNKED) && (decoder->transfer_encoding != prev_flags)) {
+                } else {
                     AWS_LOGF_ERROR(
                         AWS_LS_HTTP_STREAM,
-                        "id=%p: Incoming transfer-encoding header lists a coding after 'chunked', this is illegal.",
+                        "id=%p: Incoming transfer-encoding header has invalid blank entry.",
                         decoder->logging_id);
-                    AWS_LOGF_DEBUG(
-                        AWS_LS_HTTP_STREAM,
-                        "id=%p: Misplaced coding is '" PRInSTR "'",
-                        decoder->logging_id,
-                        AWS_BYTE_CURSOR_PRI(coding));
                     return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
                 }
             }

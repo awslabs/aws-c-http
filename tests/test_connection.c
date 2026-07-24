@@ -10,19 +10,18 @@
 
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
-#include <aws/common/log_writer.h>
+#include <aws/common/environment.h>
+#include <aws/common/hash_table.h>
 #include <aws/common/logging.h>
 #include <aws/common/string.h>
 #include <aws/common/thread.h>
-#include <aws/common/uuid.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
-#include <aws/io/logging.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 #include <aws/testing/aws_test_harness.h>
 
-#if _MSC_VER
+#ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
@@ -44,6 +43,7 @@ struct tester_options {
     char *client_alpn_list;
     bool no_connection; /* don't connect server to client */
     bool pin_event_loop;
+    bool use_tcp; /* otherwise uses domain sockets */
 };
 
 /* Singleton used by tests in this file */
@@ -158,6 +158,21 @@ static void s_tester_on_server_connection_setup(
 done:
     AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
     aws_condition_variable_notify_one(&tester->wait_cvar);
+}
+
+bool s_is_apple_with_secure_transport(struct aws_allocator *allocator) {
+    (void)allocator;
+#ifdef __APPLE__
+    struct aws_string *use_non_fips_13 = aws_get_env_nonempty(allocator, "AWS_CRT_USE_NON_FIPS_TLS_13");
+    if (use_non_fips_13) {
+        aws_string_destroy(use_non_fips_13);
+        return false;
+    } else {
+        return true;
+    }
+#else
+    return false;
+#endif
 }
 
 static void s_tester_on_client_connection_setup(
@@ -276,14 +291,14 @@ static int s_tls_client_opt_tester_init(
 
 static int s_tls_server_opt_tester_init(struct tester *tester, const char *alpn_list) {
 
-#ifdef __APPLE__
-    struct aws_byte_cursor pwd_cur = aws_byte_cursor_from_c_str("1234");
-    ASSERT_SUCCESS(aws_tls_ctx_options_init_server_pkcs12_from_path(
-        &tester->server_ctx_options, tester->alloc, "unittests.p12", &pwd_cur));
-#else
-    ASSERT_SUCCESS(aws_tls_ctx_options_init_default_server_from_path(
-        &tester->server_ctx_options, tester->alloc, "unittests.crt", "unittests.key"));
-#endif /* __APPLE__ */
+    if (s_is_apple_with_secure_transport(tester->alloc)) {
+        struct aws_byte_cursor pwd_cur = aws_byte_cursor_from_c_str("1234");
+        ASSERT_SUCCESS(aws_tls_ctx_options_init_server_pkcs12_from_path(
+            &tester->server_ctx_options, tester->alloc, "unittests.p12", &pwd_cur));
+    } else {
+        ASSERT_SUCCESS(aws_tls_ctx_options_init_default_server_from_path(
+            &tester->server_ctx_options, tester->alloc, "unittests.crt", "unittests.key"));
+    }
     aws_tls_ctx_options_set_alpn_list(&tester->server_ctx_options, alpn_list);
     tester->server_ctx = aws_tls_server_ctx_new(tester->alloc, &tester->server_ctx_options);
     ASSERT_NOT_NULL(tester->server_ctx);
@@ -336,22 +351,23 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 
     struct aws_socket_options socket_options = {
         .type = AWS_SOCKET_STREAM,
-        .domain = AWS_SOCKET_LOCAL,
+        .domain = options->use_tcp ? AWS_SOCKET_IPV4 : AWS_SOCKET_LOCAL,
         .connect_timeout_ms =
             (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
     };
     tester->socket_options = socket_options;
-    /* Generate random address for endpoint */
-    struct aws_uuid uuid;
-    ASSERT_SUCCESS(aws_uuid_init(&uuid));
-    char uuid_str[AWS_UUID_STR_LEN];
-    struct aws_byte_buf uuid_buf = aws_byte_buf_from_empty_array(uuid_str, sizeof(uuid_str));
-    ASSERT_SUCCESS(aws_uuid_to_str(&uuid, &uuid_buf));
+
     struct aws_socket_endpoint endpoint;
     AWS_ZERO_STRUCT(endpoint);
 
-    snprintf(endpoint.address, sizeof(endpoint.address), LOCAL_SOCK_TEST_FORMAT, uuid_str);
+    if (options->use_tcp) {
+        snprintf(endpoint.address, sizeof(endpoint.address), "127.0.0.1");
+    } else {
+        aws_socket_endpoint_init_local_address_for_test(&endpoint);
+    }
+
     tester->endpoint = endpoint;
+
     /* Create server (listening socket) */
     struct aws_http_server_options server_options = AWS_HTTP_SERVER_OPTIONS_INIT;
     server_options.allocator = tester->alloc;
@@ -369,6 +385,14 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 
     tester->server = aws_http_server_new(&server_options);
     ASSERT_NOT_NULL(tester->server);
+
+    /*
+     * localhost server binds to any port, so let's get the final listener endpoint whether or not we're making
+     * connections to it.
+     */
+    if (options->use_tcp) {
+        tester->endpoint = *aws_http_server_get_listener_endpoint(tester->server);
+    }
 
     /* If test doesn't need a connection, we're done setting up. */
     if (options->no_connection) {
@@ -448,6 +472,20 @@ static int s_test_server_new_destroy(struct aws_allocator *allocator, void *ctx)
 }
 AWS_TEST_CASE(server_new_destroy, s_test_server_new_destroy);
 
+static int s_test_server_new_destroy_tcp(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    struct tester_options options = {.alloc = allocator, .no_connection = true, .use_tcp = true};
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, &options));
+
+    const struct aws_socket_endpoint *listener_endpoint = aws_http_server_get_listener_endpoint(tester.server);
+    ASSERT_TRUE(listener_endpoint->port > 0);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(server_new_destroy_tcp, s_test_server_new_destroy_tcp);
+
 void release_all_client_connections(struct tester *tester) {
     for (int i = 0; i < tester->client_connection_num; i++) {
         aws_http_connection_release(tester->client_connections[i]);
@@ -484,9 +522,6 @@ AWS_TEST_CASE(connection_setup_shutdown, s_test_connection_setup_shutdown);
 static int s_test_connection_setup_shutdown_tls(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-#ifdef __APPLE__ /* Something is wrong with APPLE */
-    return AWS_OP_SUCCESS;
-#endif
     struct tester_options options = {
         .alloc = allocator,
         .tls = true,
@@ -661,11 +696,11 @@ static int s_test_connection_customized_alpn(struct aws_allocator *allocator, vo
     tester.wait_server_connection_num = 1;
     ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_setup_pred));
 
-#ifndef __APPLE__ /* Server side ALPN doesn't work for MacOS */
-    /* Assert that we have the negotiated protocol and the expected version */
-    ASSERT_INT_EQUALS(tester.connection_version, expected_version);
-    ASSERT_TRUE(aws_byte_buf_eq_c_str(&tester.negotiated_protocol, customized_alpn_string));
-#endif
+    if (!s_is_apple_with_secure_transport(tester.alloc)) {
+        /* Assert that we have the negotiated protocol and the expected version */
+        ASSERT_INT_EQUALS(tester.connection_version, expected_version);
+        ASSERT_TRUE(aws_byte_buf_eq_c_str(&tester.negotiated_protocol, customized_alpn_string));
+    }
     /* clean up */
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
@@ -716,14 +751,14 @@ static int s_test_connection_customized_alpn_error_with_unknown_return_string(
     tester.wait_client_connection_num = 1;
     tester.wait_server_connection_num = 1;
 
-#ifndef __APPLE__ /* Server side ALPN doesn't work for MacOS */
-    ASSERT_FAILS(s_tester_wait(&tester, s_tester_connection_setup_pred));
-    /* Assert that we have the negotiated protocol and error returned from callback */
-    ASSERT_TRUE(aws_byte_buf_eq_c_str(&tester.negotiated_protocol, customized_alpn_string));
-    ASSERT_INT_EQUALS(aws_last_error(), AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
-#else
-    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_setup_pred));
-#endif
+    if (!s_is_apple_with_secure_transport(tester.alloc)) {
+        ASSERT_FAILS(s_tester_wait(&tester, s_tester_connection_setup_pred));
+        /* Assert that we have the negotiated protocol and error returned from callback */
+        ASSERT_TRUE(aws_byte_buf_eq_c_str(&tester.negotiated_protocol, customized_alpn_string));
+        ASSERT_INT_EQUALS(aws_last_error(), AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
+    } else {
+        ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_setup_pred));
+    }
     /* clean up */
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
