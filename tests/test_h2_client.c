@@ -3482,7 +3482,7 @@ TEST_CASE(h2_client_max_header_list_size_setting_is_enforced) {
      * though the wire payload here is under 150 bytes. */
     const size_t cookie_len = 100;
     const size_t num_refs = 100;
-    uint8_t cookie_value[cookie_len];
+    uint8_t cookie_value[100];
     memset(cookie_value, 'A', cookie_len);
 
     struct aws_byte_buf raw;
