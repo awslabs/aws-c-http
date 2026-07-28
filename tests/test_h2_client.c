@@ -3482,8 +3482,6 @@ TEST_CASE(h2_client_max_header_list_size_setting_is_enforced) {
      * though the wire payload here is under 150 bytes. */
     const size_t cookie_len = 100;
     const size_t num_refs = 100;
-    uint8_t cookie_value[100];
-    memset(cookie_value, 'A', cookie_len);
 
     struct aws_byte_buf raw;
     ASSERT_SUCCESS(aws_byte_buf_init(&raw, allocator, 256 + num_refs));
@@ -3498,7 +3496,7 @@ TEST_CASE(h2_client_max_header_list_size_setting_is_enforced) {
     ASSERT_TRUE(aws_byte_buf_write_u8(&raw, 0x40 | 32)); /* literal w/ incremental indexing, name idx 32 "cookie" */
     ASSERT_TRUE(cookie_len < 127);                       /* fits in a single-byte HPACK string-length prefix */
     ASSERT_TRUE(aws_byte_buf_write_u8(&raw, (uint8_t)cookie_len));
-    ASSERT_TRUE(aws_byte_buf_write(&raw, cookie_value, cookie_len));
+    ASSERT_TRUE(aws_byte_buf_write_u8_n(&raw, 'A', cookie_len));
 
     size_t headers_payload_len = raw.len - header_frame_pos - 9 /*frame header*/;
     raw.buffer[header_frame_pos + 0] = (uint8_t)((headers_payload_len >> 16) & 0xFF);
