@@ -480,6 +480,7 @@ add_test_case(h2_client_conn_err_invalid_last_stream_id_goaway)
 
 # TODO add_test_case(h2_client_send_goaway_with_push_promises) id of 1st should be in GOAWAY 2nd should be ignored
 add_test_case(h2_client_change_settings_succeed)
+add_test_case(h2_client_max_header_list_size_setting_is_enforced)
 add_test_case(h2_client_change_settings_failed_no_ack_received)
 add_test_case(h2_client_manual_window_management_disabled_auto_window_update)
 add_test_case(h2_client_manual_window_management_invalid_initial_window_size)

@@ -3431,6 +3431,102 @@ static void s_on_completed(struct aws_http_connection *connection, int error_cod
     *callback_error_code = error_code;
 }
 
+/* The user API already allows configuring SETTINGS_MAX_HEADER_LIST_SIZE via
+ * aws_http2_connection_change_settings(). Once the peer ACKs that change, a header-block whose
+ * decoded size (RFC-7541 6.5.1: name.len + value.len + 32 per header field) exceeds the configured
+ * value must be rejected. This uses one "cookie" header field, then 100 single-byte HPACK indexed
+ * references to that same dynamic-table entry (each one re-expanding the full stored value), to
+ * cheaply exceed a small configured limit without needing a large wire payload. */
+TEST_CASE(h2_client_max_header_list_size_setting_is_enforced) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* client sent the preface and first settings */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    /* Use the public API to configure a small SETTINGS_MAX_HEADER_LIST_SIZE */
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE, .value = 8192},
+    };
+    int callback_error_code = INT32_MAX;
+    ASSERT_SUCCESS(aws_http2_connection_change_settings(
+        s_tester.connection, settings_array, AWS_ARRAY_SIZE(settings_array), s_on_completed, &callback_error_code));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* fake peer sends connection preface, then ACKs the client's initial settings and the settings change */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    struct aws_h2_frame *ack_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true /*ack*/);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, ack_frame));
+    ack_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true /*ack*/);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, ack_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* confirm the change-settings callback fired, so the limit is now active */
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_error_code);
+
+    /* send a request to open a stream */
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
+
+    /* Hand-craft a HEADERS frame + CONTINUATION frame: one small literal "cookie" header (stored at
+     * dynamic-table index 62), then 100 single-byte indexed references (0xBE) back to that entry.
+     * Decoded size: 101 * (6 + 100-byte-value + 32) =~ 13800 bytes, over the 8192 byte limit, even
+     * though the wire payload here is under 150 bytes. */
+    const size_t cookie_len = 100;
+    const size_t num_refs = 100;
+    uint8_t cookie_value[cookie_len];
+    memset(cookie_value, 'A', cookie_len);
+
+    struct aws_byte_buf raw;
+    ASSERT_SUCCESS(aws_byte_buf_init(&raw, allocator, 256 + num_refs));
+
+    size_t header_frame_pos = raw.len;
+    ASSERT_TRUE(aws_byte_buf_write_be24(&raw, 0 /*patched below*/));
+    ASSERT_TRUE(aws_byte_buf_write_u8(&raw, AWS_H2_FRAME_T_HEADERS));
+    ASSERT_TRUE(aws_byte_buf_write_u8(&raw, 0 /* no END_HEADERS */));
+    ASSERT_TRUE(aws_byte_buf_write_be32(&raw, stream_id));
+
+    ASSERT_TRUE(aws_byte_buf_write_u8(&raw, 0x88));      /* ":status: 200" - indexed */
+    ASSERT_TRUE(aws_byte_buf_write_u8(&raw, 0x40 | 32)); /* literal w/ incremental indexing, name idx 32 "cookie" */
+    ASSERT_TRUE(cookie_len < 127);                       /* fits in a single-byte HPACK string-length prefix */
+    ASSERT_TRUE(aws_byte_buf_write_u8(&raw, (uint8_t)cookie_len));
+    ASSERT_TRUE(aws_byte_buf_write(&raw, cookie_value, cookie_len));
+
+    size_t headers_payload_len = raw.len - header_frame_pos - 9 /*frame header*/;
+    raw.buffer[header_frame_pos + 0] = (uint8_t)((headers_payload_len >> 16) & 0xFF);
+    raw.buffer[header_frame_pos + 1] = (uint8_t)((headers_payload_len >> 8) & 0xFF);
+    raw.buffer[header_frame_pos + 2] = (uint8_t)(headers_payload_len & 0xFF);
+
+    ASSERT_TRUE(aws_byte_buf_write_be24(&raw, (uint32_t)num_refs));
+    ASSERT_TRUE(aws_byte_buf_write_u8(&raw, AWS_H2_FRAME_T_CONTINUATION));
+    ASSERT_TRUE(aws_byte_buf_write_u8(&raw, AWS_H2_FRAME_F_END_HEADERS));
+    ASSERT_TRUE(aws_byte_buf_write_be32(&raw, stream_id));
+    ASSERT_TRUE(aws_byte_buf_write_u8_n(&raw, 0xBE, num_refs));
+
+    ASSERT_SUCCESS(testing_channel_push_read_data(&s_tester.testing_channel, aws_byte_cursor_from_buf(&raw)));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* Desired: decoded header-list size exceeds the configured 8192 byte limit, so the connection
+     * is closed with an error, instead of the stream completing successfully. */
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_INT_EQUALS(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+
+    /* clean up */
+    aws_byte_buf_clean_up(&raw);
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
 /* Test the user API for changing HTTP/2 connection settings */
 TEST_CASE(h2_client_change_settings_succeed) {
 
