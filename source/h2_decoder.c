@@ -30,6 +30,13 @@ static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 /* initial size for cookie buffer, buffer will grow if needed */
 static const size_t s_decoder_cookie_buffer_initial_size = 512;
 
+/* RFC-7541 6.5.1: fixed per-field overhead added to name.len + value.len when accounting a
+ * decoded header field against SETTINGS_MAX_HEADER_LIST_SIZE. This value is mandated by the
+ * spec, not implementation-chosen: it approximates the bookkeeping cost (pointers, length
+ * fields, allocation overhead) of storing one header field, so that a header-list cannot evade
+ * the size limit by consisting of many fields with short or empty names/values. */
+static const size_t s_header_field_size_overhead = 32;
+
 #define DECODER_LOGF(level, decoder, text, ...)                                                                        \
     AWS_LOGF_##level(AWS_LS_HTTP_DECODER, "id=%p " text, (decoder)->logging_id, __VA_ARGS__)
 #define DECODER_LOG(level, decoder, text) DECODER_LOGF(level, decoder, "%s", text)
@@ -1257,7 +1264,7 @@ static struct aws_h2err s_process_header_field(
     /* RFC-7541 6.5.1 header-list-size accounting, applied to every field (including cookie fields
      * and fields reconstructed from an indexed reference), so a header-list cannot be inflated past
      * the configured budget regardless of how cheaply it was encoded on the wire. */
-    current_block->header_list_size += header_field->name.len + header_field->value.len + 32;
+    current_block->header_list_size += header_field->name.len + header_field->value.len + s_header_field_size_overhead;
     if (current_block->header_list_size > decoder->settings.max_header_list_size) {
         DECODER_LOG(ERROR, decoder, "Decoded header-list size exceeds SETTINGS_MAX_HEADER_LIST_SIZE");
         return aws_h2err_from_h2_code(AWS_HTTP2_ERR_ENHANCE_YOUR_CALM);
