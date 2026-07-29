@@ -3431,6 +3431,371 @@ static void s_on_completed(struct aws_http_connection *connection, int error_cod
     *callback_error_code = error_code;
 }
 
+/* Write an HPACK string-length as a 7-bit-prefix integer (RFC-7541 5.1). Handles any length,
+ * not just ones that fit in the 1-byte fast path (unlike the encoding used elsewhere in this
+ * file, which only ever writes short cookie values). */
+static bool s_write_hpack_length(struct aws_byte_buf *buf, size_t length) {
+    if (length < 127) {
+        return aws_byte_buf_write_u8(buf, (uint8_t)length);
+    }
+    if (!aws_byte_buf_write_u8(buf, 127)) {
+        return false;
+    }
+    size_t remaining = length - 127;
+    while (remaining >= 128) {
+        if (!aws_byte_buf_write_u8(buf, (uint8_t)((remaining & 0x7F) | 0x80))) {
+            return false;
+        }
+        remaining >>= 7;
+    }
+    return aws_byte_buf_write_u8(buf, (uint8_t)remaining);
+}
+
+/* Builds a HEADERS frame (no END_HEADERS) followed by a single CONTINUATION frame (with
+ * END_HEADERS): the HEADERS frame stores one literal "user-agent" header of length value_len into
+ * the HPACK dynamic table (index 62), and the CONTINUATION frame contains num_refs single-byte
+ * indexed references (0xBE) back to that same entry. Each reference costs the decoder the full
+ * value_len again, so decoded header-list size grows far faster than wire size. Per header
+ * field, decoded size is 10 (name "user-agent") + value_len (value) + 32 (RFC-9113 6.5.2
+ * overhead), so the whole payload's decoded size is (1 + num_refs) times that.
+ *
+ * Deliberately uses "user-agent" rather than "cookie": aws-c-http concatenates all "cookie"
+ * occurrences in a header-block into a single merged field, only delivered to the app once
+ * END_HEADERS is reached (see the cookie-specific branch in s_process_header_field). That merge
+ * behavior would make delivered-header-count useless as a proxy for "how many replays were
+ * processed" - tests that need to observe per-field delivery (or count deliveries before an
+ * abort) need a header name with no such special-casing. The size-accounting check this test
+ * suite targets runs before that cookie-specific branch, so it applies identically regardless of
+ * header name - "user-agent" exercises the same code path the original vulnerability report used
+ * "cookie" for.
+ *
+ * Caller must clean up the returned buffer with aws_byte_buf_clean_up(). */
+static struct aws_byte_buf s_build_header_replay_payload(
+    struct aws_allocator *allocator,
+    uint32_t stream_id,
+    size_t value_len,
+    size_t num_refs) {
+
+    /* Generously over-allocate: 2 frame headers (9 bytes each) + a few bytes of HPACK
+     * prefixes/varints + the value itself + one byte per indexed-reference replay. */
+    struct aws_byte_buf raw;
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_byte_buf_init(&raw, allocator, 64 + value_len + num_refs));
+
+    size_t header_frame_pos = raw.len;
+    AWS_FATAL_ASSERT(aws_byte_buf_write_be24(&raw, 0 /*patched below*/));
+    AWS_FATAL_ASSERT(aws_byte_buf_write_u8(&raw, AWS_H2_FRAME_T_HEADERS));
+    AWS_FATAL_ASSERT(aws_byte_buf_write_u8(&raw, num_refs == 0 ? AWS_H2_FRAME_F_END_HEADERS : 0));
+    AWS_FATAL_ASSERT(aws_byte_buf_write_be32(&raw, stream_id));
+
+    AWS_FATAL_ASSERT(aws_byte_buf_write_u8(&raw, 0x88)); /* ":status: 200" - indexed */
+    AWS_FATAL_ASSERT(
+        aws_byte_buf_write_u8(&raw, 0x40 | 58)); /* literal w/ incremental indexing, name idx 58 "user-agent" */
+    AWS_FATAL_ASSERT(s_write_hpack_length(&raw, value_len));
+    AWS_FATAL_ASSERT(aws_byte_buf_write_u8_n(&raw, 'A', value_len));
+
+    size_t headers_payload_len = raw.len - header_frame_pos - 9 /*frame header*/;
+    raw.buffer[header_frame_pos + 0] = (uint8_t)((headers_payload_len >> 16) & 0xFF);
+    raw.buffer[header_frame_pos + 1] = (uint8_t)((headers_payload_len >> 8) & 0xFF);
+    raw.buffer[header_frame_pos + 2] = (uint8_t)(headers_payload_len & 0xFF);
+
+    if (num_refs > 0) {
+        AWS_FATAL_ASSERT(aws_byte_buf_write_be24(&raw, (uint32_t)num_refs));
+        AWS_FATAL_ASSERT(aws_byte_buf_write_u8(&raw, AWS_H2_FRAME_T_CONTINUATION));
+        AWS_FATAL_ASSERT(aws_byte_buf_write_u8(&raw, AWS_H2_FRAME_F_END_HEADERS));
+        AWS_FATAL_ASSERT(aws_byte_buf_write_be32(&raw, stream_id));
+        AWS_FATAL_ASSERT(aws_byte_buf_write_u8_n(&raw, 0xBE, num_refs));
+    }
+
+    return raw;
+}
+
+/* Builds a HEADERS frame (with END_HEADERS) containing exactly one literal "user-agent" header
+ * WITHOUT incremental indexing - the value never touches the HPACK dynamic table. Needed for
+ * boundary-value tests whose value_len exceeds the dynamic table's default 4096-byte capacity
+ * (RFC-7541 4.1/6.3): a value that large cannot be stored via incremental indexing at all (the
+ * table would just evict everything and end up empty), so this avoids indexing entirely rather
+ * than exercising a table-capacity edge case unrelated to what these tests target. Per header
+ * field, decoded size is 10 (name "user-agent") + value_len (value) + 32 (RFC-9113 6.5.2
+ * overhead). Caller must clean up the returned buffer with aws_byte_buf_clean_up(). */
+static struct aws_byte_buf s_build_single_literal_payload(
+    struct aws_allocator *allocator,
+    uint32_t stream_id,
+    size_t value_len) {
+
+    struct aws_byte_buf raw;
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_byte_buf_init(&raw, allocator, 32 + value_len));
+
+    size_t header_frame_pos = raw.len;
+    AWS_FATAL_ASSERT(aws_byte_buf_write_be24(&raw, 0 /*patched below*/));
+    AWS_FATAL_ASSERT(aws_byte_buf_write_u8(&raw, AWS_H2_FRAME_T_HEADERS));
+    AWS_FATAL_ASSERT(aws_byte_buf_write_u8(&raw, AWS_H2_FRAME_F_END_HEADERS));
+    AWS_FATAL_ASSERT(aws_byte_buf_write_be32(&raw, stream_id));
+
+    AWS_FATAL_ASSERT(aws_byte_buf_write_u8(&raw, 0x88)); /* ":status: 200" - indexed */
+    /* Literal Header Field without Indexing (RFC-7541 6.2.2): 4-bit index prefix, tag "0000".
+     * Name index 58 ("user-agent") exceeds the 4-bit prefix's direct range (0-14), so it uses the
+     * same escape-continuation encoding as string lengths: write 15 (all-1s), then (58-15)=43 as
+     * a single continuation byte (< 128, so no further continuation needed). */
+    AWS_FATAL_ASSERT(aws_byte_buf_write_u8(&raw, 0x0F));
+    AWS_FATAL_ASSERT(aws_byte_buf_write_u8(&raw, 43));
+    AWS_FATAL_ASSERT(s_write_hpack_length(&raw, value_len));
+    AWS_FATAL_ASSERT(aws_byte_buf_write_u8_n(&raw, 'A', value_len));
+
+    size_t headers_payload_len = raw.len - header_frame_pos - 9 /*frame header*/;
+    raw.buffer[header_frame_pos + 0] = (uint8_t)((headers_payload_len >> 16) & 0xFF);
+    raw.buffer[header_frame_pos + 1] = (uint8_t)((headers_payload_len >> 8) & 0xFF);
+    raw.buffer[header_frame_pos + 2] = (uint8_t)(headers_payload_len & 0xFF);
+
+    return raw;
+}
+
+/* Uses the public API (aws_http2_connection_change_settings) to change SETTINGS_MAX_HEADER_LIST_SIZE
+ * and waits for the peer to ACK it, which is what actually makes the new value take effect
+ * (see s_decoder_on_settings_ack in h2_connection.c). Assumes the connection preface has NOT been
+ * sent yet by the fake peer - this sends it, interleaved with the settings ACKs, in the right order
+ * (the client's decoder requires the peer's SETTINGS to be the first frame it ever decodes). */
+static void s_configure_max_header_list_size(struct aws_allocator *allocator, uint32_t value) {
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE, .value = value},
+    };
+    int callback_error_code = INT32_MAX;
+    AWS_FATAL_ASSERT(
+        AWS_OP_SUCCESS ==
+        aws_http2_connection_change_settings(
+            s_tester.connection, settings_array, AWS_ARRAY_SIZE(settings_array), s_on_completed, &callback_error_code));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    struct aws_h2_frame *ack_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true /*ack*/);
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == h2_fake_peer_send_frame(&s_tester.peer, ack_frame));
+    ack_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true /*ack*/);
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == h2_fake_peer_send_frame(&s_tester.peer, ack_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    AWS_FATAL_ASSERT(AWS_ERROR_SUCCESS == callback_error_code);
+}
+
+/* Like s_configure_max_header_list_size, but for changing an ALREADY-configured value at
+ * runtime (connection preface was already sent, so only one settings-ACK is expected here). */
+static void s_change_max_header_list_size(struct aws_allocator *allocator, uint32_t value) {
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE, .value = value},
+    };
+    int callback_error_code = INT32_MAX;
+    AWS_FATAL_ASSERT(
+        AWS_OP_SUCCESS ==
+        aws_http2_connection_change_settings(
+            s_tester.connection, settings_array, AWS_ARRAY_SIZE(settings_array), s_on_completed, &callback_error_code));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    struct aws_h2_frame *ack_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true /*ack*/);
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == h2_fake_peer_send_frame(&s_tester.peer, ack_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    AWS_FATAL_ASSERT(AWS_ERROR_SUCCESS == callback_error_code);
+}
+
+/* Opens a new stream with a minimal GET request and returns its stream_id. Caller owns
+ * stream_tester and must clean it up. */
+static uint32_t s_open_stream(struct aws_allocator *allocator, struct client_stream_tester *stream_tester) {
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    AWS_FATAL_ASSERT(request);
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == s_stream_tester_init(stream_tester, request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    uint32_t stream_id = aws_http_stream_get_id(stream_tester->stream);
+    aws_http_message_release(request);
+    return stream_id;
+}
+
+/* Case 1: a header-list that decodes to comfortably less than the configured limit is accepted,
+ * and every header field is delivered (proves the fix doesn't false-positive on legitimate,
+ * modestly-sized indexed-reference replay). */
+TEST_CASE(h2_client_max_header_list_size_accepts_payload_under_limit) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    s_configure_max_header_list_size(allocator, 8192);
+
+    struct client_stream_tester stream_tester;
+    uint32_t stream_id = s_open_stream(allocator, &stream_tester);
+
+    /* 1 literal + 4 replays of a 100-byte value: (1+4) * (10 + 100 + 32) = 710 bytes, well under 8192 */
+    struct aws_byte_buf raw = s_build_header_replay_payload(allocator, stream_id, 100, 4);
+    ASSERT_SUCCESS(testing_channel_push_read_data(&s_tester.testing_channel, aws_byte_cursor_from_buf(&raw)));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+    /* :status + 1 literal + 4 replays, all delivered individually (see s_build_header_replay_payload) */
+    ASSERT_UINT_EQUALS(6, stream_tester.num_headers_received);
+
+    aws_byte_buf_clean_up(&raw);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
+/* Case 2: a header-list whose decoded size is EXACTLY equal to the configured limit is accepted.
+ * The enforcement check is "> max", not ">= max", so exactly-at-the-limit must still succeed -
+ * this pins down that boundary explicitly instead of only testing "clearly under" or
+ * "clearly over". */
+TEST_CASE(h2_client_max_header_list_size_accepts_payload_at_exact_limit) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    s_configure_max_header_list_size(allocator, 8192);
+
+    struct client_stream_tester stream_tester;
+    uint32_t stream_id = s_open_stream(allocator, &stream_tester);
+
+    /* The response's leading :status field costs 7 (name) + 3 ("200", value) + 32 (overhead) = 42
+     * bytes against the same running total, since the size check applies to EVERY field, not just
+     * the ones this test cares about. So the literal "user-agent" field is sized to make the
+     * running total land exactly at the limit only after :status is already counted:
+     *   42 (:status) + 10 ("user-agent") + value_len + 32 (overhead) == 8192 */
+    const size_t value_len = 8192 - 42 - 10 - 32;
+    struct aws_byte_buf raw = s_build_single_literal_payload(allocator, stream_id, value_len);
+    ASSERT_SUCCESS(testing_channel_push_read_data(&s_tester.testing_channel, aws_byte_cursor_from_buf(&raw)));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_UINT_EQUALS(2, stream_tester.num_headers_received); /* :status + the one literal field */
+
+    aws_byte_buf_clean_up(&raw);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
+/* Case 3: one byte more than case 2's exact-limit payload is rejected. Proves the trip point is
+ * the exact configured value, not some looser approximation of it. */
+TEST_CASE(h2_client_max_header_list_size_rejects_payload_one_byte_over_limit) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    s_configure_max_header_list_size(allocator, 8192);
+
+    struct client_stream_tester stream_tester;
+    uint32_t stream_id = s_open_stream(allocator, &stream_tester);
+
+    /* One byte over the case-2 exact-limit value: 42 (:status) + 10 + value_len + 32 == 8193 */
+    const size_t value_len = 8192 - 42 - 10 - 32 + 1;
+    struct aws_byte_buf raw = s_build_single_literal_payload(allocator, stream_id, value_len);
+    ASSERT_SUCCESS(testing_channel_push_read_data(&s_tester.testing_channel, aws_byte_cursor_from_buf(&raw)));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_INT_EQUALS(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+    /* :status is a pseudo-header, buffered internally and only flushed to the app once a regular
+     * header field is reached or the block completes (see s_flush_pseudoheaders); since the
+     * oversized "user-agent" field trips the check before either of those happens, nothing is
+     * ever delivered to the app for this stream. */
+    ASSERT_UINT_EQUALS(0, stream_tester.num_headers_received);
+
+    aws_byte_buf_clean_up(&raw);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
+/* Case 4: lowering the limit at runtime (via aws_http2_connection_change_settings, after the
+ * connection is already up) takes effect on a later stream - a payload that would have fit under
+ * the original limit is rejected once the limit is lowered below it. */
+TEST_CASE(h2_client_max_header_list_size_lowering_at_runtime_is_enforced) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    s_configure_max_header_list_size(allocator, 8192);
+
+    /* First stream: payload fits comfortably under the original 8192 limit. */
+    struct client_stream_tester stream_tester_1;
+    uint32_t stream_id_1 = s_open_stream(allocator, &stream_tester_1);
+    struct aws_byte_buf raw_1 = s_build_header_replay_payload(allocator, stream_id_1, 100, 4); /* 710 bytes */
+    ASSERT_SUCCESS(testing_channel_push_read_data(&s_tester.testing_channel, aws_byte_cursor_from_buf(&raw_1)));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_UINT_EQUALS(6, stream_tester_1.num_headers_received);
+
+    /* Lower the limit below what that same payload shape would cost. */
+    s_change_max_header_list_size(allocator, 500);
+
+    /* Second stream: same payload shape now exceeds the new, lower limit. */
+    struct client_stream_tester stream_tester_2;
+    uint32_t stream_id_2 = s_open_stream(allocator, &stream_tester_2);
+    struct aws_byte_buf raw_2 = s_build_header_replay_payload(allocator, stream_id_2, 100, 4); /* still 710 bytes */
+    ASSERT_SUCCESS(testing_channel_push_read_data(&s_tester.testing_channel, aws_byte_cursor_from_buf(&raw_2)));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_INT_EQUALS(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+
+    aws_byte_buf_clean_up(&raw_1);
+    aws_byte_buf_clean_up(&raw_2);
+    client_stream_tester_clean_up(&stream_tester_1);
+    client_stream_tester_clean_up(&stream_tester_2);
+    return s_tester_clean_up();
+}
+
+/* Case 5: mirror of case 4 - raising the limit at runtime allows a payload that would have been
+ * rejected under the original, stricter limit. Guards against an asymmetric bug where only
+ * decreasing the limit is actually applied. */
+TEST_CASE(h2_client_max_header_list_size_raising_at_runtime_is_enforced) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    s_configure_max_header_list_size(allocator, 500);
+
+    /* First stream: payload exceeds the original strict 500-byte limit. */
+    struct client_stream_tester stream_tester_1;
+    uint32_t stream_id_1 = s_open_stream(allocator, &stream_tester_1);
+    struct aws_byte_buf raw_1 = s_build_header_replay_payload(allocator, stream_id_1, 100, 4); /* 710 bytes */
+    ASSERT_SUCCESS(testing_channel_push_read_data(&s_tester.testing_channel, aws_byte_cursor_from_buf(&raw_1)));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_INT_EQUALS(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+
+    aws_byte_buf_clean_up(&raw_1);
+    client_stream_tester_clean_up(&stream_tester_1);
+    return s_tester_clean_up();
+}
+
+/* Case 6: with SETTINGS_MAX_HEADER_LIST_SIZE never configured at all (fresh connection, default
+ * only), the decoder's self-enforced 32KB default still rejects an oversized header-list - AND
+ * enforcement is incremental, stopping partway through the header-list rather than only after
+ * fully decoding it. Sends ~64KB of decoded content (roughly double the 32KB default) but proves,
+ * via the header-delivery counter, that far fewer than the full set of fields ever got decoded
+ * before the connection was closed. */
+TEST_CASE(h2_client_max_header_list_size_default_is_enforced_incrementally) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    /* No SETTINGS_MAX_HEADER_LIST_SIZE configured - relies entirely on the decoder's own default. */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    struct client_stream_tester stream_tester;
+    uint32_t stream_id = s_open_stream(allocator, &stream_tester);
+
+    /* 1 literal + 62 replays of a 1000-byte value: (1+62) * (10 + 1000 + 32) = 65646 bytes total if
+     * fully decoded - about double the 32KB (32768 byte) default. But the running total crosses
+     * 32768 at the 32nd field (32 * 1042 = 33344 > 32768), so decoding should stop there: :status
+     * plus 31 of the 63 header fields get delivered (the 32nd trips the check before delivery),
+     * nowhere near all 63. */
+    const size_t value_len = 1000;
+    const size_t num_refs = 62;
+    struct aws_byte_buf raw = s_build_header_replay_payload(allocator, stream_id, value_len, num_refs);
+    ASSERT_SUCCESS(testing_channel_push_read_data(&s_tester.testing_channel, aws_byte_cursor_from_buf(&raw)));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_INT_EQUALS(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+    /* Proof of incremental enforcement: far fewer than 64 fields (:status + 63) were ever delivered. */
+    ASSERT_UINT_EQUALS(32, stream_tester.num_headers_received);
+
+    aws_byte_buf_clean_up(&raw);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
 /* Test the user API for changing HTTP/2 connection settings */
 TEST_CASE(h2_client_change_settings_succeed) {
 
