@@ -3487,7 +3487,7 @@ static struct aws_byte_buf s_build_header_replay_payload(
     AWS_FATAL_ASSERT(aws_byte_buf_write_u8(&raw, num_refs == 0 ? AWS_H2_FRAME_F_END_HEADERS : 0));
     AWS_FATAL_ASSERT(aws_byte_buf_write_be32(&raw, stream_id));
 
-    AWS_FATAL_ASSERT(aws_byte_buf_write_u8(&raw, 0x88));      /* ":status: 200" - indexed */
+    AWS_FATAL_ASSERT(aws_byte_buf_write_u8(&raw, 0x88)); /* ":status: 200" - indexed */
     AWS_FATAL_ASSERT(
         aws_byte_buf_write_u8(&raw, 0x40 | 58)); /* literal w/ incremental indexing, name idx 58 "user-agent" */
     AWS_FATAL_ASSERT(s_write_hpack_length(&raw, value_len));
@@ -3560,12 +3560,9 @@ static void s_configure_max_header_list_size(struct aws_allocator *allocator, ui
     };
     int callback_error_code = INT32_MAX;
     AWS_FATAL_ASSERT(
-        AWS_OP_SUCCESS == aws_http2_connection_change_settings(
-                               s_tester.connection,
-                               settings_array,
-                               AWS_ARRAY_SIZE(settings_array),
-                               s_on_completed,
-                               &callback_error_code));
+        AWS_OP_SUCCESS ==
+        aws_http2_connection_change_settings(
+            s_tester.connection, settings_array, AWS_ARRAY_SIZE(settings_array), s_on_completed, &callback_error_code));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     AWS_FATAL_ASSERT(AWS_OP_SUCCESS == h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
@@ -3586,12 +3583,9 @@ static void s_change_max_header_list_size(struct aws_allocator *allocator, uint3
     };
     int callback_error_code = INT32_MAX;
     AWS_FATAL_ASSERT(
-        AWS_OP_SUCCESS == aws_http2_connection_change_settings(
-                               s_tester.connection,
-                               settings_array,
-                               AWS_ARRAY_SIZE(settings_array),
-                               s_on_completed,
-                               &callback_error_code));
+        AWS_OP_SUCCESS ==
+        aws_http2_connection_change_settings(
+            s_tester.connection, settings_array, AWS_ARRAY_SIZE(settings_array), s_on_completed, &callback_error_code));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     struct aws_h2_frame *ack_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true /*ack*/);
