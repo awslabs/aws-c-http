@@ -30,11 +30,12 @@ static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 /* initial size for cookie buffer, buffer will grow if needed */
 static const size_t s_decoder_cookie_buffer_initial_size = 512;
 
-/* RFC-7541 6.5.1: fixed per-field overhead added to name.len + value.len when accounting a
- * decoded header field against SETTINGS_MAX_HEADER_LIST_SIZE. This value is mandated by the
- * spec, not implementation-chosen: it approximates the bookkeeping cost (pointers, length
- * fields, allocation overhead) of storing one header field, so that a header-list cannot evade
- * the size limit by consisting of many fields with short or empty names/values. */
+/* RFC-9113 6.5.2 (originally RFC-7540 6.5.2): fixed per-field overhead added to
+ * name.len + value.len when accounting a decoded header field against
+ * SETTINGS_MAX_HEADER_LIST_SIZE. This value is mandated by the spec, not implementation-chosen:
+ * it approximates the bookkeeping cost (pointers, length fields, allocation overhead) of storing
+ * one header field, so that a header-list cannot evade the size limit by consisting of many
+ * fields with short or empty names/values. */
 static const size_t s_header_field_size_overhead = 32;
 
 #define DECODER_LOGF(level, decoder, text, ...)                                                                        \
@@ -269,7 +270,7 @@ struct aws_h2_decoder {
 
         bool body_headers_forbidden;
 
-        /* Running total of decoded header-list size (RFC-7541 6.5.1: name.len + value.len + 32
+        /* Running total of decoded header-list size (RFC-9113 6.5.2: name.len + value.len + 32
          * per header field), checked against settings.max_header_list_size as fields are decoded. */
         uint64_t header_list_size;
 
@@ -286,7 +287,7 @@ struct aws_h2_decoder {
         uint32_t enable_push;
         /*  the size of the largest frame payload */
         uint32_t max_frame_size;
-        /* max size of a decoded header-list (field section), RFC-7541 6.5.1 accounting */
+        /* max size of a decoded header-list (field section), RFC-9113 6.5.2 accounting */
         uint32_t max_header_list_size;
     } settings;
 
@@ -1261,9 +1262,7 @@ static struct aws_h2err s_process_header_field(
         goto already_malformed;
     }
 
-    /* RFC-7541 6.5.1 header-list-size accounting, applied to every field (including cookie fields
-     * and fields reconstructed from an indexed reference), so a header-list cannot be inflated past
-     * the configured budget regardless of how cheaply it was encoded on the wire. */
+    /* Header-list-size accounting, see s_header_field_size_overhead comment above. */
     current_block->header_list_size += header_field->name.len + header_field->value.len + s_header_field_size_overhead;
     if (current_block->header_list_size > decoder->settings.max_header_list_size) {
         DECODER_LOG(ERROR, decoder, "Decoded header-list size exceeds SETTINGS_MAX_HEADER_LIST_SIZE");
