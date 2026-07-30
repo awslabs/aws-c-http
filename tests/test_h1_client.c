@@ -104,7 +104,7 @@ static int s_tester_init_ex(struct tester *tester, struct aws_allocator *alloc, 
     tester->alloc = alloc;
 
     struct aws_logger_standard_options logger_options = {
-        .level = AWS_LOG_LEVEL_TRACE,
+        .level = AWS_LOG_LEVEL_DEBUG,
         .file = stderr,
     };
     ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->alloc, &logger_options));
@@ -5126,4 +5126,598 @@ H1_CLIENT_TEST_CASE(h1_client_connection_close_before_request_finishes_with_buff
 H1_CLIENT_TEST_CASE(h1_client_connection_close_before_request_finishes_with_buffer_stream_cancel) {
     (void)ctx;
     return s_h1_client_connection_close_before_request_finishes_with_buffer_force_shutdown_helper(allocator, false);
+}
+
+/* Test helper for write_data callback tracking */
+struct write_data_callback_tester {
+    int num_callbacks;
+    int last_error_code;
+};
+
+static void s_on_write_data_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)stream;
+    struct write_data_callback_tester *callback_tester = user_data;
+    callback_tester->num_callbacks++;
+    callback_tester->last_error_code = error_code;
+}
+
+struct write_data_test_fixture {
+    struct tester tester;
+    struct client_stream_tester stream_tester;
+};
+
+static int s_write_data_test_setup(
+    struct write_data_test_fixture *fixture,
+    struct aws_allocator *allocator,
+    const struct aws_http_header *headers,
+    size_t num_headers,
+    bool use_manual_data_writes) {
+
+    ASSERT_SUCCESS(s_tester_init(&fixture->tester, allocator));
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("POST")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/upload")));
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, num_headers));
+
+    ASSERT_SUCCESS(client_stream_tester_init(
+        &fixture->stream_tester,
+        allocator,
+        &(struct client_stream_tester_options){
+            .request = request,
+            .connection = fixture->tester.connection,
+            .use_manual_data_writes = use_manual_data_writes,
+        }));
+
+    testing_channel_drain_queued_tasks(&fixture->tester.testing_channel);
+    aws_http_message_destroy(request);
+    return AWS_OP_SUCCESS;
+}
+
+static int s_write_data_test_teardown(struct write_data_test_fixture *fixture) {
+    client_stream_tester_clean_up(&fixture->stream_tester);
+    ASSERT_SUCCESS(s_tester_clean_up(&fixture->tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: Single chunk write with Content-Length */
+H1_CLIENT_TEST_CASE(h1_client_write_data_single_chunk) {
+    (void)ctx;
+    struct write_data_test_fixture fixture;
+    struct aws_http_header headers[] = {
+        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("5")},
+    };
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
+
+    struct aws_byte_cursor data = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("hello");
+    struct aws_input_stream *input_stream = aws_input_stream_new_from_cursor(allocator, &data);
+    ASSERT_NOT_NULL(input_stream);
+
+    struct write_data_callback_tester callback_tester = {0};
+    struct aws_http_stream_write_data_options write_options = {
+        .data = input_stream,
+        .end_stream = true,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester,
+    };
+
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(
+        &fixture.tester.testing_channel, allocator, "POST /upload HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello"));
+
+    ASSERT_INT_EQUALS(1, callback_tester.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
+
+    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    ASSERT_TRUE(fixture.stream_tester.complete);
+    ASSERT_INT_EQUALS(200, fixture.stream_tester.response_status);
+
+    aws_input_stream_release(input_stream);
+    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: Multiple chunk writes with Content-Length */
+H1_CLIENT_TEST_CASE(h1_client_write_data_multiple_chunks) {
+    (void)ctx;
+    struct write_data_test_fixture fixture;
+    struct aws_http_header headers[] = {
+        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("10")},
+    };
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
+
+    /* Write first chunk */
+    struct aws_byte_cursor data1 = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("hello");
+    struct aws_input_stream *input_stream1 = aws_input_stream_new_from_cursor(allocator, &data1);
+    ASSERT_NOT_NULL(input_stream1);
+
+    struct write_data_callback_tester callback_tester1 = {0};
+    struct aws_http_stream_write_data_options write_options1 = {
+        .data = input_stream1,
+        .end_stream = false,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester1,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options1));
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    /* Write second chunk */
+    struct aws_byte_cursor data2 = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("world");
+    struct aws_input_stream *input_stream2 = aws_input_stream_new_from_cursor(allocator, &data2);
+    ASSERT_NOT_NULL(input_stream2);
+
+    struct write_data_callback_tester callback_tester2 = {0};
+    struct aws_http_stream_write_data_options write_options2 = {
+        .data = input_stream2,
+        .end_stream = true,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester2,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options2));
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(
+        &fixture.tester.testing_channel, allocator, "POST /upload HTTP/1.1\r\nContent-Length: 10\r\n\r\nhelloworld"));
+
+    ASSERT_INT_EQUALS(1, callback_tester1.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester1.last_error_code);
+    ASSERT_INT_EQUALS(1, callback_tester2.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester2.last_error_code);
+
+    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    ASSERT_TRUE(fixture.stream_tester.complete);
+    ASSERT_INT_EQUALS(200, fixture.stream_tester.response_status);
+
+    aws_input_stream_release(input_stream1);
+    aws_input_stream_release(input_stream2);
+    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: Validation error - manual writes not enabled */
+H1_CLIENT_TEST_CASE(h1_client_write_data_not_enabled) {
+    (void)ctx;
+    struct write_data_test_fixture fixture;
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, NULL, 0, false));
+
+    struct aws_byte_cursor data = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("hello");
+    struct aws_input_stream *input_stream = aws_input_stream_new_from_cursor(allocator, &data);
+    ASSERT_NOT_NULL(input_stream);
+    struct aws_http_stream_write_data_options write_options = {
+        .data = input_stream,
+        .end_stream = true,
+    };
+
+    ASSERT_FAILS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_MANUAL_WRITE_NOT_ENABLED, aws_last_error());
+
+    aws_input_stream_release(input_stream);
+    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: Validation error - write after final write */
+H1_CLIENT_TEST_CASE(h1_client_write_data_after_final) {
+    (void)ctx;
+    struct write_data_test_fixture fixture;
+    struct aws_http_header headers[] = {
+        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("10")},
+    };
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
+
+    struct aws_byte_cursor data1 = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("hello");
+    struct aws_input_stream *input_stream1 = aws_input_stream_new_from_cursor(allocator, &data1);
+    ASSERT_NOT_NULL(input_stream1);
+    struct aws_http_stream_write_data_options write_options1 = {
+        .data = input_stream1,
+        .end_stream = true,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options1));
+
+    struct aws_byte_cursor data2 = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("world");
+    struct aws_input_stream *input_stream2 = aws_input_stream_new_from_cursor(allocator, &data2);
+    ASSERT_NOT_NULL(input_stream2);
+    struct aws_http_stream_write_data_options write_options2 = {
+        .data = input_stream2,
+        .end_stream = false,
+    };
+    ASSERT_FAILS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options2));
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_MANUAL_WRITE_HAS_COMPLETED, aws_last_error());
+
+    aws_input_stream_release(input_stream1);
+    aws_input_stream_release(input_stream2);
+    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: Content-Length mismatch - too much data */
+H1_CLIENT_TEST_CASE(h1_client_write_data_exceeds_content_length) {
+    (void)ctx;
+    struct write_data_test_fixture fixture;
+    struct aws_http_header headers[] = {
+        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("3")},
+    };
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
+
+    struct aws_byte_cursor data = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("hello");
+    struct aws_input_stream *input_stream = aws_input_stream_new_from_cursor(allocator, &data);
+    ASSERT_NOT_NULL(input_stream);
+
+    struct write_data_callback_tester callback_tester = {0};
+    struct aws_http_stream_write_data_options write_options = {
+        .data = input_stream,
+        .end_stream = true,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester,
+    };
+
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    ASSERT_INT_EQUALS(1, callback_tester.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT, callback_tester.last_error_code);
+
+    aws_input_stream_release(input_stream);
+    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: Content-Length mismatch - too little data */
+H1_CLIENT_TEST_CASE(h1_client_write_data_less_than_content_length) {
+    (void)ctx;
+    struct write_data_test_fixture fixture;
+    struct aws_http_header headers[] = {
+        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("10")},
+    };
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
+
+    struct aws_byte_cursor data = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("hello");
+    struct aws_input_stream *input_stream = aws_input_stream_new_from_cursor(allocator, &data);
+    ASSERT_NOT_NULL(input_stream);
+
+    struct aws_http_stream_write_data_options write_options = {
+        .data = input_stream,
+        .end_stream = true,
+    };
+
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    ASSERT_TRUE(fixture.stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT, fixture.stream_tester.on_complete_error_code);
+
+    aws_input_stream_release(input_stream);
+    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test write_data with chunked encoding - single write with end_stream=true
+ * should automatically send the termination chunk (0\r\n\r\n) */
+H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_single) {
+    (void)ctx;
+    struct write_data_test_fixture fixture;
+    struct aws_http_header headers[] = {
+        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
+         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked")},
+    };
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
+
+    struct aws_byte_cursor data = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
+    struct aws_input_stream *input_stream = aws_input_stream_new_from_cursor(allocator, &data);
+
+    struct write_data_callback_tester callback_tester = {0};
+    struct aws_http_stream_write_data_options write_options = {
+        .data = input_stream,
+        .end_stream = true,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
+
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    const char *expected = "POST /upload HTTP/1.1\r\n"
+                           "Transfer-Encoding: chunked\r\n"
+                           "\r\n"
+                           "10\r\n"
+                           "write more tests"
+                           "\r\n"
+                           "0\r\n"
+                           "\r\n";
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&fixture.tester.testing_channel, allocator, expected));
+
+    ASSERT_INT_EQUALS(1, callback_tester.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
+
+    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    ASSERT_TRUE(fixture.stream_tester.complete);
+    ASSERT_INT_EQUALS(200, fixture.stream_tester.response_status);
+
+    aws_input_stream_release(input_stream);
+    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test write_data with chunked encoding - multiple writes */
+H1_CLIENT_TEST_CASE(h1_client_write_data_chunked_multiple) {
+    (void)ctx;
+    struct write_data_test_fixture fixture;
+    struct aws_http_header headers[] = {
+        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
+         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked")},
+    };
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
+
+    /* First write */
+    struct aws_byte_cursor data1 = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write ");
+    struct aws_input_stream *stream1 = aws_input_stream_new_from_cursor(allocator, &data1);
+    struct write_data_callback_tester callback_tester1 = {0};
+    struct aws_http_stream_write_data_options opts1 = {
+        .data = stream1,
+        .end_stream = false,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester1,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &opts1));
+
+    /* No-op write: NULL data, end_stream=false. Callback should still fire. */
+    struct write_data_callback_tester callback_tester_noop = {0};
+    struct aws_http_stream_write_data_options opts_noop = {
+        .data = NULL,
+        .end_stream = false,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester_noop,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &opts_noop));
+
+    /* Second write with end_stream=true, termination chunk should be sent automatically */
+    struct aws_byte_cursor data2 = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("more tests");
+    struct aws_input_stream *stream2 = aws_input_stream_new_from_cursor(allocator, &data2);
+    struct write_data_callback_tester callback_tester2 = {0};
+    struct aws_http_stream_write_data_options opts2 = {
+        .data = stream2,
+        .end_stream = true,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester2,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &opts2));
+
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    const char *expected = "POST /upload HTTP/1.1\r\n"
+                           "Transfer-Encoding: chunked\r\n"
+                           "\r\n"
+                           "6\r\n"
+                           "write "
+                           "\r\n"
+                           "A\r\n"
+                           "more tests"
+                           "\r\n"
+                           "0\r\n"
+                           "\r\n";
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&fixture.tester.testing_channel, allocator, expected));
+
+    ASSERT_INT_EQUALS(1, callback_tester1.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester1.last_error_code);
+    ASSERT_INT_EQUALS(1, callback_tester_noop.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester_noop.last_error_code);
+    ASSERT_INT_EQUALS(1, callback_tester2.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester2.last_error_code);
+
+    aws_input_stream_release(stream1);
+    aws_input_stream_release(stream2);
+    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: write_data with NULL data and end_stream=true on Content-Length stream.
+ * Also verifies NULL data + end_stream=false is a no-op. */
+H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_content_length) {
+    (void)ctx;
+    struct write_data_test_fixture fixture;
+    struct aws_http_header headers[] = {
+        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("5")},
+    };
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
+
+    /* First write with end_stream=false */
+    struct aws_byte_cursor data = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("hello");
+    struct aws_input_stream *stream = aws_input_stream_new_from_cursor(allocator, &data);
+    struct write_data_callback_tester callback_tester = {0};
+    struct aws_http_stream_write_data_options write_opts = {
+        .data = stream,
+        .end_stream = false,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_opts));
+
+    /* Second write NULL data without end_stream should be a no-op */
+    struct aws_http_stream_write_data_options noop_options = {
+        .data = NULL,
+        .end_stream = false,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &noop_options));
+
+    /* Third write NULL data with end_stream should complete the stream */
+    struct aws_http_stream_write_data_options write_options = {
+        .data = NULL,
+        .end_stream = true,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
+
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(
+        &fixture.tester.testing_channel, allocator, "POST /upload HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello"));
+
+    ASSERT_INT_EQUALS(3, callback_tester.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
+
+    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    ASSERT_TRUE(fixture.stream_tester.complete);
+    ASSERT_INT_EQUALS(200, fixture.stream_tester.response_status);
+
+    aws_input_stream_release(stream);
+    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: write_data with NULL data and end_stream=true on chunked stream */
+H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_chunked) {
+    (void)ctx;
+    struct write_data_test_fixture fixture;
+    struct aws_http_header headers[] = {
+        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
+         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked")},
+    };
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
+
+    struct write_data_callback_tester callback_tester = {0};
+    struct aws_http_stream_write_data_options write_options = {
+        .data = NULL,
+        .end_stream = true,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
+
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    const char *expected = "POST /upload HTTP/1.1\r\n"
+                           "Transfer-Encoding: chunked\r\n"
+                           "\r\n"
+                           "0\r\n"
+                           "\r\n";
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&fixture.tester.testing_channel, allocator, expected));
+
+    ASSERT_INT_EQUALS(1, callback_tester.num_callbacks);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, callback_tester.last_error_code);
+
+    ASSERT_SUCCESS(testing_channel_push_read_str(&fixture.tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    ASSERT_TRUE(fixture.stream_tester.complete);
+    ASSERT_INT_EQUALS(200, fixture.stream_tester.response_status);
+
+    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: auto-add Transfer-Encoding: chunked when no Content-Length or Transfer-Encoding is set */
+H1_CLIENT_TEST_CASE(h1_client_write_data_auto_chunked) {
+    (void)ctx;
+    struct write_data_test_fixture fixture;
+    /* No Content-Length or Transfer-Encoding header */
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, NULL, 0, true));
+
+    struct aws_byte_cursor data = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("hello");
+    struct aws_input_stream *input_stream = aws_input_stream_new_from_cursor(allocator, &data);
+
+    struct aws_http_stream_write_data_options write_options = {
+        .data = input_stream,
+        .end_stream = true,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    /* Transfer-Encoding: chunked should have been auto-added */
+    const char *expected = "POST /upload HTTP/1.1\r\n"
+                           "Transfer-Encoding: chunked\r\n"
+                           "\r\n"
+                           "5\r\n"
+                           "hello"
+                           "\r\n"
+                           "0\r\n"
+                           "\r\n";
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&fixture.tester.testing_channel, allocator, expected));
+
+    aws_input_stream_release(input_stream);
+    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: body stream + use_manual_data_writes is rejected */
+H1_CLIENT_TEST_CASE(h1_client_write_data_body_stream_conflict) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("POST")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/upload")));
+
+    struct aws_http_header headers[] = {
+        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("5")},
+    };
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
+
+    /* Set a body stream AND use_manual_data_writes — should conflict */
+    struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("hello");
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
+    aws_http_message_set_body_stream(request, body_stream);
+
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .use_manual_data_writes = true,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &request_options);
+    ASSERT_NULL(stream);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, aws_last_error());
+
+    aws_input_stream_release(body_stream);
+    aws_http_message_destroy(request);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test: NULL data with non-zero Content-Length should fail with length mismatch */
+H1_CLIENT_TEST_CASE(h1_client_write_data_null_data_nonzero_content_length) {
+    (void)ctx;
+    struct write_data_test_fixture fixture;
+    struct aws_http_header headers[] = {
+        {.name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("5")},
+    };
+    ASSERT_SUCCESS(s_write_data_test_setup(&fixture, allocator, headers, AWS_ARRAY_SIZE(headers), true));
+
+    struct write_data_callback_tester callback_tester = {0};
+    struct aws_http_stream_write_data_options write_options = {
+        .data = NULL,
+        .end_stream = true,
+        .on_complete = s_on_write_data_complete,
+        .user_data = &callback_tester,
+    };
+    ASSERT_SUCCESS(aws_http_stream_write_data(fixture.stream_tester.stream, &write_options));
+    testing_channel_drain_queued_tasks(&fixture.tester.testing_channel);
+
+    ASSERT_TRUE(fixture.stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT, fixture.stream_tester.on_complete_error_code);
+
+    ASSERT_SUCCESS(s_write_data_test_teardown(&fixture));
+    return AWS_OP_SUCCESS;
 }

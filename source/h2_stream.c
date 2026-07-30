@@ -23,7 +23,7 @@ static int s_stream_get_received_error_code(struct aws_http_stream *stream_base,
 static int s_stream_get_sent_error_code(struct aws_http_stream *stream_base, uint32_t *out_http2_error);
 static int s_stream_write_data(
     struct aws_http_stream *stream_base,
-    const struct aws_http2_stream_write_data_options *options);
+    const struct aws_http_stream_write_data_options *options);
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error);
@@ -42,7 +42,7 @@ struct aws_http_stream_vtable s_h2_stream_vtable = {
     .http2_reset_stream = s_stream_reset_stream,
     .http2_get_received_error_code = s_stream_get_received_error_code,
     .http2_get_sent_error_code = s_stream_get_sent_error_code,
-    .http2_write_data = s_stream_write_data,
+    .write_data = s_stream_write_data,
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state) {
@@ -277,6 +277,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     AWS_PRECONDITION(options);
 
     struct aws_h2_stream *stream = aws_mem_calloc(client_connection->alloc, 1, sizeof(struct aws_h2_stream));
+    stream->on_h2_remote_end_stream = options->on_h2_remote_end_stream;
 
     /* Initialize base stream */
     stream->base.vtable = &s_h2_stream_vtable;
@@ -333,8 +334,9 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
     /* stream end is implicit if the request isn't using manual data writes */
-    stream->synced_data.manual_write_ended = !options->http2_use_manual_data_writes;
-    stream->manual_write = options->http2_use_manual_data_writes;
+    bool manual_write = options->use_manual_data_writes || options->http2_use_manual_data_writes;
+    stream->synced_data.manual_write_ended = !manual_write;
+    stream->manual_write = manual_write;
 
     /* if there's a request body to write, add it as the first outgoing write */
     struct aws_input_stream *body_stream = aws_http_message_get_body_stream(options->request);
@@ -750,6 +752,48 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
             connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] / 2;
     }
 
+    /* Log the headers that we are sending out. */
+    for (size_t i = 0; i < aws_http_headers_count(h2_headers); i++) {
+        struct aws_http_header header;
+        aws_http_headers_get_index(h2_headers, i, &header);
+        enum aws_http_header_name name_enum = aws_http_str_to_header_name(header.name);
+        switch (name_enum) {
+            case AWS_HTTP_HEADER_CONNECTION:
+            case AWS_HTTP_HEADER_TRANSFER_ENCODING:
+            case AWS_HTTP_HEADER_UPGRADE:
+            case AWS_HTTP_HEADER_KEEP_ALIVE:
+            case AWS_HTTP_HEADER_PROXY_CONNECTION:
+                /**
+                 * An endpoint MUST NOT generate an HTTP/2 message containing connection-specific header fields.
+                 * (RFC=9113 8.2.2)
+                 */
+                AWS_H2_STREAM_LOGF(
+                    TRACE,
+                    stream,
+                    "Found connection-specific header that is allowed in HTTP/2. : " PRInSTR ": " PRInSTR "",
+                    AWS_BYTE_CURSOR_PRI(header.name),
+                    AWS_BYTE_CURSOR_PRI(header.value));
+                aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
+                goto error;
+            case AWS_HTTP_HEADER_AUTHORIZATION:
+            case AWS_HTTP_HEADER_SIGNING_SECURITY_TOKEN:
+            case AWS_HTTP_HEADER_SIGNING_S3SESSION_TOKEN:
+                /* TODO: move the filter to SDKs, not the http client. */
+                /* Sensitive header, do not log the value of the header */
+                AWS_H2_STREAM_LOGF(TRACE, stream, "Sending header: " PRInSTR ": ***", AWS_BYTE_CURSOR_PRI(header.name));
+                break;
+            default:
+                /* Log the headers we are sending out */
+                AWS_H2_STREAM_LOGF(
+                    TRACE,
+                    stream,
+                    "Sending header: " PRInSTR ": " PRInSTR "",
+                    AWS_BYTE_CURSOR_PRI(header.name),
+                    AWS_BYTE_CURSOR_PRI(header.value));
+                break;
+        }
+    }
+
     if (with_data) {
         /* If stream has DATA to send, put it in the outgoing_streams_list, and we'll send data later */
         stream->thread_data.state = AWS_H2_STREAM_STATE_OPEN;
@@ -1109,6 +1153,14 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
         return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR));
     }
     stream->thread_data.window_size_self -= payload_len;
+    if (stream->thread_data.window_size_self == 0) {
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "DATA length=%" PRIu32 " exceeds flow-control window=%" PRIi32,
+            payload_len,
+            stream->thread_data.window_size_self);
+    }
 
     /* If stream isn't over, we may need to send automatic window updates to keep data flowing */
     if (!end_stream) {
@@ -1223,6 +1275,10 @@ struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *strea
         }
     }
 
+    if (stream->on_h2_remote_end_stream) {
+        stream->on_h2_remote_end_stream(&stream->base, stream->base.user_data);
+    }
+
     if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL) {
         /* Both sides have sent END_STREAM */
         stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
@@ -1295,7 +1351,7 @@ struct aws_h2err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *strea
 
 static int s_stream_write_data(
     struct aws_http_stream *stream_base,
-    const struct aws_http2_stream_write_data_options *options) {
+    const struct aws_http_stream_write_data_options *options) {
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     if (!stream->manual_write) {
         AWS_H2_STREAM_LOG(

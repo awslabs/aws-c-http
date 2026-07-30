@@ -8,6 +8,8 @@
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
 
+struct aws_h1_data_write;
+
 struct aws_h1_chunk {
     struct aws_allocator *allocator;
     struct aws_input_stream *data;
@@ -44,10 +46,18 @@ struct aws_h1_encoder_message {
     /* Pointer to chunked_trailer, used for chunked_trailer. */
     struct aws_h1_trailer *trailer;
 
+    /* Pointer to list of `struct aws_h1_data_write`, used for manual data writes with Content-Length.
+     * List is owned by aws_h1_stream. */
+    struct aws_linked_list *pending_data_write_list;
+
+    /* Current data write being processed (for manual data writes with Content-Length) */
+    struct aws_h1_data_write *current_data_write;
+
     /* If non-zero, length of unchunked body to send */
     uint64_t content_length;
     bool has_connection_close_header;
     bool has_chunked_encoding_header;
+    bool has_manual_data_writes;
 };
 
 enum aws_h1_encoder_state {
@@ -64,6 +74,9 @@ enum aws_h1_encoder_state {
     AWS_H1_ENCODER_STATE_CHUNK_BODY,
     AWS_H1_ENCODER_STATE_CHUNK_END,
     AWS_H1_ENCODER_STATE_CHUNK_TRAILER,
+    /* The _DATA_WRITE_ states support the write_data() API (manual data writes with Content-Length) */
+    AWS_H1_ENCODER_STATE_DATA_WRITE_NEXT,
+    AWS_H1_ENCODER_STATE_DATA_WRITE_BODY,
     AWS_H1_ENCODER_STATE_DONE,
 };
 
@@ -104,7 +117,9 @@ int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *request,
-    struct aws_linked_list *pending_chunk_list);
+    struct aws_linked_list *pending_chunk_list,
+    struct aws_linked_list *pending_data_write_list,
+    bool use_manual_data_writes);
 
 int aws_h1_encoder_message_init_from_response(
     struct aws_h1_encoder_message *message,
@@ -137,6 +152,10 @@ bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder)
 /* Return true if the encoder is stuck waiting for more chunks to be added to the current message */
 AWS_HTTP_API
 bool aws_h1_encoder_is_waiting_for_chunks(const struct aws_h1_encoder *encoder);
+
+/* Return true if the encoder is stuck waiting for more data writes to be added to the current message */
+AWS_HTTP_API
+bool aws_h1_encoder_is_waiting_for_data_writes(const struct aws_h1_encoder *encoder);
 
 AWS_EXTERN_C_END
 

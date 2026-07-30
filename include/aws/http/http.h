@@ -62,6 +62,7 @@ enum aws_http_errors {
     AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT,
     AWS_ERROR_HTTP_CONNECTION_MANAGER_ACQUISITION_TIMEOUT,
     AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED,
+    AWS_ERROR_HTTP_STREAM_CANCELLED,
 
     AWS_ERROR_HTTP_END_RANGE = AWS_ERROR_ENUM_END_RANGE(AWS_C_HTTP_PACKAGE_ID)
 };
@@ -122,6 +123,14 @@ void aws_http_library_init(struct aws_allocator *alloc);
  */
 AWS_HTTP_API
 void aws_http_library_clean_up(void);
+
+/*
+ * This API provides a recommendation on whether an error code should be considered retryable for transient
+ * errors like host resolution, sockets, and TLS.
+ * Note: This is a recommendation only. Retry behavior should be determined based on your specific use case.
+ */
+AWS_HTTP_API
+bool aws_http_error_code_is_retryable(int error_code);
 
 /**
  * Returns the description of common status codes.

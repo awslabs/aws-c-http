@@ -23,6 +23,7 @@ enum proxy_tester_test_mode {
     PTTM_HTTP_FORWARD = 0,
     PTTM_HTTP_TUNNEL,
     PTTM_HTTPS_TUNNEL,
+    PTTM_NO_PROXY,
 };
 
 enum proxy_tester_failure_type {
@@ -118,6 +119,11 @@ int proxy_tester_verify_connect_request(struct proxy_tester *tester);
 int proxy_tester_send_connect_response(struct proxy_tester *tester);
 
 int proxy_tester_verify_connection_attempt_was_to_proxy(
+    struct proxy_tester *tester,
+    struct aws_byte_cursor expected_host,
+    uint32_t expected_port);
+
+int proxy_tester_verify_connection_attempt_was_to_target(
     struct proxy_tester *tester,
     struct aws_byte_cursor expected_host,
     uint32_t expected_port);

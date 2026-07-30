@@ -80,6 +80,7 @@ struct aws_h2_stream {
      * to keep flow continues.
      */
     int32_t window_size_threshold_to_send_update;
+    aws_http2_on_remote_end_stream_fn *on_h2_remote_end_stream;
 
     /* Only the event-loop thread may touch this data */
     struct {
@@ -117,6 +118,9 @@ struct aws_h2_stream {
          * asleep. When stream needs to be awaken, moving the stream back to the outgoing_streams_list and set this bool
          * to false */
         bool waiting_for_writes;
+        /* Set when s_stream_complete has been called. Prevents double-completion
+         * (e.g. GOAWAY completes stream, then pending cancel cross-thread task fires) */
+        bool is_complete;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */

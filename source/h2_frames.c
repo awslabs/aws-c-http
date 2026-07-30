@@ -32,7 +32,14 @@ const uint32_t aws_h2_settings_initial[AWS_HTTP2_SETTINGS_END_RANGE] = {
     [AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS] = UINT32_MAX, /* "Initially there is no limit to this value" */
     [AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] = AWS_H2_INIT_WINDOW_SIZE,
     [AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE] = 16384,
-    [AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE] = UINT32_MAX, /* "The initial value of this setting is unlimited" */
+    /* RFC-7540 6.5.2: "The initial value of this setting is unlimited." However, the same
+     * section also says "For any given request, a lower limit than what is advertised MAY be
+     * enforced" - so a receiver is explicitly permitted to self-enforce something stricter than
+     * what it advertises. We use that allowance to self-enforce 32KB by default, rather than
+     * leaving decoded header-list size fully unbounded for an application that never configures
+     * this setting; it can still be raised or lowered via aws_http2_connection_options or
+     * aws_http2_connection_change_settings. */
+    [AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE] = 32 * 1024,
 };
 
 const uint32_t aws_h2_settings_bounds[AWS_HTTP2_SETTINGS_END_RANGE][2] = {

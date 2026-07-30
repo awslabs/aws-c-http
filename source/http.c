@@ -157,6 +157,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED,
         "Max pending acquisitions reached"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_CANCELLED,
+        "In-flight HTTP-stream has been cancelled by user."),
 };
 /* clang-format on */
 
@@ -339,6 +342,8 @@ static void s_headers_init(struct aws_allocator *alloc) {
     s_header_enum_to_str[AWS_HTTP_HEADER_UPGRADE] = aws_byte_cursor_from_c_str("upgrade");
     s_header_enum_to_str[AWS_HTTP_HEADER_KEEP_ALIVE] = aws_byte_cursor_from_c_str("keep-alive");
     s_header_enum_to_str[AWS_HTTP_HEADER_PROXY_CONNECTION] = aws_byte_cursor_from_c_str("proxy-connection");
+    s_header_enum_to_str[AWS_HTTP_HEADER_SIGNING_SECURITY_TOKEN] = aws_byte_cursor_from_c_str("x-amz-security-token");
+    s_header_enum_to_str[AWS_HTTP_HEADER_SIGNING_S3SESSION_TOKEN] = aws_byte_cursor_from_c_str("x-amz-s3session-token");
 
     s_init_str_to_enum_hash_table(
         &s_header_str_to_enum,
@@ -554,6 +559,19 @@ void aws_http_fatal_assert_library_initialized(void) {
 
         AWS_FATAL_ASSERT(s_library_initialized);
     }
+}
+
+/*
+ * This might need to get updated with more http error codes based on consensus.
+ */
+bool aws_http_error_code_is_retryable(int error_code) {
+    switch (error_code) {
+        case AWS_ERROR_HTTP_CONNECTION_CLOSED:
+        case AWS_ERROR_HTTP_SERVER_CLOSED:
+        case AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE:
+            return true;
+    }
+    return aws_io_error_code_is_retryable(error_code);
 }
 
 const struct aws_byte_cursor aws_http_method_get = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET");

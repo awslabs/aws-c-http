@@ -489,6 +489,24 @@ int proxy_tester_verify_connection_attempt_was_to_proxy(
     return AWS_OP_SUCCESS;
 }
 
+int proxy_tester_verify_connection_attempt_was_to_target(
+    struct proxy_tester *tester,
+    struct aws_byte_cursor expected_host,
+    uint32_t expected_port) {
+    ASSERT_BIN_ARRAYS_EQUALS(
+        tester->connection_host_name.buffer,
+        tester->connection_host_name.len,
+        expected_host.ptr,
+        expected_host.len,
+        "Connection host should have been \"" PRInSTR "\", but was \"" PRInSTR "\".",
+        AWS_BYTE_CURSOR_PRI(expected_host),
+        AWS_BYTE_BUF_PRI(tester->connection_host_name));
+
+    ASSERT_TRUE(tester->connection_port == expected_port);
+
+    return AWS_OP_SUCCESS;
+}
+
 struct testing_channel *proxy_tester_get_current_channel(struct proxy_tester *tester) {
     struct testing_channel_bootstrap_wrapper *wrapper = s_get_current_channel_bootstrap_wrapper(tester);
     if (wrapper == NULL) {
