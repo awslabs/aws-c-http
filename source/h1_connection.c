@@ -73,6 +73,8 @@ static void s_reset_statistics(struct aws_channel_handler *handler);
 static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_array_list *stats);
 static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool first_try);
 static int s_try_process_next_stream_read_message(struct aws_h1_connection *connection, bool *out_stop_processing);
+static void s_set_outgoing_stream_ptr(struct aws_h1_connection *connection, struct aws_h1_stream *next_outgoing_stream);
+static void s_set_incoming_stream_ptr(struct aws_h1_connection *connection, struct aws_h1_stream *next_incoming_stream);
 
 static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .channel_handler_vtable =
@@ -665,6 +667,18 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
 
     /* Remove stream from list. */
     aws_linked_list_remove(&stream->node);
+
+    /* Clear cached stream pointers if they reference this stream.
+     * The channel stats-gathering task may fire between now and the next
+     * call to s_client_update_incoming_stream_ptr / s_update_outgoing_stream_ptr,
+     * which would otherwise dereference freed memory. Calling these instead of
+     * directly setting NULL preserves the stats for the connection. */
+    if (connection->thread_data.incoming_stream == stream) {
+        s_set_incoming_stream_ptr(connection, NULL);
+    }
+    if (connection->thread_data.outgoing_stream == stream) {
+        s_set_outgoing_stream_ptr(connection, NULL);
+    }
 
     /* Nice logging */
     if (error_code) {

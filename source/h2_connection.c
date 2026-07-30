@@ -1616,6 +1616,9 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
             case AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE: {
                 aws_h2_decoder_set_setting_max_frame_size(decoder, settings_array[i].value);
             } break;
+            case AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE: {
+                aws_h2_decoder_set_setting_max_header_list_size(decoder, settings_array[i].value);
+            } break;
             default:
                 break;
         }
