@@ -56,7 +56,7 @@ class H2Protocol(asyncio.Protocol):
         self.stream_data = {}
         self.flow_control_futures = {}
         self.file_path = None
-        self.num_sentence_received = {}
+        self.total_bytes_received = {}
         self.raw_headers = None
         self.download_test_length = 2500000000
         self.out_bytes_per_second = 900
@@ -167,18 +167,18 @@ class H2Protocol(asyncio.Protocol):
             # Response headers back and exclude pseudo headers and problematic headers
             if i[0][0] != ':' and i[0].lower() not in skip_headers:
                 response_headers.append(i)
-        
+
         body_bytes = request_data.data.getvalue()
-        
+
         body = body_bytes.decode('utf-8')
 
         data = json.dumps(
             {"body": body, "bytes": len(body_bytes)}, indent=4,
         ).encode("utf8")
-        
+
         # Add correct content-length for our response
         response_headers.append(('content-length', str(len(data))))
-        
+
         self.conn.send_headers(stream_id, response_headers, end_stream=False)
         asyncio.ensure_future(self.send_data(data, stream_id))
 
@@ -232,6 +232,19 @@ class H2Protocol(asyncio.Protocol):
         """
         Send data according to the flow control rules.
         """
+        if not data:
+            try:
+                self.conn.send_data(
+                    stream_id,
+                    data,
+                    True
+                )
+            except (StreamClosedError, ProtocolError):
+                # The stream got closed and we didn't get told. We're done
+                # here.
+                return
+            self.transport.write(self.conn.data_to_send())
+
         while data:
             while self.conn.local_flow_control_window(stream_id) < 1:
                 try:
