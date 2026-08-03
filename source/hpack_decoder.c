@@ -2,8 +2,8 @@
  * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0.
  */
-#include <aws/http/private/hpack.h>
 #include <aws/http/private/h2_frames.h>
+#include <aws/http/private/hpack.h>
 
 #define HPACK_LOGF(level, decoder, text, ...)                                                                          \
     AWS_LOGF_##level(AWS_LS_HTTP_DECODER, "id=%p [HPACK]: " text, (decoder)->log_id, __VA_ARGS__)
