@@ -58,9 +58,18 @@ static struct aws_http_headers *s_generate_headers(
 
     /* Track cumulative header-list size (RFC-9113 6.5.2: name.len + value.len + 32 per field).
      * Stop generating headers before we exceed SETTINGS_MAX_HEADER_LIST_SIZE,
-     * since the decoder rightfully rejects oversized header lists. */
+     * since the decoder rightfully rejects oversized header lists.
+     * Start with the size consumed by pseudo-headers already added above. */
     uint64_t header_list_size = 0;
     const uint64_t max_header_list_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE];
+
+    /* Account for pseudo-headers already added */
+    size_t num_pseudo_headers = aws_http_headers_count(headers);
+    for (size_t i = 0; i < num_pseudo_headers; i++) {
+        struct aws_http_header pseudo;
+        aws_http_headers_get_index(headers, i, &pseudo);
+        header_list_size += pseudo.name.len + pseudo.value.len + 32;
+    }
 
     while (input->len) {
         buf.len = 0;
