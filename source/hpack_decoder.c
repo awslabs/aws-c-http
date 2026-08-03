@@ -25,12 +25,19 @@ void aws_hpack_decoder_init(struct aws_hpack_decoder *decoder, struct aws_alloca
     aws_byte_buf_init(&decoder->progress_entry.scratch, allocator, s_hpack_decoder_scratch_initial_size);
 
     decoder->dynamic_table_protocol_max_size_setting = aws_hpack_get_dynamic_table_max_size(&decoder->context);
+
+    /* Default: no limit until h2_decoder sets it from SETTINGS_MAX_HEADER_LIST_SIZE */
+    decoder->max_header_list_size = UINT64_MAX;
 }
 
 void aws_hpack_decoder_clean_up(struct aws_hpack_decoder *decoder) {
     aws_hpack_context_clean_up(&decoder->context);
     aws_byte_buf_clean_up(&decoder->progress_entry.scratch);
     AWS_ZERO_STRUCT(*decoder);
+}
+
+void aws_hpack_decoder_set_max_header_list_size(struct aws_hpack_decoder *decoder, uint64_t max_header_list_size) {
+    decoder->max_header_list_size = max_header_list_size;
 }
 
 static const struct aws_http_header *s_get_header_u64(const struct aws_hpack_decoder *decoder, uint64_t index) {
@@ -169,6 +176,13 @@ int aws_hpack_decode_string(
 
                 if (progress->length > SIZE_MAX) {
                     return aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
+                }
+
+                /* Reject if the declared string length alone exceeds the header-list budget.
+                 * A single string cannot be larger than the entire allowed header-list. */
+                if (progress->length > decoder->max_header_list_size) {
+                    HPACK_LOG(ERROR, decoder, "HPACK string length exceeds SETTINGS_MAX_HEADER_LIST_SIZE");
+                    return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
                 }
 
                 progress->state = HPACK_STRING_STATE_VALUE;

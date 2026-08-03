@@ -340,6 +340,11 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
     decoder->settings.max_frame_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE];
     decoder->settings.max_header_list_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE];
 
+    /* Propagate the header-list size limit to the HPACK decoder so it can reject
+     * oversized strings at decode time, before a complete header field is assembled. */
+    aws_hpack_decoder_set_max_header_list_size(
+        &decoder->hpack, decoder->settings.max_header_list_size);
+
     if (aws_array_list_init_dynamic(
             &decoder->settings_buffer_list, decoder->alloc, 0, sizeof(struct aws_http2_setting))) {
         goto error;
@@ -1615,4 +1620,5 @@ void aws_h2_decoder_set_setting_max_frame_size(struct aws_h2_decoder *decoder, u
 
 void aws_h2_decoder_set_setting_max_header_list_size(struct aws_h2_decoder *decoder, uint32_t data) {
     decoder->settings.max_header_list_size = data;
+    aws_hpack_decoder_set_max_header_list_size(&decoder->hpack, data);
 }
