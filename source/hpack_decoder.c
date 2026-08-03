@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 #include <aws/http/private/hpack.h>
+#include <aws/http/private/h2_frames.h>
 
 #define HPACK_LOGF(level, decoder, text, ...)                                                                          \
     AWS_LOGF_##level(AWS_LS_HTTP_DECODER, "id=%p [HPACK]: " text, (decoder)->log_id, __VA_ARGS__)
@@ -26,8 +27,9 @@ void aws_hpack_decoder_init(struct aws_hpack_decoder *decoder, struct aws_alloca
 
     decoder->dynamic_table_protocol_max_size_setting = aws_hpack_get_dynamic_table_max_size(&decoder->context);
 
-    /* Default: no limit until h2_decoder sets it from SETTINGS_MAX_HEADER_LIST_SIZE */
-    decoder->max_header_list_size = UINT64_MAX;
+    /* Default to the initial SETTINGS_MAX_HEADER_LIST_SIZE value.
+     * h2_decoder updates this if the setting changes via SETTINGS frame. */
+    decoder->max_header_list_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE];
 }
 
 void aws_hpack_decoder_clean_up(struct aws_hpack_decoder *decoder) {
@@ -214,8 +216,6 @@ int aws_hpack_decode_string(
                     /* #TODO Validate any padding bits left over in final byte of string.
                      * "A padding not corresponding to the most significant bits of the
                      * code for the EOS symbol MUST be treated as a decoding error" */
-
-                    /* #TODO impose limits on string length */
 
                     goto handle_complete;
                 }
