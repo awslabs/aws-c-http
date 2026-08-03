@@ -2980,3 +2980,30 @@ H2_DECODER_ON_SERVER_PREFACE_TEST(h2_decoder_err_bad_preface_from_client_3) {
 
     return AWS_OP_SUCCESS;
 }
+
+/* Verify that an HPACK string whose declared length exceeds SETTINGS_MAX_HEADER_LIST_SIZE
+ * (default 32768) is rejected immediately, before the string data arrives. */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_hpack_string_declared_length_exceeds_limit) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* HEADERS FRAME - no END_HEADERS, so a CONTINUATION is expected */
+        0x00, 0x00, 0x08,           /* Length (24): 8 bytes of payload */
+        AWS_H2_FRAME_T_HEADERS,     /* Type (8) */
+        0x00,                       /* Flags (8): no END_HEADERS */
+        0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31): stream 1 */
+        0x00,                       /* Literal header field, new name, never indexed */
+        0x7f, 0xa1, 0x8c, 0x06,    /* String length = 100000 */
+        'A', 'A', 'A',             /* First 3 bytes of the 100000-byte name */
+    };
+    /* clang-format on */
+
+    /* The decoder should reject this because the declared string length (100000) exceeds the
+     * header-list budget (32768 default). */
+    struct aws_h2err err = s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input)));
+    ASSERT_TRUE(aws_h2err_failed(err));
+
+    return AWS_OP_SUCCESS;
+}
