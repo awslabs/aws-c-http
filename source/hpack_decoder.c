@@ -174,10 +174,6 @@ int aws_hpack_decode_string(
                     goto handle_complete;
                 }
 
-                if (progress->length > SIZE_MAX) {
-                    return aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
-                }
-
                 /* Reject if the declared string length alone exceeds the header-list budget.
                  * A single string cannot be larger than the entire allowed header-list. */
                 if (progress->length > decoder->max_header_list_size) {
