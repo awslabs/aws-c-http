@@ -1615,4 +1615,5 @@ void aws_h2_decoder_set_setting_max_frame_size(struct aws_h2_decoder *decoder, u
 
 void aws_h2_decoder_set_setting_max_header_list_size(struct aws_h2_decoder *decoder, uint32_t data) {
     decoder->settings.max_header_list_size = data;
+    aws_hpack_decoder_set_max_header_list_size(&decoder->hpack, data);
 }

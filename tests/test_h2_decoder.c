@@ -2980,3 +2980,59 @@ H2_DECODER_ON_SERVER_PREFACE_TEST(h2_decoder_err_bad_preface_from_client_3) {
 
     return AWS_OP_SUCCESS;
 }
+
+/* Verify that an HPACK string whose declared length exceeds SETTINGS_MAX_HEADER_LIST_SIZE
+ * (default from h2 settings array) is rejected immediately, before the string data arrives. */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_hpack_string_declared_length_exceeds_limit) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* Use one byte over the default header-list size limit as our declared string length */
+    const uint64_t max_header_list_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE];
+    const uint64_t string_length = max_header_list_size + 1;
+
+    /* Encode string_length as an HPACK 7-bit prefix integer (H=0, no Huffman).
+     * Format: 0x7f (prefix full), then (string_length - 127) as continuation bytes. */
+    uint8_t varint[8];
+    size_t varint_len = 0;
+    varint[varint_len++] = 0x7f;
+    uint64_t remainder = string_length - 127;
+    while (remainder >= 128) {
+        varint[varint_len++] = (uint8_t)((remainder & 0x7f) | 0x80);
+        remainder >>= 7;
+    }
+    varint[varint_len++] = (uint8_t)(remainder & 0x7f);
+
+    /* Build: 9-byte frame header + 1-byte literal prefix + varint + 3 bytes of name data */
+    const size_t payload_len = 1 + varint_len + 3;
+    struct aws_byte_buf input;
+    aws_byte_buf_init(&input, allocator, 9 + payload_len);
+
+    /* HTTP/2 frame header */
+    uint8_t frame_header[] = {
+        (uint8_t)((payload_len >> 16) & 0xFF),
+        (uint8_t)((payload_len >> 8) & 0xFF),
+        (uint8_t)(payload_len & 0xFF), /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,        /* Type */
+        0x00,                          /* Flags: no END_HEADERS */
+        0x00,
+        0x00,
+        0x00,
+        0x01, /* Stream ID: 1 */
+    };
+    aws_byte_buf_write(&input, frame_header, sizeof(frame_header));
+
+    /* HPACK payload: literal header field (new name, never indexed) + string length + partial data */
+    uint8_t literal_prefix = 0x00;
+    aws_byte_buf_write_u8(&input, literal_prefix);
+    aws_byte_buf_write(&input, varint, varint_len);
+    uint8_t name_data[] = {'A', 'A', 'A'};
+    aws_byte_buf_write(&input, name_data, sizeof(name_data));
+
+    /* The decoder must reject because the declared string length exceeds the header-list budget */
+    struct aws_h2err err = s_decode_all(fixture, aws_byte_cursor_from_buf(&input));
+    ASSERT_TRUE(aws_h2err_failed(err));
+
+    aws_byte_buf_clean_up(&input);
+    return AWS_OP_SUCCESS;
+}
