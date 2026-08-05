@@ -640,7 +640,7 @@ TEST_CASE(h2_client_connection_init_settings_applied_after_ack_by_peer) {
     return s_tester_clean_up();
 }
 
-/* Test that h2 stream can take a h1 request massega and transfrom it to h2 style to send it. */
+/* Test that h2 stream can take a h1 request message and transform it to h2 style to send it. */
 TEST_CASE(h2_client_stream_with_h1_request_message) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
@@ -657,7 +657,7 @@ TEST_CASE(h2_client_stream_with_h1_request_message) {
         DEFINE_HEADER("Accept", "*/*"),
         DEFINE_HEADER("Host", "example.com"),
         DEFINE_HEADER("Content-Length", "5"),
-        DEFINE_HEADER("Upgrade", "HTTP/2.0"), /* Connection-specific header should be skiped */
+        DEFINE_HEADER("Upgrade", "HTTP/2.0"), /* Connection-specific header should be skipped */
     };
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
     /* body */
@@ -2257,7 +2257,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_window_size) {
 }
 
 /* Test when connection window size becomes zero, and stream window size is zero, window_update on connection and stream
- * will not affect eachother */
+ * will not affect each other */
 TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_size) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
@@ -2337,7 +2337,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
     ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, setting_ack_frame->type);
     ASSERT_TRUE(setting_ack_frame->ack);
 
-    /* Send the rest requst, which only data frames will be blocked */
+    /* Send the rest request, which only data frames will be blocked */
     ASSERT_SUCCESS(s_stream_tester_init(&stream_testers[1], requests[1]));
     ASSERT_SUCCESS(s_stream_tester_init(&stream_testers[2], requests[2]));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -2469,7 +2469,7 @@ TEST_CASE(h2_client_stream_send_window_update) {
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    /* Check the inital window update frame has been sent to maximize the connection window */
+    /* Check the initial window update frame has been sent to maximize the connection window */
     size_t initial_window_update_index = 0;
     struct h2_decoded_frame *initial_connection_window_update_frame = h2_decode_tester_find_stream_frame(
         &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, 0 /*stream_id*/, 0 /*idx*/, &initial_window_update_index);
@@ -3323,7 +3323,7 @@ TEST_CASE(h2_client_conn_receive_goaway) {
     ASSERT_TRUE(stream_testers[1].complete);
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_GOAWAY_RECEIVED, stream_testers[1].on_complete_error_code);
 
-    /* validate the new requst will no be accepted */
+    /* validate the new request will not be accepted */
     ASSERT_FAILS(s_stream_tester_init(&stream_testers[2], requests[2]));
 
     /* Try gracefully shutting down the connection */
@@ -5299,7 +5299,7 @@ TEST_CASE(h2_client_get_local_settings) {
     struct aws_http2_setting settings_expected[AWS_HTTP2_SETTINGS_COUNT];
     s_default_settings(settings_expected);
     aws_http2_connection_get_local_settings(s_tester.connection, settings_get);
-    /* Altough we disabled the push_promise at the initial settings, but without the settings ACK from peer, the
+    /* Although we disabled the push_promise at the initial settings, but without the settings ACK from peer, the
      * settings we are using locally is still the default settings */
     ASSERT_SUCCESS(s_compare_settings_array(settings_expected, settings_get, AWS_HTTP2_SETTINGS_COUNT));
 
@@ -5739,7 +5739,7 @@ TEST_CASE(h2_client_manual_data_write) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
     size_t frame_count2 = h2_decode_tester_frame_count(&s_tester.peer.decode);
-    /* Peer should received header frame without end_stream and mutiple data frames and combined payload length should
+    /* Peer should received header frame without end_stream and multiple data frames and combined payload length should
      * be the same as total length sent. */
     struct h2_decoded_frame *header_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, frame_count);
     ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_HEADERS, header_frame->type);
@@ -5965,7 +5965,7 @@ TEST_CASE(h2_client_manual_data_write_with_body) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
     size_t frame_count2 = h2_decode_tester_frame_count(&s_tester.peer.decode);
-    /* Peer should received header frame without end_stream and mutiple data frames and combined payload length should
+    /* Peer should received header frame without end_stream and multiple data frames and combined payload length should
      * be the same as total length sent. */
     struct h2_decoded_frame *header_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, frame_count);
     ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_HEADERS, header_frame->type);
@@ -6697,7 +6697,7 @@ TEST_CASE(h2_client_cap_manual_window_update) {
         &conn_window_update_index);
     ASSERT_NOT_NULL(connection_window_update_frame);
     ASSERT_UINT_EQUALS(allowed_max_window_update, connection_window_update_frame->window_size_increment);
-    /* The user requested window update still has more left, so everytime the window shrink, it will update the window
+    /* The user requested window update still has more left, so every time the window shrinks, it will update the window
      * automatically, until all the requested window update has been sent */
     size_t stream_window_update_index = 0;
     struct h2_decoded_frame *stream_window_update_frame = h2_decode_tester_find_stream_frame(

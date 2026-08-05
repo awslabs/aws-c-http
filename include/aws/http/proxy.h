@@ -26,7 +26,7 @@ struct aws_http_proxy_strategy;
 struct aws_socket_channel_bootstrap_options;
 
 /**
- * @Deprecated - Supported proxy authentication modes.  Superceded by proxy strategy.
+ * @Deprecated - Supported proxy authentication modes.  Superseded by proxy strategy.
  */
 enum aws_http_proxy_authentication_type {
     AWS_HPAT_NONE = 0,
@@ -91,7 +91,7 @@ struct proxy_env_var_settings {
     /*
      * Optional.
      * If not set, a default tls option will be created. when https used for Local to proxy connection.
-     * Must be distinct from the the tls_connection_options from aws_http_connection_manager_options
+     * Must be distinct from the tls_connection_options from aws_http_connection_manager_options
      */
     const struct aws_tls_connection_options *tls_options;
 };
@@ -121,7 +121,7 @@ struct aws_http_proxy_options {
     /**
      * Optional.
      * TLS configuration for the Local <-> Proxy connection
-     * Must be distinct from the the TLS options in the parent aws_http_connection_options struct
+     * Must be distinct from the TLS options in the parent aws_http_connection_options struct
      */
     const struct aws_tls_connection_options *tls_options;
 
@@ -155,7 +155,7 @@ struct aws_http_proxy_options {
 
     /**
      * Optional
-     * No proxy hosts - Comma seperated list of hosts for which not to use a proxy, if one is specified.
+     * No proxy hosts - Comma separated list of hosts for which not to use a proxy, if one is specified.
      */
     struct aws_byte_cursor no_proxy_hosts;
 };

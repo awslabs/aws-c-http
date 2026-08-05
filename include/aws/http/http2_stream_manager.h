@@ -27,7 +27,7 @@ struct aws_http_manager_metrics;
  * When stream is NULL, error code will be set to indicate what happened.
  * If there is a stream returned, you own the stream completely.
  * Invoked on the same thread as other callback of the stream, which will be the thread of the connection, ideally.
- * If there is no connection made, the callback will be invoked from a sperate thread.
+ * If there is no connection made, the callback will be invoked from a separate thread.
  */
 typedef void(
     aws_http2_stream_manager_on_stream_acquired_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
@@ -74,10 +74,10 @@ struct aws_http2_stream_manager_options {
      * Optional.
      * HTTP/2 connection configuration. Check `struct aws_http2_connection_options` for details of each config.
      * Notes for window control:
-     * - By default, client will will maintain its flow-control windows such that no back-pressure is applied and data
+     * - By default, client will maintain its flow-control windows such that no back-pressure is applied and data
      * arrives as fast as possible.
      * - For connection level window control, `conn_manual_window_management` will enable manual control. The
-     * inital window size is not controllable.
+     * initial window size is not controllable.
      * - For stream level window control, `enable_read_back_pressure` will enable manual control. The initial window
      * size needs to be set through `initial_window_size` or `initial_settings_array`.
      */
@@ -143,12 +143,12 @@ struct aws_http2_stream_manager_options {
      * 0 will be considered as using a default value.
      * The ideal number of concurrent streams for a connection. Stream manager will try to create a new connection if
      * one connection reaches this number. But, if the max connections reaches, manager will reuse connections to create
-     * the acquired steams as much as possible. */
+     * the acquired streams as much as possible. */
     size_t ideal_concurrent_streams_per_connection;
     /**
      * Optional.
      * Default is no limit, which will use the limit from the server. 0 will be considered as using the default value.
-     * The real number of concurrent streams per connection will be controlled by the minmal value of the setting from
+     * The real number of concurrent streams per connection will be controlled by the minimal value of the setting from
      * other end and the value here.
      */
     size_t max_concurrent_streams_per_connection;

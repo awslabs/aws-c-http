@@ -134,7 +134,7 @@ enum aws_http_connection_manager_count_type {
  *   vended_connection_count - the # of connections held by external users that haven't been released.  Under correct
  *      usage this should be zero before SHUTTING_DOWN is entered, but we attempt to handle incorrect usage gracefully.
  *
- * While all the counter fall to zero and no outlife transition, connection manager will detroy itself.
+ * While all the counter fall to zero and no outlife transition, connection manager will destroy itself.
  *
  * While shutting down, as pending connects resolve, we immediately release new incoming (from http) connections
  *
@@ -222,7 +222,7 @@ struct aws_http_connection_manager {
 
     /*
      * The number of established new HTTP/2 connections we have waiting for SETTINGS from the http layer
-     * It doesn't contribute to internal refcount as AWS_HCMCT_OPEN_CONNECTION inclues all connections waiting for
+     * It doesn't contribute to internal refcount as AWS_HCMCT_OPEN_CONNECTION includes all connections waiting for
      * settings as well.
      */
     size_t pending_settings_count;
@@ -588,7 +588,7 @@ static void s_connection_manager_internal_ref_decrease(
 
     manager->internal_ref[count_type] -= num;
     for (size_t i = 0; i < num; i++) {
-        /* This only happens between transcation init and transcation clean up. As transcation always has a internal
+        /* This only happens between transaction init and transaction clean up. As transaction always has a internal
          * refcount, this will never bring the refcount to zero */
         aws_ref_count_release(&manager->internal_ref_count);
     }
