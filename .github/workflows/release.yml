@@ -8,6 +8,10 @@ on:
         required: false
         default: 'false'
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 env:
   PACKAGE_NAME: aws-c-http
   CRT_CI_ROLE: ${{ secrets.CRT_CI_ROLE_ARN }}
