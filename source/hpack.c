@@ -253,7 +253,7 @@ trans_index_from_dynamic_table:
     } else {
         index = (context->dynamic_table.buffer_capacity - context->dynamic_table.index_0) + absolute_index;
     }
-    /* Need to add the static table size to re-base indicies */
+    /* Need to add the static table size to re-base indices */
     index += s_static_header_table_size;
     return index;
 }
