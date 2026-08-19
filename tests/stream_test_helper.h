@@ -32,6 +32,11 @@ struct client_stream_tester {
     struct aws_http_headers *response_headers;
     bool response_headers_done;
 
+    /* Running count of individual header fields delivered via on_response_headers, across all
+     * header-blocks. Useful for proving a decoder-side check fired partway through a header-list
+     * instead of only after the whole thing was decoded. */
+    size_t num_headers_received;
+
     /* Trailing header-block */
     struct aws_http_headers *response_trailer;
     bool response_trailer_done;
@@ -55,6 +60,7 @@ struct client_stream_tester_options {
     struct aws_http_message *request;
     struct aws_http_connection *connection;
     bool http2_manual_write;
+    bool use_manual_data_writes;
     /* Optional: pointer to bool to track if on_h2_remote_end_stream fires */
     bool *on_h2_remote_end_stream;
 };

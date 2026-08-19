@@ -1621,6 +1621,9 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
             case AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE: {
                 aws_h2_decoder_set_setting_max_frame_size(decoder, settings_array[i].value);
             } break;
+            case AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE: {
+                aws_h2_decoder_set_setting_max_header_list_size(decoder, settings_array[i].value);
+            } break;
             default:
                 break;
         }
@@ -1867,6 +1870,13 @@ error:
 
 static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h2_stream *stream, int error_code) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
+    /* Guard against double-completion (e.g. GOAWAY completes stream, then pending cancel task fires) */
+    if (stream->thread_data.is_complete) {
+        AWS_H2_STREAM_LOG(DEBUG, stream, "stream already completed, ignoring.");
+        return;
+    }
+    stream->thread_data.is_complete = true;
 
     /* Nice logging */
     if (error_code) {

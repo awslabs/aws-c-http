@@ -6,7 +6,7 @@ on:
       - 'main'
 
 env:
-  BUILDER_VERSION: v0.9.90
+  BUILDER_VERSION: latest
   BUILDER_SOURCE: releases
   BUILDER_HOST: https://d19elf31gohf1l.cloudfront.net
   PACKAGE_NAME: aws-c-http
@@ -22,6 +22,7 @@ jobs:
   linux-compat:
     runs-on: ubuntu-24.04 # latest
     strategy:
+      fail-fast: false
       matrix:
         image:
           - manylinux1-x64
@@ -47,6 +48,7 @@ jobs:
   linux-compiler-compat:
     runs-on: ubuntu-24.04 # latest
     strategy:
+      fail-fast: false
       matrix:
         compiler:
           - name: clang-6
@@ -56,6 +58,7 @@ jobs:
           - name: clang-11
           - name: clang-15
           - name: clang-17
+          - name: clang-latest
           - name: gcc-4.8
           - name: gcc-5
           - name: gcc-6
@@ -94,6 +97,7 @@ jobs:
   clang-sanitizers:
     runs-on: ubuntu-24.04 # latest
     strategy:
+      fail-fast: false
       matrix:
         sanitizers: [",thread", ",address,undefined"]
     steps:
@@ -231,7 +235,37 @@ jobs:
       run: |
         python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder')"
         chmod a+x builder
+        ./builder build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DCMAKE_NO_SYSTEM_FROM_IMPORTED=ON
+
+  macos-s2n:
+    runs-on: macos-15
+    env:
+      AWS_CRT_USE_NON_FIPS_TLS_13: 1
+    steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ env.CRT_CI_ROLE }}
+        aws-region: ${{ env.AWS_DEFAULT_REGION }}
+    - name: Build ${{ env.PACKAGE_NAME }} + consumers
+      run: |
+        python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder')"
+        chmod a+x builder
         ./builder build -p ${{ env.PACKAGE_NAME }}
+
+  macos-x64-s2n:
+    runs-on: macos-15-large
+    env:
+      AWS_CRT_USE_NON_FIPS_TLS_13: 1
+    steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ env.CRT_CI_ROLE }}
+        aws-region: ${{ env.AWS_DEFAULT_REGION }}
+    - name: Build ${{ env.PACKAGE_NAME }} + consumers
+      run: |
+        python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder')"
+        chmod a+x builder
+        ./builder build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DCMAKE_NO_SYSTEM_FROM_IMPORTED=ON
 
   localhost-test-linux:
     runs-on: ubuntu-24.04 # latest

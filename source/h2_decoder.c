@@ -30,6 +30,14 @@ static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 /* initial size for cookie buffer, buffer will grow if needed */
 static const size_t s_decoder_cookie_buffer_initial_size = 512;
 
+/* RFC-9113 6.5.2 (originally RFC-7540 6.5.2): fixed per-field overhead added to
+ * name.len + value.len when accounting a decoded header field against
+ * SETTINGS_MAX_HEADER_LIST_SIZE. This value is mandated by the spec, not implementation-chosen:
+ * it approximates the bookkeeping cost (pointers, length fields, allocation overhead) of storing
+ * one header field, so that a header-list cannot evade the size limit by consisting of many
+ * fields with short or empty names/values. */
+static const size_t s_header_field_size_overhead = 32;
+
 #define DECODER_LOGF(level, decoder, text, ...)                                                                        \
     AWS_LOGF_##level(AWS_LS_HTTP_DECODER, "id=%p " text, (decoder)->logging_id, __VA_ARGS__)
 #define DECODER_LOG(level, decoder, text) DECODER_LOGF(level, decoder, "%s", text)
@@ -262,6 +270,10 @@ struct aws_h2_decoder {
 
         bool body_headers_forbidden;
 
+        /* Running total of decoded header-list size (RFC-9113 6.5.2: name.len + value.len + 32
+         * per header field), checked against settings.max_header_list_size as fields are decoded. */
+        uint64_t header_list_size;
+
         /* Buffer up cookie header fields to concatenate separate ones */
         struct aws_byte_buf cookies;
         /* If separate cookie fields have different compression types, the concatenated cookie uses the strictest type.
@@ -275,6 +287,8 @@ struct aws_h2_decoder {
         uint32_t enable_push;
         /*  the size of the largest frame payload */
         uint32_t max_frame_size;
+        /* max size of a decoded header-list (field section), RFC-9113 6.5.2 accounting */
+        uint32_t max_header_list_size;
     } settings;
 
     struct aws_array_list settings_buffer_list;
@@ -324,6 +338,7 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
 
     decoder->settings.enable_push = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_ENABLE_PUSH];
     decoder->settings.max_frame_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE];
+    decoder->settings.max_header_list_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE];
 
     if (aws_array_list_init_dynamic(
             &decoder->settings_buffer_list, decoder->alloc, 0, sizeof(struct aws_http2_setting))) {
@@ -1247,6 +1262,13 @@ static struct aws_h2err s_process_header_field(
         goto already_malformed;
     }
 
+    /* Header-list-size accounting, see s_header_field_size_overhead comment above. */
+    current_block->header_list_size += header_field->name.len + header_field->value.len + s_header_field_size_overhead;
+    if (current_block->header_list_size > decoder->settings.max_header_list_size) {
+        DECODER_LOG(ERROR, decoder, "Decoded header-list size exceeds SETTINGS_MAX_HEADER_LIST_SIZE");
+        return aws_h2err_from_h2_code(AWS_HTTP2_ERR_ENHANCE_YOUR_CALM);
+    }
+
     const struct aws_byte_cursor name = header_field->name;
     if (name.len == 0) {
         DECODER_LOG(ERROR, decoder, "Header name is blank");
@@ -1589,4 +1611,9 @@ void aws_h2_decoder_set_setting_enable_push(struct aws_h2_decoder *decoder, uint
 
 void aws_h2_decoder_set_setting_max_frame_size(struct aws_h2_decoder *decoder, uint32_t data) {
     decoder->settings.max_frame_size = data;
+}
+
+void aws_h2_decoder_set_setting_max_header_list_size(struct aws_h2_decoder *decoder, uint32_t data) {
+    decoder->settings.max_header_list_size = data;
+    aws_hpack_decoder_set_max_header_list_size(&decoder->hpack, data);
 }

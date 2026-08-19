@@ -64,6 +64,11 @@ struct elasticurl_ctx {
     enum aws_log_level log_level;
     enum aws_http_version required_http_version;
     bool exchange_completed;
+    bool manual_write;
+    bool manual_write_chunked;
+    int64_t manual_write_content_length;
+    struct aws_http_stream *stream;
+    bool stream_ready;
 };
 
 static void s_usage(int exit_code) {
@@ -96,6 +101,7 @@ static void s_usage(int exit_code) {
     fprintf(stderr, "      --version: print the version of elasticurl.\n");
     fprintf(stderr, "      --http2: HTTP/2 connection required\n");
     fprintf(stderr, "      --http1_1: HTTP/1.1 connection required\n");
+    fprintf(stderr, "      --manual-write: interactively write request body via stdin\n");
     fprintf(stderr, "  -h, --help\n");
     fprintf(stderr, "            Display this message and quit.\n");
     exit(exit_code);
@@ -125,6 +131,7 @@ static struct aws_cli_option s_long_options[] = {
     {"version", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'V'},
     {"http2", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'w'},
     {"http1_1", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'W'},
+    {"manual-write", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'n'},
     {"help", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'h'},
     /* Per getopt(3) the last element of the array has to be filled with all zeros */
     {NULL, AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 0},
@@ -162,7 +169,7 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
     while (true) {
         int option_index = 0;
         int c =
-            aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:j:l:m:M:GPHiko:t:v:VwWh", s_long_options, &option_index);
+            aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:j:l:m:M:GPHiko:t:v:VwWnh", s_long_options, &option_index);
         if (c == -1) {
             break;
         }
@@ -275,6 +282,9 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
             case 'W':
                 ctx->alpn = "http/1.1";
                 ctx->required_http_version = AWS_HTTP_VERSION_1_1;
+                break;
+            case 'n':
+                ctx->manual_write = true;
                 break;
             case 'h':
                 s_usage(0);
@@ -432,7 +442,26 @@ static struct aws_http_message *s_build_http_request(
     };
     aws_http_message_add_header(request, user_agent_header);
 
-    if (app_ctx->input_body) {
+    if (app_ctx->manual_write) {
+        /* Manual write mode: set headers but no body stream.
+         * H2 doesn't use Transfer-Encoding — just send DATA frames. */
+        if (app_ctx->manual_write_chunked && protocol_version != AWS_HTTP_VERSION_2) {
+            struct aws_http_header te_header = {
+                .name = aws_byte_cursor_from_c_str("transfer-encoding"),
+                .value = aws_byte_cursor_from_c_str("chunked"),
+            };
+            aws_http_message_add_header(request, te_header);
+        } else if (!app_ctx->manual_write_chunked) {
+            char content_length[64];
+            AWS_ZERO_ARRAY(content_length);
+            snprintf(content_length, sizeof(content_length), "%" PRIi64, app_ctx->manual_write_content_length);
+            struct aws_http_header cl_header = {
+                .name = aws_byte_cursor_from_c_str("content-length"),
+                .value = aws_byte_cursor_from_c_str(content_length),
+            };
+            aws_http_message_add_header(request, cl_header);
+        }
+    } else if (app_ctx->input_body) {
         int64_t data_len = 0;
         if (aws_input_stream_get_length(app_ctx->input_body, &data_len)) {
             fprintf(stderr, "failed to get length of input stream.\n");
@@ -522,6 +551,7 @@ static void s_on_signing_complete(struct aws_http_message *request, int error_co
         .on_response_header_block_done = s_on_incoming_header_block_done_fn,
         .on_response_body = s_on_incoming_body_fn,
         .on_complete = s_on_stream_complete_fn,
+        .use_manual_data_writes = app_ctx->manual_write,
     };
 
     app_ctx->response_code_written = false;
@@ -532,6 +562,15 @@ static void s_on_signing_complete(struct aws_http_message *request, int error_co
         exit(1);
     }
     aws_http_stream_activate(stream);
+
+    if (app_ctx->manual_write) {
+        /* Store stream and signal main thread to begin interactive writes */
+        app_ctx->stream = stream;
+        aws_mutex_lock(&app_ctx->mutex);
+        app_ctx->stream_ready = true;
+        aws_mutex_unlock(&app_ctx->mutex);
+        aws_condition_variable_notify_all(&app_ctx->c_var);
+    }
 
     /* Connection will stay alive until stream completes */
     aws_http_connection_release(app_ctx->connection);
@@ -552,6 +591,103 @@ static void s_on_client_connection_shutdown(struct aws_http_connection *connecti
 static bool s_completion_predicate(void *arg) {
     struct elasticurl_ctx *app_ctx = arg;
     return app_ctx->exchange_completed;
+}
+
+static bool s_stream_ready_predicate(void *arg) {
+    struct elasticurl_ctx *app_ctx = arg;
+    return app_ctx->stream_ready || app_ctx->exchange_completed;
+}
+
+struct manual_write_ctx {
+    struct aws_allocator *allocator;
+    uint8_t *data;
+    struct aws_input_stream *stream;
+};
+
+static void s_on_manual_write_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)stream;
+    (void)error_code;
+    struct manual_write_ctx *ctx = user_data;
+    aws_input_stream_release(ctx->stream);
+    aws_mem_release(ctx->allocator, ctx->data);
+    aws_mem_release(ctx->allocator, ctx);
+}
+
+static void s_manual_write_loop(struct elasticurl_ctx *app_ctx) {
+    /* Wait for stream to be activated */
+    aws_mutex_lock(&app_ctx->mutex);
+    aws_condition_variable_wait_pred(&app_ctx->c_var, &app_ctx->mutex, s_stream_ready_predicate, app_ctx);
+    aws_mutex_unlock(&app_ctx->mutex);
+
+    if (app_ctx->exchange_completed) {
+        return;
+    }
+
+    int64_t bytes_sent = 0;
+    char line_buf[4096];
+
+    fprintf(stderr, "Enter data (empty line to finish):\n");
+    while (fgets(line_buf, sizeof(line_buf), stdin)) {
+        /* Strip trailing newline */
+        size_t len = strlen(line_buf);
+        if (len > 0 && line_buf[len - 1] == '\n') {
+            line_buf[--len] = '\0';
+        }
+
+        /* Empty line = done */
+        if (len == 0) {
+            break;
+        }
+
+        /* Heap-allocate data so it outlives this stack frame */
+        uint8_t *heap_data = aws_mem_calloc(app_ctx->allocator, 1, len);
+        memcpy(heap_data, line_buf, len);
+
+        struct aws_byte_cursor data_cursor = aws_byte_cursor_from_array(heap_data, len);
+        struct aws_input_stream *data_stream =
+            aws_input_stream_new_from_cursor(app_ctx->allocator, &data_cursor);
+
+        struct manual_write_ctx *write_ctx = aws_mem_calloc(app_ctx->allocator, 1, sizeof(struct manual_write_ctx));
+        write_ctx->allocator = app_ctx->allocator;
+        write_ctx->data = heap_data;
+        write_ctx->stream = data_stream;
+
+        struct aws_http_stream_write_data_options write_opts = {
+            .data = data_stream,
+            .end_stream = false,
+            .on_complete = s_on_manual_write_complete,
+            .user_data = write_ctx,
+        };
+
+        if (aws_http_stream_write_data(app_ctx->stream, &write_opts)) {
+            fprintf(stderr, "write_data failed: %s\n", aws_error_debug_str(aws_last_error()));
+            aws_input_stream_release(data_stream);
+            aws_mem_release(app_ctx->allocator, heap_data);
+            aws_mem_release(app_ctx->allocator, write_ctx);
+            break;
+        }
+
+        bytes_sent += (int64_t)len;
+        fprintf(stderr, "Sent %zu bytes (total: %" PRIi64 ")\n", len, bytes_sent);
+    }
+
+    /* Send final write */
+    struct aws_byte_cursor empty_cursor = aws_byte_cursor_from_c_str("");
+    struct aws_input_stream *empty_stream =
+        aws_input_stream_new_from_cursor(app_ctx->allocator, &empty_cursor);
+
+    struct aws_http_stream_write_data_options final_opts = {
+        .data = empty_stream,
+        .end_stream = true,
+    };
+
+    if (aws_http_stream_write_data(app_ctx->stream, &final_opts)) {
+        fprintf(stderr, "final write_data failed: %s\n", aws_error_debug_str(aws_last_error()));
+    } else {
+        fprintf(stderr, "Stream complete. Sent %" PRIi64 " bytes.\n", bytes_sent);
+    }
+
+    aws_input_stream_release(empty_stream);
 }
 
 int main(int argc, char **argv) {
@@ -578,6 +714,25 @@ int main(int argc, char **argv) {
         aws_hash_callback_string_destroy);
 
     s_parse_options(argc, argv, &app_ctx);
+
+    /* Interactive prompt for manual-write mode */
+    if (app_ctx.manual_write) {
+        if (!strcmp(app_ctx.verb, "POST")) {
+            fprintf(stderr, "Only POST requests allowed for manual_writes. Exiting... \n");
+            return 1;
+        }
+        fprintf(stderr, "Manual write mode enabled.\n");
+        fprintf(stderr, "Content-Length (leave empty for chunked transfer encoding): ");
+        char cl_buf[64];
+        if (fgets(cl_buf, sizeof(cl_buf), stdin) && cl_buf[0] != '\n') {
+            app_ctx.manual_write_content_length = (int64_t)atoll(cl_buf);
+            app_ctx.manual_write_chunked = false;
+            fprintf(stderr, "Using Content-Length: %" PRIi64 "\n", app_ctx.manual_write_content_length);
+        } else {
+            app_ctx.manual_write_chunked = true;
+            fprintf(stderr, "Using chunked transfer encoding.\n");
+        }
+    }
 
     struct aws_logger logger;
     AWS_ZERO_STRUCT(logger);
@@ -728,6 +883,9 @@ int main(int argc, char **argv) {
         http_client_options.prior_knowledge_http2 = true;
     }
     aws_http_client_connect(&http_client_options);
+    if (app_ctx.manual_write) {
+        s_manual_write_loop(&app_ctx);
+    }
     aws_mutex_lock(&app_ctx.mutex);
     aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_completion_predicate, &app_ctx);
     aws_mutex_unlock(&app_ctx.mutex);
