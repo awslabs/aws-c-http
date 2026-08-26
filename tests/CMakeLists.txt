@@ -590,7 +590,7 @@ add_net_test_case(connection_manager_acquire_release_mix)
 add_net_test_case(connection_manager_max_pending_acquisitions)
 add_net_test_case(connection_manager_max_pending_acquisitions_with_vended_connections)
 
-# Integration test that requires proxy envrionment in us-east-1 region.
+# Integration test that requires proxy environment in us-east-1 region.
 # TODO: test the server name validation properly
 if(ENABLE_PROXY_INTEGRATION_TESTS)
     add_net_test_case(connection_manager_proxy_integration_forwarding_proxy_no_auth)
