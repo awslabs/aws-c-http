@@ -36,7 +36,7 @@ jobs:
           fetch-depth: 0
 
       - name: Check ABI
-        uses: awslabs/aws-crt-builder/.github/actions/check-abi@main
+        uses: awslabs/aws-crt-builder/.github/actions/check-abi@label-on-push
         with:
           lib-name: ${{ env.PACKAGE_NAME }}
           builder-version: latest
