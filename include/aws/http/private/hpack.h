@@ -120,6 +120,10 @@ struct aws_hpack_decoder {
         size_t received_resize_num; /* The continuous number of dynamic table resize received during pending. */
     } dynamic_table_protocol_max_size_setting;
 
+    /* Maximum decoded header-list size (from SETTINGS_MAX_HEADER_LIST_SIZE).
+     * Individual HPACK string lengths are checked against this to prevent unbounded growth. */
+    uint64_t max_header_list_size;
+
     /* PRO TIP: Don't union progress_integer and progress_string together, since string_decode calls integer_decode */
     struct hpack_progress_integer {
         enum {
@@ -261,6 +265,10 @@ void aws_hpack_decoder_clean_up(struct aws_hpack_decoder *decoder);
  * sends the appropriate Dynamic Table Size Updates in the next header block we receive. */
 AWS_HTTP_API
 void aws_hpack_decoder_update_max_table_size(struct aws_hpack_decoder *decoder, uint32_t new_max_size);
+
+/* Update the maximum header-list size used to bound individual HPACK string lengths. */
+AWS_HTTP_API
+void aws_hpack_decoder_set_max_header_list_size(struct aws_hpack_decoder *decoder, uint64_t max_header_list_size);
 
 /**
  * Decode the next entry in the header-block-fragment.

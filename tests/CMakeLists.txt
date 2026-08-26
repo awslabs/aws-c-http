@@ -427,6 +427,7 @@ add_h2_decoder_test_set(h2_decoder_preface_from_client)
 add_h2_decoder_test_set(h2_decoder_err_bad_preface_from_client_1)
 add_h2_decoder_test_set(h2_decoder_err_bad_preface_from_client_2)
 add_h2_decoder_test_set(h2_decoder_err_bad_preface_from_client_3)
+add_h2_decoder_test_set(h2_decoder_err_hpack_string_declared_length_exceeds_limit)
 
 add_test_case(h2_client_sanity_check)
 add_test_case(h2_client_stream_create)
@@ -591,7 +592,7 @@ add_net_test_case(connection_manager_acquire_release_mix)
 add_net_test_case(connection_manager_max_pending_acquisitions)
 add_net_test_case(connection_manager_max_pending_acquisitions_with_vended_connections)
 
-# Integration test that requires proxy envrionment in us-east-1 region.
+# Integration test that requires proxy environment in us-east-1 region.
 # TODO: test the server name validation properly
 if(ENABLE_PROXY_INTEGRATION_TESTS)
     add_net_test_case(connection_manager_proxy_integration_forwarding_proxy_no_auth)

@@ -1877,7 +1877,7 @@ static int s_handler_process_read_message(
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION, "id=%p: Incoming message of size %zu.", (void *)&connection->base, message_size);
     if (connection->thread_data.read_state == AWS_CONNECTION_READ_SHUT_DOWN_COMPLETE) {
-        /* Read has stopped, ignore the data, shutdown the channel incase it has not started yet. */
+        /* Read has stopped, ignore the data, shutdown the channel in case it has not started yet. */
         aws_mem_release(message->allocator, message); /* Release the message as we return success. */
         s_shutdown_due_to_error(connection, AWS_ERROR_HTTP_CONNECTION_CLOSED);
         return AWS_OP_SUCCESS;
