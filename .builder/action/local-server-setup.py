@@ -49,3 +49,4 @@ class LocalServerSetup(Builder.Action):
         def close_local_server():
             p_server.terminate()
             p_non_tls_server.terminate()
+            p_h11_server.terminate()

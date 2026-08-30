@@ -73,6 +73,14 @@ AWS_HTTP_API int aws_h1_decode(struct aws_h1_decoder *decoder, struct aws_byte_c
 
 AWS_HTTP_API void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, const void *id);
 AWS_HTTP_API void aws_h1_decoder_set_body_headers_ignored(struct aws_h1_decoder *decoder, bool body_headers_ignored);
+AWS_HTTP_API void aws_h1_decoder_set_body_headers_ignored_on_2xx(
+    struct aws_h1_decoder *decoder,
+    bool body_headers_ignored_on_2xx);
+
+/**
+ * Signal that the connection has closed
+ */
+AWS_HTTP_API int aws_h1_decoder_on_connection_closed(struct aws_h1_decoder *decoder);
 
 /* RFC-7230 section 4.2 Message Format */
 #define AWS_HTTP_TRANSFER_ENCODING_CHUNKED (1 << 0)
