@@ -6,6 +6,7 @@
 #include <aws/http/connection_manager.h>
 
 #include <aws/http/connection.h>
+#include <aws/http/private/connection_impl.h>
 #include <aws/http/private/connection_manager_system_vtable.h>
 #include <aws/http/private/connection_monitor.h>
 #include <aws/http/private/http_impl.h>
@@ -47,6 +48,7 @@ static struct aws_http_connection_manager_system_vtable s_default_system_vtable 
     .aws_http_connection_release = aws_http_connection_release,
     .aws_http_connection_close = aws_http_connection_close,
     .aws_http_connection_new_requests_allowed = aws_http_connection_new_requests_allowed,
+    .aws_http_connection_is_connection_idle = aws_http_connection_is_connection_idle,
     .aws_high_res_clock_get_ticks = aws_high_res_clock_get_ticks,
     .aws_channel_thread_is_callers_thread = aws_channel_thread_is_callers_thread,
     .aws_http_connection_get_channel = aws_http_connection_get_channel,
@@ -58,7 +60,7 @@ const struct aws_http_connection_manager_system_vtable *g_aws_http_connection_ma
 
 bool aws_http_connection_manager_system_vtable_is_valid(const struct aws_http_connection_manager_system_vtable *table) {
     return table->aws_http_client_connect && table->aws_http_connection_close && table->aws_http_connection_release &&
-           table->aws_http_connection_new_requests_allowed;
+           table->aws_http_connection_new_requests_allowed && table->aws_http_connection_is_connection_idle;
 }
 
 enum aws_http_connection_manager_state_type { AWS_HCMST_UNINITIALIZED, AWS_HCMST_READY, AWS_HCMST_SHUTTING_DOWN };
@@ -1374,11 +1376,21 @@ int aws_http_connection_manager_release_connection(
     int result = AWS_OP_ERR;
     bool should_release_connection = !manager->system_vtable->aws_http_connection_new_requests_allowed(connection);
 
+    /* Even if the connection allows new requests, don't recycle if an H1 connection has streams still in progress.
+     * An H1 connection with orphaned streams will stall all future streams due to FIFO processing.
+     * H2 connections are exempt: multiplexed streams are independent and the H2 stream manager
+     * guarantees all streams complete before releasing. */
+    if (!should_release_connection &&
+        manager->system_vtable->aws_http_connection_get_version(connection) == AWS_HTTP_VERSION_1_1) {
+        should_release_connection = !manager->system_vtable->aws_http_connection_is_connection_idle(connection);
+    }
+
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_CONNECTION_MANAGER,
-        "id=%p: User releasing connection (id=%p)",
+        "id=%p: User releasing connection (id=%p), new requests allowed=%d",
         (void *)manager,
-        (void *)connection);
+        (void *)connection,
+        !should_release_connection);
 
     aws_mutex_lock(&manager->lock);
 
