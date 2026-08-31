@@ -6,8 +6,6 @@
 
 /* #TODO test empty strings */
 
-/* #TODO remove all OOM error handling in HTTP/2 & HPACK. make functions void if possible */
-
 /* RFC-7540 6.5.2 */
 const size_t s_hpack_dynamic_table_initial_size = 4096;
 const size_t s_hpack_dynamic_table_initial_elements = 512;
@@ -439,6 +437,7 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     /* Put the header at the "front" of the table */
     struct aws_http_header *table_header = s_dynamic_table_get(context, 0);
 
+    /* TODO:: We can optimize this with ring buffer. */
     /* allocate memory for the name and value, which will be deallocated whenever the entry is evicted from the table or
      * the table is cleaned up. We keep the pointer in the name pointer of each entry */
     const size_t buf_memory_size = header->name.len + header->value.len;
