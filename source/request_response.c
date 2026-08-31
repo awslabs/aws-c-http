@@ -6,6 +6,7 @@
 #include <aws/common/array_list.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
+#include <aws/common/uri.h>
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/request_response_impl.h>
 #include <aws/http/private/strutil.h>
@@ -928,6 +929,35 @@ struct aws_http_message *aws_http2_message_new_from_http1(
     struct aws_http_headers *copied_headers = message->headers;
     AWS_LOGF_TRACE(AWS_LS_HTTP_GENERAL, "Creating HTTP/2 message from HTTP/1 message id: %p", (void *)http1_msg);
 
+    /**
+     * An HTTP/1 request-target may be in absolute-form ("GET https://example.com/index.html HTTP/1.1", RFC-9112 3.2.2).
+     * HTTP/2 splits that across pseudo-headers, so ":path" must carry only the path and query. Parse the target here
+     * to get at them. Stays zeroed for the common origin-form target ("/index.html").
+     */
+    struct aws_uri absolute_form_target;
+    AWS_ZERO_STRUCT(absolute_form_target);
+    bool target_is_absolute_form = false;
+    if (aws_http_message_is_request(http1_msg)) {
+        struct aws_byte_cursor target;
+        if (aws_http_message_get_request_path(http1_msg, &target) == AWS_OP_SUCCESS) {
+            /* Only an absolute-form target has a scheme, and it is what distinguishes it from the other forms. */
+            if (target.len > 0 && target.ptr[0] != '/' && target.ptr[0] != '*') {
+                struct aws_uri parsed;
+                if (aws_uri_init_parse(&parsed, alloc, &target) == AWS_OP_SUCCESS) {
+                    if (aws_uri_scheme(&parsed)->len > 0) {
+                        absolute_form_target = parsed;
+                        target_is_absolute_form = true;
+                    } else {
+                        aws_uri_clean_up(&parsed);
+                    }
+                } else {
+                    /* Not parseable as a URI, treat it as an opaque target. */
+                    aws_reset_error();
+                }
+            }
+        }
+    }
+
     /* Set pseudo headers from HTTP/1.1 message */
     if (aws_http_message_is_request(http1_msg)) {
         struct aws_byte_cursor method;
@@ -998,6 +1028,15 @@ struct aws_http_message *aws_http2_message_new_from_http1(
                 (void *)http1_msg);
             aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
             goto error;
+        }
+        if (target_is_absolute_form) {
+            /* RFC-9113 8.3.1: ":path" carries the path and query of the target URI, not the whole absolute URI.
+             * The scheme and authority went into their own pseudo-headers above. */
+            path_cursor = *aws_uri_path_and_query(&absolute_form_target);
+            if (path_cursor.len == 0) {
+                /* An absolute URI with an empty path means the origin, i.e. "/" (RFC-9113 8.3.1). */
+                path_cursor = aws_byte_cursor_from_c_str("/");
+            }
         }
         if (aws_http_headers_add(copied_headers, aws_http_header_path, path_cursor)) {
             goto error;
@@ -1085,10 +1124,12 @@ struct aws_http_message *aws_http2_message_new_from_http1(
     aws_byte_buf_clean_up(&lower_name_buf);
     aws_http_message_set_body_stream(message, aws_http_message_get_body_stream(http1_msg));
 
+    aws_uri_clean_up(&absolute_form_target);
     return message;
 error:
     aws_http_message_release(message);
     aws_byte_buf_clean_up(&lower_name_buf);
+    aws_uri_clean_up(&absolute_form_target);
     return NULL;
 }
 
