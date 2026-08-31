@@ -67,9 +67,7 @@ bool aws_strutil_is_http_reason_phrase(struct aws_byte_cursor cursor);
 /**
  * Return whether this ASCII/UTF-8 sequence is a valid HTTP request-target.
  *
- * TODO: Actually check the complete grammar as defined in RFC7230 5.3 and
- * RFC3986. Currently this just checks whether the sequence is blatantly illegal
- * (ex: contains CR or LF)
+ * Note: rejects non-visible ASCII only, not the full RFC7230 5.3 / RFC3986 grammar. See the implementation.
  */
 AWS_HTTP_API
 bool aws_strutil_is_http_request_target(struct aws_byte_cursor cursor);
