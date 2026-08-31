@@ -213,9 +213,27 @@ int aws_hpack_decode_string(
 
                 /* If whole length consumed, we're done */
                 if (progress->length == 0) {
-                    /* #TODO Validate any padding bits left over in final byte of string.
-                     * "A padding not corresponding to the most significant bits of the
-                     * code for the EOS symbol MUST be treated as a decoding error" */
+                    if (progress->use_huffman) {
+                        /* RFC-7541 5.2: padding is the most significant bits of the EOS symbol, which is all 1s,
+                         * and must be shorter than 8 bits. Whatever the huffman decoder could not turn into a
+                         * symbol is the padding, sitting in the top `num_bits` bits of `working_bits`. */
+                        const uint8_t padding_num_bits = decoder->huffman_decoder.num_bits;
+                        if (padding_num_bits > 7) {
+                            HPACK_LOG(ERROR, decoder, "Huffman encoded string has more than 7 bits of padding");
+                            return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+                        }
+                        if (padding_num_bits > 0) {
+                            const uint8_t working_bits_size =
+                                (uint8_t)(sizeof(decoder->huffman_decoder.working_bits) * 8);
+                            const uint64_t padding =
+                                decoder->huffman_decoder.working_bits >> (working_bits_size - padding_num_bits);
+                            const uint64_t all_ones = ((uint64_t)1 << padding_num_bits) - 1;
+                            if (padding != all_ones) {
+                                HPACK_LOG(ERROR, decoder, "Huffman encoded string padding does not match EOS bits");
+                                return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+                            }
+                        }
+                    }
 
                     goto handle_complete;
                 }
