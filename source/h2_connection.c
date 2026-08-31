@@ -2186,9 +2186,6 @@ static struct aws_http_stream *s_connection_make_request(
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(client_connection, struct aws_h2_connection, base);
 
-    /* #TODO: http/2-ify the request (ex: add ":method" header). Should we mutate a copy or the original? Validate?
-     *  Or just pass pointer to headers struct and let encoder transform it while encoding? */
-
     struct aws_h2_stream *stream = aws_h2_stream_new_request(client_connection, options);
     if (!stream) {
         CONNECTION_LOGF(
@@ -2216,8 +2213,28 @@ static struct aws_http_stream *s_connection_make_request(
             aws_error_name(aws_last_error()));
         goto error;
     }
+    struct aws_byte_cursor method;
+    AWS_ZERO_STRUCT(method);
+    struct aws_byte_cursor path;
+    AWS_ZERO_STRUCT(path);
 
-    AWS_H2_STREAM_LOG(DEBUG, stream, "Created HTTP/2 request stream"); /* #TODO: print method & path */
+    if (aws_http_message_get_request_method(stream->thread_data.outgoing_message, &method)) {
+        aws_raise_error(AWS_ERROR_HTTP_REQUIRED_PSEUDO_HEADER_MISSING);
+        CONNECTION_LOG(ERROR, connection, "Cannot create request stream, the `:method` header is missing.");
+        goto error;
+    }
+    if (aws_http_message_get_request_path(stream->thread_data.outgoing_message, &path)) {
+        aws_raise_error(AWS_ERROR_HTTP_REQUIRED_PSEUDO_HEADER_MISSING);
+        CONNECTION_LOG(ERROR, connection, "Cannot create request stream, the `:path` header is missing.");
+        goto error;
+    }
+
+    AWS_H2_STREAM_LOGF(
+        DEBUG,
+        stream,
+        "Created HTTP/2 request stream, method: " PRInSTR ". path: " PRInSTR "",
+        AWS_BYTE_CURSOR_PRI(method),
+        AWS_BYTE_CURSOR_PRI(path));
     return &stream->base;
 
 error:
