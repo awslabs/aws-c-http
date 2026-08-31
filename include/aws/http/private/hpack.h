@@ -10,6 +10,11 @@
 #include <aws/common/hash_table.h>
 #include <aws/compression/huffman.h>
 
+/* The largest dynamic table this implementation will allocate, whatever the peer's
+ * SETTINGS_HEADER_TABLE_SIZE says. A macro so both hpack.c and hpack_encoder.c can use it
+ * without exporting a new symbol. */
+#define AWS_HPACK_MAX_DYNAMIC_TABLE_SIZE (16 * 1024 * 1024)
+
 /**
  * Result of aws_hpack_decode() call.
  * If a complete entry has not been decoded yet, type is ONGOING.

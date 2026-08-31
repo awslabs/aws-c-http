@@ -468,6 +468,54 @@ TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_huffman) {
     return AWS_OP_SUCCESS;
 }
 
+/* RFC-7541 5.2: padding must be the most significant bits of the EOS symbol, which is all 1s. */
+TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_huffman_bad_padding) {
+    struct decode_fixture *fixture = ctx;
+
+    struct aws_byte_buf output;
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, allocator, 8));
+    bool complete;
+
+    /* The huffman code for '0' is 00000 (5 bits), so a 1 byte string leaves 3 bits of padding.
+     * All 1s is legal. */
+    {
+        uint8_t input[] = {0x81 /* huffman | length 1 */, 0x07 /* 00000 111 */};
+        struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(input, AWS_ARRAY_SIZE(input));
+        ASSERT_SUCCESS(s_decode_string(fixture, &to_decode, &output, &complete));
+        ASSERT_TRUE(complete);
+        ASSERT_BIN_ARRAYS_EQUALS("0", 1, output.buffer, output.len);
+    }
+
+    /* Same symbol padded with 0s must be rejected. */
+    {
+        output.len = 0;
+        uint8_t input[] = {0x81, 0x00 /* 00000 000 */};
+        struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(input, AWS_ARRAY_SIZE(input));
+        ASSERT_FAILS(s_decode_string(fixture, &to_decode, &output, &complete));
+    }
+
+    aws_byte_buf_clean_up(&output);
+    return AWS_OP_SUCCESS;
+}
+
+/* RFC-7541 5.2: "A padding strictly longer than 7 bits MUST be treated as a decoding error." */
+TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_huffman_padding_too_long) {
+    struct decode_fixture *fixture = ctx;
+
+    /* Huffman-encoded "www.example.com" (RFC-7541 C.4.1) with a whole extra byte of 1s appended,
+     * and the length bumped from 12 to 13 to match. */
+    uint8_t input[] = {0x8d, 0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a, 0x6b, 0xa0, 0xab, 0x90, 0xf4, 0xff, 0xff};
+    struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(input, AWS_ARRAY_SIZE(input));
+
+    struct aws_byte_buf output;
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, allocator, 16));
+    bool complete;
+    ASSERT_FAILS(s_decode_string(fixture, &to_decode, &output, &complete));
+
+    aws_byte_buf_clean_up(&output);
+    return AWS_OP_SUCCESS;
+}
+
 /* Test that partial input doesn't register as "complete" */
 TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_ongoing) {
     struct decode_fixture *fixture = ctx;
@@ -897,6 +945,38 @@ static int test_hpack_dynamic_table_size_update_from_setting(struct aws_allocato
     ASSERT_UINT_EQUALS(130, output.buffer[4]);
 
     /* clean up */
+    aws_byte_buf_clean_up(&output);
+    aws_http_headers_release(headers);
+    aws_hpack_encoder_clean_up(&encoder);
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+/* A peer may advertise any uint32 for SETTINGS_HEADER_TABLE_SIZE. We clamp it to what we support,
+ * rather than failing every header block on that connection. */
+AWS_TEST_CASE(hpack_encoder_caps_peer_max_table_size, test_hpack_encoder_caps_peer_max_table_size)
+static int test_hpack_encoder_caps_peer_max_table_size(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    aws_http_library_init(allocator);
+
+    struct aws_hpack_encoder encoder;
+    aws_hpack_encoder_init(&encoder, allocator, NULL);
+
+    /* Peer says its decoder's table could grow bigger than we are willing to allocate */
+    aws_hpack_encoder_update_max_table_size(&encoder, UINT32_MAX);
+
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
+    ASSERT_SUCCESS(
+        aws_http_headers_add(headers, aws_byte_cursor_from_c_str("host"), aws_byte_cursor_from_c_str("example.com")));
+
+    struct aws_byte_buf output;
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, allocator, 64));
+
+    /* Before the clamp, the oversized resize failed and took this with it. */
+    ASSERT_SUCCESS(aws_hpack_encode_header_block(&encoder, headers, &output));
+    ASSERT_UINT_EQUALS(AWS_HPACK_MAX_DYNAMIC_TABLE_SIZE, aws_hpack_get_dynamic_table_max_size(&encoder.context));
+
     aws_byte_buf_clean_up(&output);
     aws_http_headers_release(headers);
     aws_hpack_encoder_clean_up(&encoder);

@@ -35,17 +35,17 @@ void aws_hpack_encoder_set_huffman_mode(struct aws_hpack_encoder *encoder, enum 
 
 void aws_hpack_encoder_update_max_table_size(struct aws_hpack_encoder *encoder, uint32_t new_max_size) {
 
+    /* The peer's SETTINGS_HEADER_TABLE_SIZE is a ceiling we MAY use, not one we must (RFC-7541 4.2).
+     * Clamp it: the peer does not get to size our allocation, and a value above what we support would
+     * otherwise fail every resize and so every header block we try to send. */
+    new_max_size = (uint32_t)aws_min_size(new_max_size, AWS_HPACK_MAX_DYNAMIC_TABLE_SIZE);
+
     if (!encoder->dynamic_table_size_update.pending) {
         encoder->dynamic_table_size_update.pending = true;
     }
     encoder->dynamic_table_size_update.smallest_value =
         aws_min_size(new_max_size, encoder->dynamic_table_size_update.smallest_value);
 
-    /* TODO: don't necessarily go as high as possible. The peer said the encoder's
-     * dynamic table COULD get this big, but it's not required to.
-     * It's probably not a good idea to let the peer decide how much memory we allocate.
-     * Not sure how to cap it though... Use a hardcoded number?
-     * Match whatever SETTINGS_HEADER_TABLE_SIZE this side sends? */
     encoder->dynamic_table_size_update.latest_value = new_max_size;
 }
 

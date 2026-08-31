@@ -11,8 +11,9 @@
 /* RFC-7540 6.5.2 */
 const size_t s_hpack_dynamic_table_initial_size = 4096;
 const size_t s_hpack_dynamic_table_initial_elements = 512;
-/* TODO: shouldn't be a hardcoded max_size, it should be driven by SETTINGS_HEADER_TABLE_SIZE */
-const size_t s_hpack_dynamic_table_max_size = 16 * 1024 * 1024;
+/* SETTINGS_HEADER_TABLE_SIZE drives the table size, but it is chosen by the peer, so this is the
+ * ceiling we impose on top of it. */
+const size_t s_hpack_dynamic_table_max_size = AWS_HPACK_MAX_DYNAMIC_TABLE_SIZE;
 
 struct aws_http_header s_static_header_table[] = {
 #define HEADER(_index, _name)                                                                                          \
