@@ -241,9 +241,25 @@ static int s_strutil_is_http_request_target(struct aws_allocator *allocator, voi
     /* OK asterisk-form */
     ASSERT_TRUE(aws_strutil_is_http_request_target(aws_byte_cursor_from_c_str("*")));
 
-    /* TODO: Actually check the complete grammar as defined in RFC7230 5.3 and
-     * RFC3986. Currently this just checks whether the sequence is blatantly illegal
-     * (ex: contains CR or LF) */
+    /* Every other non-visible ASCII character is rejected too, since any of them could break request framing.
+     * Use an explicit length so that the NUL case is actually tested. */
+    for (uint32_t c = 0; c <= ' '; ++c) {
+        uint8_t str[] = {'/', 'p', 'a', 't', 'h', (uint8_t)c};
+        ASSERT_FALSE(aws_strutil_is_http_request_target(aws_byte_cursor_from_array(str, sizeof(str))));
+    }
+
+    /* We deliberately do NOT enforce the full RFC7230 5.3 / RFC3986 grammar, so a request-target containing
+     * characters that are technically illegal but accepted by servers in practice is still allowed through.
+     * These cases pin that intent: they are not accidentally-passing, they are what we promise. */
+    ASSERT_TRUE(aws_strutil_is_http_request_target(aws_byte_cursor_from_c_str("/path?q={braces}")));
+    ASSERT_TRUE(aws_strutil_is_http_request_target(aws_byte_cursor_from_c_str("/path?q=a|b")));
+    ASSERT_TRUE(aws_strutil_is_http_request_target(aws_byte_cursor_from_c_str("/path?q=\"quoted\"")));
+    ASSERT_TRUE(aws_strutil_is_http_request_target(aws_byte_cursor_from_c_str("/path^caret")));
+    /* Malformed percent-encoding is not diagnosed here either */
+    ASSERT_TRUE(aws_strutil_is_http_request_target(aws_byte_cursor_from_c_str("/path%zz")));
+    ASSERT_TRUE(aws_strutil_is_http_request_target(aws_byte_cursor_from_c_str("/path%")));
+    /* Nor is a fragment, which RFC7230 5.3 says is not part of a request-target */
+    ASSERT_TRUE(aws_strutil_is_http_request_target(aws_byte_cursor_from_c_str("/path#fragment")));
 
     return 0;
 }
