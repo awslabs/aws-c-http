@@ -654,6 +654,94 @@ DECODER_TEST_CASE(websocket_decoder_control_frame_cannot_be_fragmented) {
     return AWS_OP_SUCCESS;
 }
 
+/* RFC-6455 Section 5.5 - "All control frames MUST have a payload length of 125 bytes or less" */
+DECODER_TEST_CASE(websocket_decoder_fail_on_oversized_control_frame) {
+    (void)ctx;
+    struct decoder_tester tester;
+    ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
+
+    /* A 7bit length of 126 or 127 signals an extended length, which always exceeds the 125 byte limit */
+    const uint8_t oversized_length_bytes[] = {0x7E /* 126 */, 0x7F /* 127 */};
+    const uint8_t control_opcodes[] = {
+        AWS_WEBSOCKET_OPCODE_CLOSE, AWS_WEBSOCKET_OPCODE_PING, AWS_WEBSOCKET_OPCODE_PONG};
+
+    for (size_t opcode_i = 0; opcode_i < AWS_ARRAY_SIZE(control_opcodes); ++opcode_i) {
+        for (size_t len_i = 0; len_i < AWS_ARRAY_SIZE(oversized_length_bytes); ++len_i) {
+            s_decoder_tester_reset(&tester);
+
+            uint8_t input[] = {
+                (uint8_t)(0x80 | control_opcodes[opcode_i]), /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+                oversized_length_bytes[len_i],               /* mask | 7bit payload len */
+            };
+
+            bool frame_complete;
+            struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
+            ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
+            ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR, aws_last_error());
+        }
+    }
+
+    /* Sanity check: a control frame at exactly the 125 byte limit is legal */
+    s_decoder_tester_reset(&tester);
+    uint8_t ok_input[2 + 125] = {
+        0x89, /* fin | PING */
+        0x7D, /* 125 */
+    };
+    bool frame_complete;
+    struct aws_byte_cursor ok_cursor = aws_byte_cursor_from_array(ok_input, sizeof(ok_input));
+    ASSERT_SUCCESS(aws_websocket_decoder_process(&tester.decoder, &ok_cursor, &frame_complete));
+    ASSERT_TRUE(frame_complete);
+    ASSERT_UINT_EQUALS(125, tester.frame.payload_length);
+
+    ASSERT_SUCCESS(s_decoder_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* RFC-6455 Section 5.5.1 - a CLOSE frame's body, if present, starts with a 2-byte status code */
+DECODER_TEST_CASE(websocket_decoder_close_frame_status_code) {
+    (void)ctx;
+    struct decoder_tester tester;
+    ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
+
+    /* An empty CLOSE payload is legal (no status code at all) */
+    s_decoder_tester_reset(&tester);
+    uint8_t empty_input[] = {0x88, 0x00};
+    bool frame_complete;
+    struct aws_byte_cursor empty_cursor = aws_byte_cursor_from_array(empty_input, sizeof(empty_input));
+    ASSERT_SUCCESS(aws_websocket_decoder_process(&tester.decoder, &empty_cursor, &frame_complete));
+    ASSERT_TRUE(frame_complete);
+
+    /* A 1 byte CLOSE payload is too short to hold a status code */
+    s_decoder_tester_reset(&tester);
+    uint8_t short_input[] = {0x88, 0x01, 0x03};
+    struct aws_byte_cursor short_cursor = aws_byte_cursor_from_array(short_input, sizeof(short_input));
+    ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &short_cursor, &frame_complete));
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR, aws_last_error());
+
+    /* Codes that must be accepted off the wire */
+    const uint16_t valid_codes[] = {1000, 1001, 1003, 1007, 1011, 1012, 1014, 3000, 3999, 4000, 4999};
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(valid_codes); ++i) {
+        s_decoder_tester_reset(&tester);
+        uint8_t input[] = {0x88, 0x02, (uint8_t)(valid_codes[i] >> 8), (uint8_t)(valid_codes[i] & 0xFF)};
+        struct aws_byte_cursor cursor = aws_byte_cursor_from_array(input, sizeof(input));
+        ASSERT_SUCCESS(aws_websocket_decoder_process(&tester.decoder, &cursor, &frame_complete));
+        ASSERT_TRUE(frame_complete);
+    }
+
+    /* Codes that must be rejected: reserved-for-internal-use, undefined, and out of range */
+    const uint16_t invalid_codes[] = {0, 999, 1004, 1005, 1006, 1015, 1016, 2000, 2999, 5000, 65535};
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(invalid_codes); ++i) {
+        s_decoder_tester_reset(&tester);
+        uint8_t input[] = {0x88, 0x02, (uint8_t)(invalid_codes[i] >> 8), (uint8_t)(invalid_codes[i] & 0xFF)};
+        struct aws_byte_cursor cursor = aws_byte_cursor_from_array(input, sizeof(input));
+        ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &cursor, &frame_complete));
+        ASSERT_INT_EQUALS(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR, aws_last_error());
+    }
+
+    ASSERT_SUCCESS(s_decoder_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 /* Test that we can process a TEXT frame with UTF-8 in it */
 DECODER_TEST_CASE(websocket_decoder_utf8_text) {
     (void)ctx;

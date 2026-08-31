@@ -111,6 +111,19 @@ static int s_state_length_byte(struct aws_websocket_decoder *decoder, struct aws
     /* remaining 7 bits are payload length */
     decoder->current_frame.payload_length = byte & 0x7F;
 
+    /* RFC-6455 Section 5.5 Control Frames
+     * "All control frames MUST have a payload length of 125 bytes or less".
+     * A 7bit length of 126 or 127 means an extended length follows, so it always exceeds the limit. */
+    if (!aws_websocket_is_data_frame(decoder->current_frame.opcode) &&
+        decoder->current_frame.payload_length >= AWS_WEBSOCKET_7BIT_VALUE_FOR_2BYTE_EXTENDED_LENGTH) {
+
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Received control frame with payload length exceeding 125 bytes. This is illegal",
+            (void *)decoder->user_data);
+        return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR);
+    }
+
     if (decoder->current_frame.payload_length >= AWS_WEBSOCKET_7BIT_VALUE_FOR_2BYTE_EXTENDED_LENGTH) {
         /* If 7bit payload length has a high value, then the next few bytes contain the real payload length */
         decoder->state_bytes_processed = 0;
@@ -225,9 +238,87 @@ static int s_state_masking_key(struct aws_websocket_decoder *decoder, struct aws
     return AWS_OP_SUCCESS;
 }
 
+/**
+ * RFC-6455 Section 7.4 Status Codes
+ * Returns whether a status code is allowed to appear in the payload of a CLOSE frame received off the wire.
+ */
+static bool s_is_valid_close_status_code(uint16_t code) {
+    switch (code) {
+        /* RFC-6455 Section 7.4.1 - these are reserved for internal use by an endpoint,
+         * and "MUST NOT be set as a status code in a Close control frame by an endpoint". */
+        case 1005 /* No Status Rcvd */:
+        case 1006 /* Abnormal Closure */:
+        case 1015 /* TLS handshake failure */:
+            return false;
+        default:
+            break;
+    }
+
+    /* 1000-1011 are defined by RFC-6455 Section 7.4.1 (1004 is reserved/undefined).
+     * 1012-1014 have since been assigned by IANA (Service Restart, Try Again Later, Bad Gateway). */
+    if (code >= 1000 && code <= 1014) {
+        return code != 1004;
+    }
+
+    /* 3000-3999 are registered with IANA, 4000-4999 are for private use. */
+    if (code >= 3000 && code <= 4999) {
+        return true;
+    }
+
+    /* Everything else (including <1000 and the unregistered 1016-2999) is illegal. */
+    return false;
+}
+
+/**
+ * Validate the payload of a CLOSE frame, as it streams in.
+ * RFC-6455 Section 5.5.1 Close:
+ * "If there is a body, the first two bytes of the body MUST be a 2-byte unsigned integer [...]
+ * Following the 2-byte integer, the body MAY contain UTF-8-encoded data".
+ */
+static int s_validate_close_frame_payload(struct aws_websocket_decoder *decoder, struct aws_byte_cursor payload) {
+    /* Number of payload bytes that arrived before this chunk. */
+    uint64_t offset = decoder->state_bytes_processed;
+
+    /* The 2-byte status code may be split across chunks, so cache the bytes until we have both.
+     * state_cache is free to use here, it's only otherwise used while decoding the extended length. */
+    while (offset < 2 && payload.len > 0) {
+        decoder->state_cache[offset] = payload.ptr[0];
+        aws_byte_cursor_advance(&payload, 1);
+        ++offset;
+
+        if (offset == 2) {
+            struct aws_byte_cursor code_cursor = aws_byte_cursor_from_array(decoder->state_cache, 2);
+            uint16_t code = 0;
+            aws_byte_cursor_read_be16(&code_cursor, &code);
+
+            if (!s_is_valid_close_status_code(code)) {
+                AWS_LOGF_ERROR(
+                    AWS_LS_HTTP_WEBSOCKET,
+                    "id=%p: Received CLOSE frame with illegal status code %" PRIu16,
+                    (void *)decoder->user_data,
+                    code);
+                return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR);
+            }
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 /* PAYLOAD_CHECK: Determine if we need to decode a payload. Consumes no data. */
 static int s_state_payload_check(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
     (void)data;
+
+    if (decoder->current_frame.opcode == AWS_WEBSOCKET_OPCODE_CLOSE) {
+        /* RFC-6455 Section 5.5.1 - if a CLOSE frame has a body, it must be at least the 2-byte status code. */
+        if (decoder->current_frame.payload_length == 1) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET,
+                "id=%p: Received CLOSE frame with a 1 byte payload, too short to contain a status code",
+                (void *)decoder->user_data);
+            return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR);
+        }
+    }
 
     /* Invoke on_frame() callback to inform user of non-payload data. */
     int err = decoder->on_frame(&decoder->current_frame, decoder->user_data);
@@ -272,7 +363,11 @@ static int s_state_payload(struct aws_websocket_decoder *decoder, struct aws_byt
         }
     }
 
-    /* TODO: validate payload of CLOSE frame */
+    if (decoder->current_frame.opcode == AWS_WEBSOCKET_OPCODE_CLOSE) {
+        if (s_validate_close_frame_payload(decoder, payload)) {
+            return AWS_OP_ERR;
+        }
+    }
 
     /* Validate the UTF-8 for TEXT messages (a TEXT frame and any subsequent CONTINUATION frames) */
     if (decoder->processing_text_message && aws_websocket_is_data_frame(decoder->current_frame.opcode)) {
