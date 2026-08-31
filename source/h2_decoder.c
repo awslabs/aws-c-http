@@ -1628,6 +1628,10 @@ static struct aws_h2err s_state_fn_header_block_entry(struct aws_h2_decoder *dec
 
     /* Finished decoding HPACK entry! */
 
+    /* #TODO Enforces dynamic table resize rules from RFC-7541 4.2
+     * If dynamic table size changed via SETTINGS frame, next header-block must start with DYNAMIC_TABLE_RESIZE entry.
+     * Is it illegal to receive a resize entry at other times? */
+
     if (result.type == AWS_HPACK_DECODE_T_HEADER_FIELD) {
         const struct aws_http_header *header_field = &result.data.header_field;
 
