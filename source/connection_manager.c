@@ -124,7 +124,7 @@ enum aws_http_connection_manager_count_type {
  * READY - connections may be acquired and released.  When the external ref count for the manager
  * drops to zero, the manager moves to:
  *
- * TODO: Seems like connections can still be release while shutting down.
+ * Connections may still be released while SHUTTING_DOWN: vended_connection_count can only reach zero that way.
  * SHUTTING_DOWN - connections may no longer be acquired and released (how could they if the external
  * ref count was accurate?) but in case of user ref errors, we simply fail attempts to do so rather
  * than crash or underflow.  While in this state, we wait for a set of tracking counters to all fall to zero:

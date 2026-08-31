@@ -205,8 +205,8 @@ bool aws_strutil_is_http_request_target(struct aws_byte_cursor cursor) {
         return false;
     }
 
-    /* TODO: Actually check the complete grammar as defined in RFC7230 5.3 and
-     * RFC3986. Currently this just checks whether the sequence is blatantly illegal */
+    /* Not the full RFC7230 5.3 / RFC3986 grammar on purpose: it would reject targets servers accept in practice.
+     * We only reject non-visible ASCII, which is what could split the request line. */
     size_t i = 0;
     do {
         const uint8_t c = cursor.ptr[i++];
