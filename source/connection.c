@@ -982,6 +982,13 @@ int s_validate_http_client_connection_options(const struct aws_http_client_conne
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
+    if (options->l4_proxy_config != NULL && options->proxy_options != NULL) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: (http) proxy_options and l4_proxy_config cannot both be set.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
     return AWS_OP_SUCCESS;
 }
 
@@ -1147,6 +1154,7 @@ int aws_http_client_connect_internal(
         .port = options.port,
         .socket_options = options.socket_options,
         .tls_options = options.tls_options,
+        .l4_proxy_config = options.l4_proxy_config,
         .setup_callback = s_client_bootstrap_on_channel_setup,
         .shutdown_callback = s_client_bootstrap_on_channel_shutdown,
         .enable_read_back_pressure = options.manual_window_management,
