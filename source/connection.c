@@ -983,9 +983,7 @@ int s_validate_http_client_connection_options(const struct aws_http_client_conne
     }
 
     if (options->l4_proxy_config != NULL && options->proxy_options != NULL) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "static: (http) proxy_options and l4_proxy_config cannot both be set.");
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: (http) proxy_options and l4_proxy_config cannot both be set.");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
