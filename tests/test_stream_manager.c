@@ -721,7 +721,7 @@ static int s_sm_tester_offer_waiting_connections(void) {
         ASSERT_SUCCESS(s_sm_tester_finish_up_fake_connection_set_up(fake_connection));
     }
     s_tester.delay_finished = true;
-    /* We are not haveing any threads. so, not invoking anything */
+    /* We are not having any threads. so, not invoking anything */
     return AWS_OP_SUCCESS;
 }
 
