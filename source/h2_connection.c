@@ -543,7 +543,7 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
 
     size_t settings_storage_size = sizeof(struct aws_http2_setting) * num_settings;
     struct aws_h2_pending_settings *pending_settings;
-    void *settings_storage;
+    uint8_t *settings_storage;
     aws_mem_acquire_many(
         allocator,
         2,
@@ -560,7 +560,7 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
         pending_settings->settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
         pending_settings->settings_array[0].value = (uint32_t)initial_window_size;
         /* Move the storage pointer to the second in the list */
-        settings_storage = (uint8_t *)settings_storage + sizeof(struct aws_http2_setting);
+        settings_storage = settings_storage + sizeof(struct aws_http2_setting);
     }
     if (settings_array) {
         /* copy all passed-in settings to the settings storage. */
