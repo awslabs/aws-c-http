@@ -248,9 +248,8 @@ static int s_strutil_is_http_request_target(struct aws_allocator *allocator, voi
         ASSERT_FALSE(aws_strutil_is_http_request_target(aws_byte_cursor_from_array(str, sizeof(str))));
     }
 
-    /* We deliberately do NOT enforce the full RFC7230 5.3 / RFC3986 grammar, so a request-target containing
-     * characters that are technically illegal but accepted by servers in practice is still allowed through.
-     * These cases pin that intent: they are not accidentally-passing, they are what we promise. */
+    /* The full RFC7230 5.3 / RFC3986 grammar is not enforced, so these technically-illegal targets pass.
+     * Pinned here because tightening the check would break callers already sending them. */
     ASSERT_TRUE(aws_strutil_is_http_request_target(aws_byte_cursor_from_c_str("/path?q={braces}")));
     ASSERT_TRUE(aws_strutil_is_http_request_target(aws_byte_cursor_from_c_str("/path?q=a|b")));
     ASSERT_TRUE(aws_strutil_is_http_request_target(aws_byte_cursor_from_c_str("/path?q=\"quoted\"")));
