@@ -117,7 +117,7 @@ class H2Protocol(asyncio.Protocol):
         - x-repeat-data: <bytes> - Triggers send_repeat_data() with specified length
         - x-slow-response: true - Triggers send_slow_repeat_data() instead (requires x-repeat-data)
         - x-throughput-bps: <number> - Override throughput for slow response (default 900)
-        
+
         Without special headers, echoes request headers and body as JSON.
         """
         headers_dict = dict(self.raw_headers)
@@ -127,7 +127,7 @@ class H2Protocol(asyncio.Protocol):
             response_headers = [(':status', expect_status)]
             self.conn.send_headers(stream_id, response_headers, end_stream=True)
             return
-        
+
         # Check for x-repeat-data header
         repeat_data_header = headers_dict.get('x-repeat-data')
         if repeat_data_header:
@@ -135,7 +135,7 @@ class H2Protocol(asyncio.Protocol):
                 length = int(repeat_data_header)
                 response_headers = [(':status', '200')]
                 self.conn.send_headers(stream_id, response_headers, end_stream=False)
-                
+
                 # Check for slow response
                 if headers_dict.get('x-slow-response') == 'true':
                     # Check for custom throughput
@@ -148,7 +148,7 @@ class H2Protocol(asyncio.Protocol):
                 return
             except ValueError:
                 pass  # Fall through to echo behavior
-        
+
         # Check for upload test (don't echo body, just return byte count)
         if headers_dict.get('x-upload-test') == 'true':
             body_bytes = request_data.data.getvalue()
@@ -157,7 +157,7 @@ class H2Protocol(asyncio.Protocol):
             self.conn.send_headers(stream_id, response_headers, end_stream=False)
             asyncio.ensure_future(self.send_data(data, stream_id))
             return
-        
+
         # Default echo behavior
         response_headers = [(':status', '200')]
         # Filter out headers that shouldn't be echoed back
