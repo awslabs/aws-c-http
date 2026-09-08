@@ -10,8 +10,7 @@ To run the benchmark, build the h2benchmark with aws-c-http as dependency.
 
 ## Configuration
 
-Run `h2benchmark --help` for the full list. The defaults match what CI uses, so no arguments are needed for a
-standard run. The available options are:
+Run `h2benchmark --help` for the full list. The defaults match what CI uses, so no arguments are needed for a standard run. The available options are:
 
 | Option | Description | Default |
 | --- | --- | --- |
@@ -24,5 +23,4 @@ standard run. The available options are:
 | `-l, --log-level` | 0=none 1=fatal 2=error 3=warn 4=info 5=debug 6=trace | 0 |
 | `-d, --direct-connection` | Use a single connection instead of the stream manager | off |
 
-The process exits non-zero if the average streams/sec falls below `--rate-threshold`, which is what makes it usable
-as a regression check. On a slow machine you may need to lower that threshold.
+The process exits non-zero if the average streams/sec falls below `--rate-threshold`, which is what makes it usable as a regression check. On a slow machine you may need to lower that threshold.
