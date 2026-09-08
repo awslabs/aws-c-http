@@ -205,8 +205,9 @@ bool aws_strutil_is_http_request_target(struct aws_byte_cursor cursor) {
         return false;
     }
 
-    /* Not the full RFC7230 5.3 / RFC3986 grammar on purpose: it would reject targets servers accept in practice.
-     * We only reject non-visible ASCII, which is what could split the request line. */
+    /* Only reject non-visible ASCII, which is what could split the request line.
+     * Enforcing the full RFC7230 5.3 / RFC3986 grammar would reject request-targets callers send successfully
+     * today, so it is a behavior break for them, not a bug fix: it belongs in a minor release. */
     size_t i = 0;
     do {
         const uint8_t c = cursor.ptr[i++];
