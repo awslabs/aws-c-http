@@ -24,11 +24,11 @@ install(TARGETS ${PROJECT_NAME}
 # Option-parsing tests. These all finish inside s_parse_options() before any network
 # setup, so they need no server. --help exits 0; every rejected value exits 1.
 if (BUILD_TESTING)
-    add_test(NAME h2benchmark_help COMMAND ${PROJECT_NAME} --help)
+    add_test(h2benchmark_help ${PROJECT_NAME} --help)
     set_tests_properties(h2benchmark_help PROPERTIES PASS_REGULAR_EXPRESSION "usage: h2benchmark")
 
     # 0 is documented as a valid log level ("none") and is the default, so it must be accepted.
-    add_test(NAME h2benchmark_log_level_zero COMMAND ${PROJECT_NAME} --log-level 0 --help)
+    add_test(h2benchmark_log_level_zero ${PROJECT_NAME} --log-level 0 --help)
     set_tests_properties(h2benchmark_log_level_zero PROPERTIES PASS_REGULAR_EXPRESSION "usage: h2benchmark")
 
     foreach(case
@@ -42,7 +42,7 @@ if (BUILD_TESTING)
         set(case_args "${case}")
         list(GET case_args 0 case_name)
         list(REMOVE_AT case_args 0)
-        add_test(NAME h2benchmark_reject_${case_name} COMMAND ${PROJECT_NAME} ${case_args})
+        add_test(h2benchmark_reject_${case_name} ${PROJECT_NAME} ${case_args})
         set_tests_properties(h2benchmark_reject_${case_name} PROPERTIES WILL_FAIL TRUE)
     endforeach()
 endif()
