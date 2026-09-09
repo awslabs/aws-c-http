@@ -6,8 +6,6 @@
 
 /* #TODO test empty strings */
 
-/* #TODO remove all OOM error handling in HTTP/2 & HPACK. make functions void if possible */
-
 /* RFC-7540 6.5.2 */
 const size_t s_hpack_dynamic_table_initial_size = 4096;
 const size_t s_hpack_dynamic_table_initial_elements = 512;
@@ -314,9 +312,6 @@ static int s_dynamic_table_resize_buffer(struct aws_hpack_context *context, size
 
     /* Allocate the new buffer */
     new_buffer = aws_mem_calloc(context->allocator, new_max_elements, sizeof(struct aws_http_header));
-    if (!new_buffer) {
-        return AWS_OP_ERR;
-    }
 
     /* Don't bother copying data if old buffer was of size 0 */
     if (AWS_UNLIKELY(context->dynamic_table.num_elements == 0)) {
@@ -449,9 +444,6 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
 
     if (buf_memory_size) {
         uint8_t *buf_memory = aws_mem_acquire(context->allocator, buf_memory_size);
-        if (!buf_memory) {
-            return AWS_OP_ERR;
-        }
         struct aws_byte_buf buf = aws_byte_buf_from_empty_array(buf_memory, buf_memory_size);
         /* Copy header, then backup strings into our own allocation */
         *table_header = *header;
