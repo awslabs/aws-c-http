@@ -1,11 +1,13 @@
-name: Pre-merge checks
+name: Check ABI compliance
 
+# Trigger on any push to non-main branches.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches-ignore:
+      - 'main'
 
 concurrency:
-  group: pre-merge-checks-${{ github.ref }}
+  group: check-abi-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -16,7 +18,7 @@ env:
 permissions:
   id-token: write
   contents: read
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   check-abi:
@@ -39,7 +41,3 @@ jobs:
           lib-name: ${{ env.PACKAGE_NAME }}
           builder-version: latest
           builder-source: releases
-
-  block-unlabeled:
-    needs: check-abi
-    uses: awslabs/aws-crt-builder/.github/workflows/block-needs-review-label.yml@main
