@@ -15,6 +15,7 @@ AWS_PUSH_SANE_WARNING_LEVEL
 struct aws_client_bootstrap;
 struct aws_http_connection;
 struct aws_http_connection_manager;
+struct aws_l4_proxy_config;
 struct aws_socket_options;
 struct aws_tls_connection_options;
 struct proxy_env_var_settings;
@@ -108,6 +109,13 @@ struct aws_http_connection_manager_options {
      * Only works when proxy_options is not set.
      */
     const struct proxy_env_var_settings *proxy_ev_settings;
+
+    /**
+     * Optional.
+     * Configuration for using an l4 proxy.  Currently, only SOCKS5
+     * is supported.  This setting is incompatible with an http proxy.
+     */
+    struct aws_l4_proxy_config *l4_proxy_config;
 
     /*
      * Maximum number of connections this manager is allowed to contain

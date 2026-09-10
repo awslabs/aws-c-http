@@ -176,6 +176,13 @@ struct aws_websocket_client_connection_options {
     const struct aws_http_proxy_options *proxy_options;
 
     /**
+     * Optional.
+     * Configuration for using an l4 proxy.  Currently, only SOCKS5
+     * is supported.  This setting is incompatible with an http proxy.
+     */
+    struct aws_l4_proxy_config *l4_proxy_config;
+
+    /**
      * Required.
      * aws_websocket_client_connect() makes a copy.
      */

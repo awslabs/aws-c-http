@@ -163,6 +163,12 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
+    if (options->proxy_options != NULL && options->l4_proxy_config != NULL) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP, "id=static: (http) proxy_options and l4_proxy_config cannot both be set.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
     /* Create bootstrap */
     struct aws_websocket_client_bootstrap *ws_bootstrap =
         aws_mem_calloc(options->allocator, 1, sizeof(struct aws_websocket_client_bootstrap));
@@ -197,6 +203,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     http_options.socket_options = options->socket_options;
     http_options.tls_options = options->tls_options;
     http_options.proxy_options = options->proxy_options;
+    http_options.l4_proxy_config = options->l4_proxy_config;
 
     if (options->manual_window_management) {
         http_options.manual_window_management = true;
