@@ -975,7 +975,7 @@ static int test_hpack_encoder_caps_peer_max_table_size(struct aws_allocator *all
 
     /* Before the clamp, the oversized resize failed and took this with it. */
     ASSERT_SUCCESS(aws_hpack_encode_header_block(&encoder, headers, &output));
-    ASSERT_UINT_EQUALS(AWS_HPACK_MAX_DYNAMIC_TABLE_SIZE, aws_hpack_get_dynamic_table_max_size(&encoder.context));
+    ASSERT_UINT_EQUALS(AWS_HPACK_MAX_DYNAMIC_TABLE_SIZE, encoder.context.dynamic_table.max_size);
 
     aws_byte_buf_clean_up(&output);
     aws_http_headers_release(headers);
