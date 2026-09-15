@@ -362,7 +362,7 @@ struct aws_http_make_request_options {
      * AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT.
      * It override the connection level settings, when the request completes, the
      * original monitoring options will be applied back to the connection.
-     * TODO: Only supported in HTTP/1.1 now, support it in HTTP/2
+     * Supported for both HTTP/1.1 and HTTP/2.
      */
     uint64_t response_first_byte_timeout_ms;
 };

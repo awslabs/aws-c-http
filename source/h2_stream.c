@@ -10,6 +10,7 @@
 #include <aws/http/private/strutil.h>
 #include <aws/http/status_code.h>
 #include <aws/io/channel.h>
+#include <aws/io/event_loop.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
 
@@ -27,6 +28,9 @@ static int s_stream_write_data(
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error);
+static void s_h2_stream_schedule_response_first_byte_timeout(struct aws_h2_stream *stream);
+static void s_h2_stream_cancel_response_first_byte_timeout(struct aws_h2_stream *stream);
+static void s_h2_stream_response_first_byte_timeout_task(struct aws_task *task, void *arg, enum aws_task_status status);
 static int s_stream_reset_stream_internal(
     struct aws_http_stream *stream_base,
     struct aws_h2err stream_error,
@@ -292,6 +296,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     stream->base.on_destroy = options->on_destroy;
     stream->base.client_data = &stream->base.client_or_server_data.client;
     stream->base.client_data->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
+    stream->base.client_data->response_first_byte_timeout_ms = options->response_first_byte_timeout_ms;
     stream->base.metrics.send_start_timestamp_ns = -1;
     stream->base.metrics.send_end_timestamp_ns = -1;
     stream->base.metrics.sending_duration_ns = -1;
@@ -487,6 +492,9 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
 }
 
 void aws_h2_stream_complete(struct aws_h2_stream *stream, int error_code) {
+    /* Stream is done; cancel the response-first-byte timeout if it is still scheduled. */
+    s_h2_stream_cancel_response_first_byte_timeout(stream);
+
     { /* BEGIN CRITICAL SECTION */
         /* clean up any pending writes */
         s_lock_synced_data(stream);
@@ -680,6 +688,101 @@ static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream
     return AWS_H2ERR_SUCCESS;
 }
 
+/* Fires when the peer has not begun responding within response_first_byte_timeout_ms of the request
+ * being fully sent. Runs on the connection's event-loop thread. */
+static void s_h2_stream_response_first_byte_timeout_task(
+    struct aws_task *task,
+    void *arg,
+    enum aws_task_status status) {
+    (void)task;
+    struct aws_h2_stream *stream = arg;
+    /* Zero-out the task so it reads as "not scheduled"; this also makes the cancel in
+     * aws_h2_stream_complete() a no-op when we complete the stream below. */
+    AWS_ZERO_STRUCT(stream->base.client_data->response_first_byte_timeout_task);
+
+    if (status == AWS_TASK_STATUS_CANCELED) {
+        return;
+    }
+
+    struct aws_h2_connection *connection = s_get_h2_connection(stream);
+    uint64_t timeout_ms = stream->base.client_data->response_first_byte_timeout_ms;
+    if (timeout_ms == 0 && connection->base.client_data != NULL) {
+        timeout_ms = connection->base.client_data->response_first_byte_timeout_ms;
+    }
+    AWS_H2_STREAM_LOGF(
+        INFO,
+        stream,
+        "Timed out waiting for first byte of response after sending the full request, "
+        "response_first_byte_timeout_ms=%" PRIu64 ". Resetting stream.",
+        timeout_ms);
+
+    /* Reset the stream; it completes with AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT. */
+    struct aws_h2err returned_h2err =
+        s_send_rst_and_close_stream(stream, aws_h2err_from_aws_code(AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT));
+    if (aws_h2err_failed(returned_h2err)) {
+        aws_h2_connection_shutdown_due_to_write_err(connection, returned_h2err.aws_code);
+        return;
+    }
+
+    /* s_send_rst_and_close_stream only enqueues the RST_STREAM frame. Because this task runs on its own
+     * (outside the connection's normal read/write cycle, which is what flushes enqueued frames elsewhere),
+     * kick the outgoing-frames task so the RST_STREAM is actually written to the peer. */
+    aws_h2_try_write_outgoing_frames(connection);
+}
+
+/* Schedule the response-first-byte timeout, if configured and no response has been received yet.
+ * Must be called on the connection's event-loop thread. */
+static void s_h2_stream_schedule_response_first_byte_timeout(struct aws_h2_stream *stream) {
+    struct aws_h2_connection *connection = s_get_h2_connection(stream);
+
+    if (stream->base.client_data == NULL) {
+        return;
+    }
+    /* Only relevant while we are still waiting on the first response byte. */
+    if (stream->base.metrics.receive_start_timestamp_ns != -1) {
+        return;
+    }
+
+    uint64_t timeout_ms = stream->base.client_data->response_first_byte_timeout_ms;
+    if (timeout_ms == 0 && connection->base.client_data != NULL) {
+        /* Fall back to the connection-level setting. */
+        timeout_ms = connection->base.client_data->response_first_byte_timeout_ms;
+    }
+    if (timeout_ms == 0) {
+        /* Feature disabled. */
+        return;
+    }
+
+    /* Task must not already be scheduled. */
+    AWS_ASSERT(stream->base.client_data->response_first_byte_timeout_task.fn == NULL);
+    aws_task_init(
+        &stream->base.client_data->response_first_byte_timeout_task,
+        s_h2_stream_response_first_byte_timeout_task,
+        stream,
+        "h2_stream_response_first_byte_timeout_task");
+
+    struct aws_channel *channel = connection->base.channel_slot->channel;
+    uint64_t now_ns = 0;
+    aws_channel_current_clock_time(channel, &now_ns);
+    aws_event_loop_schedule_task_future(
+        aws_channel_get_event_loop(channel),
+        &stream->base.client_data->response_first_byte_timeout_task,
+        now_ns + aws_timestamp_convert(timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
+}
+
+/* Cancel the response-first-byte timeout if it is scheduled. Must be called on the connection's
+ * event-loop thread. */
+static void s_h2_stream_cancel_response_first_byte_timeout(struct aws_h2_stream *stream) {
+    if (stream->base.client_data == NULL || stream->base.client_data->response_first_byte_timeout_task.fn == NULL) {
+        return;
+    }
+    struct aws_h2_connection *connection = s_get_h2_connection(stream);
+    /* cancel_task invokes the task with AWS_TASK_STATUS_CANCELED, which zeroes it out. */
+    aws_event_loop_cancel_task(
+        aws_channel_get_event_loop(connection->base.channel_slot->channel),
+        &stream->base.client_data->response_first_byte_timeout_task);
+}
+
 struct aws_h2err aws_h2_stream_window_size_change_direct(
     struct aws_h2_stream *stream,
     int32_t size_changed,
@@ -807,6 +910,8 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
         aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.send_end_timestamp_ns);
         stream->base.metrics.sending_duration_ns =
             stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
+        /* Request fully sent; start the response-first-byte timeout if configured. */
+        s_h2_stream_schedule_response_first_byte_timeout(stream);
     }
 
     if (s_h2_stream_has_outgoing_writes(stream)) {
@@ -901,6 +1006,10 @@ int aws_h2_stream_encode_data_frame(
         stream->base.metrics.sending_duration_ns =
             stream->base.metrics.send_end_timestamp_ns - stream->base.metrics.send_start_timestamp_ns;
 
+        /* Request fully sent; start the response-first-byte timeout if configured (no-op if a
+         * response was already received, e.g. both sides have sent END_STREAM). */
+        s_h2_stream_schedule_response_first_byte_timeout(stream);
+
         if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE) {
             /* Both sides have sent END_STREAM */
             stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
@@ -946,6 +1055,8 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *st
         return s_send_rst_and_close_stream(stream, stream_err);
     }
     aws_high_res_clock_get_ticks((uint64_t *)&stream->base.metrics.receive_start_timestamp_ns);
+    /* First response byte received; cancel the response-first-byte timeout if it is scheduled. */
+    s_h2_stream_cancel_response_first_byte_timeout(stream);
 
     return AWS_H2ERR_SUCCESS;
 }

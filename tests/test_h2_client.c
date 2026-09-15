@@ -5,6 +5,8 @@
 
 #include "h2_test_helper.h"
 #include "stream_test_helper.h"
+#include <aws/common/clock.h>
+#include <aws/common/thread.h>
 #include <aws/http/private/h2_connection.h>
 #include <aws/http/private/h2_stream.h>
 #include <aws/http/private/request_response_impl.h>
@@ -510,6 +512,106 @@ TEST_CASE(h2_client_stream_complete) {
     aws_http_headers_release(response_headers);
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
+static void s_first_byte_timeout_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)stream;
+    *(int *)user_data = error_code;
+}
+
+/* If the peer never begins responding after the request is fully sent, the stream is reset with
+ * AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT (connection-level setting) and the connection stays open. */
+TEST_CASE(h2_client_response_first_byte_timeout_connection) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* With the test channel we don't run bootstrap, so set the connection-level timeout directly. */
+    size_t connection_response_first_byte_timeout_ms = 200;
+    s_tester.connection->client_data->response_first_byte_timeout_ms = connection_response_first_byte_timeout_ms;
+
+    /* send request (single HEADERS with END_STREAM, so the request is fully sent) */
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* peer sends NO response; sleep past the timeout, then let the scheduled task run */
+    aws_thread_current_sleep(aws_timestamp_convert(
+        connection_response_first_byte_timeout_ms + 1, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel); /* fire the timeout task, which resets the stream */
+
+    /* stream completes with the timeout error */
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT, stream_tester.on_complete_error_code);
+
+    /* the stream was reset (RST_STREAM sent) and the connection remains open */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    ASSERT_NOT_NULL(h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, 0, NULL));
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* clean up */
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
+/* A per-request response_first_byte_timeout_ms overrides the (longer) connection-level setting. */
+TEST_CASE(h2_client_response_first_byte_timeout_request_override) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* connection-level timeout is long; the short per-request override should win */
+    s_tester.connection->client_data->response_first_byte_timeout_ms = 1000;
+
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    size_t response_first_byte_timeout_ms = 100;
+    int completion_error_code = -1; /* sentinel; overwritten by on_complete */
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+        .response_first_byte_timeout_ms = response_first_byte_timeout_ms,
+        .on_complete = s_first_byte_timeout_on_complete,
+        .user_data = &completion_error_code,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    aws_thread_current_sleep(
+        aws_timestamp_convert(response_first_byte_timeout_ms + 1, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel); /* fire the timeout task, which resets the stream */
+
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT, completion_error_code);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    ASSERT_NOT_NULL(h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, 0, NULL));
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* clean up */
+    aws_http_message_release(request);
+    aws_http_stream_release(stream);
     return s_tester_clean_up();
 }
 
