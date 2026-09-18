@@ -216,7 +216,7 @@ typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int
 
 /**
  * Invoked when request/response stream destroy completely.
- * This can be invoked within the same thead who release the refcount on http stream.
+ * This can be invoked within the same thread that releases the refcount on http stream.
  * This is invoked even if the stream is never activated.
  */
 typedef void(aws_http_on_stream_destroy_fn)(void *user_data);

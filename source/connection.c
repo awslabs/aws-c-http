@@ -34,8 +34,8 @@ static struct aws_http_connection_system_vtable s_default_system_vtable = {
 static const struct aws_http_connection_system_vtable *s_system_vtable_ptr = &s_default_system_vtable;
 
 void aws_http_client_bootstrap_destroy(struct aws_http_client_bootstrap *bootstrap) {
-    /* During allocating, the underlying stuctures should be allocated with the bootstrap by aws_mem_acquire_many. Thus,
-     * we only need to clean up the first pointer which is the bootstrap */
+    /* During allocating, the underlying structures should be allocated with the bootstrap by aws_mem_acquire_many.
+     * Thus, we only need to clean up the first pointer which is the bootstrap */
     if (bootstrap->alpn_string_map) {
         aws_hash_table_clean_up(bootstrap->alpn_string_map);
     }
@@ -1195,7 +1195,7 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
         if (!options->proxy_ev_settings || options->proxy_ev_settings->env_var_type != AWS_HPEV_ENABLE) {
             return aws_http_client_connect_internal(options, NULL);
         } else {
-            /* Proxy through envrionment variable is enabled */
+            /* Proxy through environment variable is enabled */
             return aws_http_client_connect_via_proxy(options);
         }
     }

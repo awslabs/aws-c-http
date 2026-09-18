@@ -111,11 +111,11 @@ struct aws_http2_stream_manager {
      * Default is no limit. 0 will be considered as using the default value.
      * The ideal number of concurrent streams for a connection. Stream manager will try to create a new connection if
      * one connection reaches this number. But, if the max connections reaches, manager will reuse connections to create
-     * the acquired steams as much as possible. */
+     * the acquired streams as much as possible. */
     size_t ideal_concurrent_streams_per_connection;
     /**
      * Default is no limit. 0 will be considered as using the default value.
-     * The real number of concurrent streams per connection will be controlled by the minmal value of the setting from
+     * The real number of concurrent streams per connection will be controlled by the minimal value of the setting from
      * other end and the value here.
      */
     size_t max_concurrent_streams_per_connection;
@@ -156,7 +156,7 @@ struct aws_http2_stream_manager {
          * all_held_connections. Set of `struct aws_h2_sm_connection *`
          */
         struct aws_random_access_set nonideal_available_set;
-        /* We don't mantain set for connections that is full or "dead" (Cannot make any new streams). We have
+        /* We don't maintain a set for connections that is full or "dead" (Cannot make any new streams). We have
          * all_held_connections tracking them */
 
         /**

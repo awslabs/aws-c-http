@@ -918,7 +918,7 @@ TEST_CASE(h1_server_send_response_before_request_finished) {
 }
 
 /* Check that expected matches data stretched across multiple messages.
- * The event-loop is ticked, and messages are dequed, as this function progresses. */
+ * The event-loop is ticked, and messages are dequeued, as this function progresses. */
 static int s_check_multiple_messages(struct tester *tester, struct aws_byte_cursor expected, size_t *out_num_messages) {
     size_t num_messages = 0;
 

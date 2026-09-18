@@ -72,7 +72,7 @@ struct aws_h1_connection {
 
         /**
          * All aws_io_messages arriving in the read direction are queued here before processing.
-         * This allows the connection to receive more data than the the current HTTP-stream might allow,
+         * This allows the connection to receive more data than the current HTTP-stream might allow,
          * and process the data later when HTTP-stream's window opens or the next stream begins.
          *
          * The `aws_io_message.copy_mark` is used to track progress on partially processed messages.

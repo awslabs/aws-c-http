@@ -4153,7 +4153,7 @@ static int s_switch_protocols_on_response_header_block_done(
     struct protocol_switcher *switcher = user_data;
     aws_http_stream_get_incoming_response_status(stream, &switcher->upgrade_response_status);
 
-    /* install downstream hander */
+    /* install downstream handler */
     if (switcher->install_downstream_handler &&
         (switcher->upgrade_response_status == AWS_HTTP_STATUS_CODE_101_SWITCHING_PROTOCOLS)) {
 
@@ -4440,7 +4440,7 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_write_continues_after_shutdown_in_read_
     testing_channel_set_downstream_handler_shutdown_callback(
         &tester.testing_channel, s_downstream_handler_write_on_shutdown, &tester);
 
-    /* Shutdown cannel */
+    /* Shutdown channel */
     aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 

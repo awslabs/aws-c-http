@@ -424,7 +424,7 @@ int aws_hpack_decode(
                 /* The new maximum size MUST be lower than or equal to the limit determined by the protocol using HPACK.
                  * A value that exceeds this limit MUST be treated as a decoding error. */
                 if (*size64 > decoder->dynamic_table_protocol_max_size_setting) {
-                    HPACK_LOG(ERROR, decoder, "Dynamic table update size is larger than the protocal setting");
+                    HPACK_LOG(ERROR, decoder, "Dynamic table update size is larger than the protocol setting");
                     return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
                 }
                 size_t size = (size_t)*size64;

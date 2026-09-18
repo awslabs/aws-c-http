@@ -472,7 +472,7 @@ int aws_websocket_random_handshake_key(struct aws_byte_buf *dst);
 
 /**
  * Create request with all required fields for a websocket upgrade request.
- * The method and path are set, and the the following headers are added:
+ * The method and path are set, and the following headers are added:
  *
  * Host: <host>
  * Upgrade: websocket

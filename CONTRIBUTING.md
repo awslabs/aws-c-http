@@ -54,6 +54,13 @@ opensource-codeofconduct@amazon.com with any additional questions or comments.
 If you discover a potential security issue in this project we ask that you notify AWS/Amazon Security via our [vulnerability reporting page](http://aws.amazon.com/security/vulnerability-reporting/). Please do **not** create a public github issue.
 
 
+## Versioning
+
+This project follows a three-part `Major.Minor.Patch` version scheme. Before
+contributing, please review [VERSIONING.md](VERSIONING.md) to understand how
+changes map to version bumps and our API/ABI stability policy.
+
+
 ## Licensing
 
 See the [LICENSE](https://github.com/awslabs/aws-c-http/blob/main/LICENSE) file for our project's licensing. We will ask you to confirm the licensing of your contribution.

@@ -290,7 +290,7 @@ static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool comp
     struct aws_string *http_localhost_host = NULL;
     if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
         http_localhost_host == NULL) {
-        /* The envrionment variable is not set, default to localhost */
+        /* The environment variable is not set, default to localhost */
         http_localhost_host = aws_string_new_from_c_str(allocator, "localhost");
     }
     struct aws_byte_cursor host_name = aws_byte_cursor_from_string(http_localhost_host);
@@ -419,7 +419,7 @@ static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, v
     struct aws_string *http_localhost_host = NULL;
     if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
         http_localhost_host == NULL) {
-        /* The envrionment variable is not set, default to localhost */
+        /* The environment variable is not set, default to localhost */
         http_localhost_host = aws_string_new_from_c_str(allocator, "localhost");
     }
     struct aws_byte_cursor host_name = aws_byte_cursor_from_string(http_localhost_host);
@@ -491,7 +491,7 @@ static int s_localhost_integ_h2_download_stress(struct aws_allocator *allocator,
     struct aws_string *http_localhost_host = NULL;
     if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
         http_localhost_host == NULL) {
-        /* The envrionment variable is not set, default to localhost */
+        /* The environment variable is not set, default to localhost */
         http_localhost_host = aws_string_new_from_c_str(allocator, "localhost");
     }
     struct aws_byte_cursor host_name = aws_byte_cursor_from_string(http_localhost_host);

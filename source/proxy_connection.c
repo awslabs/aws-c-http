@@ -1265,7 +1265,7 @@ static int s_setup_proxy_tls_env_variable(
         if (aws_get_environment_value(
                 options->allocator, s_proxy_no_verify_peer_env_var, &proxy_no_verify_peer_string) == AWS_OP_SUCCESS &&
             proxy_no_verify_peer_string != NULL) {
-            /* turn off the peer verification, if setup from envrionment variable. Mostly for testing. */
+            /* turn off the peer verification, if setup from environment variable. Mostly for testing. */
             aws_tls_ctx_options_set_verify_peer(&tls_ctx_options, false);
             aws_string_destroy(proxy_no_verify_peer_string);
         }
@@ -1299,7 +1299,7 @@ static int s_connect_proxy_via_env_variable(const struct aws_http_client_connect
     bool found = false;
     bool success = false;
     if (s_proxy_uri_init_from_env_variable(options->allocator, options, &proxy_uri, &found)) {
-        /* Envrionment is set but failed to parse it */
+        /* Environment is set but failed to parse it */
         goto done;
     }
     if (found) {
@@ -1345,7 +1345,7 @@ done:
     aws_http_proxy_strategy_release(proxy_options.proxy_strategy);
     aws_uri_clean_up(&proxy_uri);
     if (success && !found) {
-        /* Successfully, but no envrionment variable found. Connect without proxy */
+        /* Successfully, but no environment variable found. Connect without proxy */
         return aws_http_client_connect_internal(options, NULL);
     }
     return success ? AWS_OP_SUCCESS : AWS_OP_ERR;
