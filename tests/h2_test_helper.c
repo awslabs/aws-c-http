@@ -694,7 +694,8 @@ static int s_aws_input_stream_tester_get_length(struct aws_input_stream *stream,
     return aws_input_stream_get_length(impl->cursor_stream, out_length);
 }
 
-static void s_aws_input_stream_tester_destroy(struct aws_input_stream_tester *impl) {
+static void s_aws_input_stream_tester_destroy(void *data) {
+    struct aws_input_stream_tester *impl = data;
     aws_input_stream_release(impl->cursor_stream);
     aws_mem_release(impl->allocator, impl);
 }
@@ -717,8 +718,7 @@ struct aws_input_stream *aws_input_stream_new_tester(struct aws_allocator *alloc
     AWS_FATAL_ASSERT(impl->cursor_stream);
     impl->allocator = alloc;
     impl->base.vtable = &s_aws_input_stream_tester_vtable;
-    aws_ref_count_init(
-        &impl->base.ref_count, impl, (aws_simple_completion_callback *)s_aws_input_stream_tester_destroy);
+    aws_ref_count_init(&impl->base.ref_count, impl, s_aws_input_stream_tester_destroy);
     return &impl->base;
 }
 
