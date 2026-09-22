@@ -11,8 +11,11 @@
 #include <aws/compression/huffman.h>
 
 /* The largest dynamic table this implementation will allocate, whatever the peer's
- * SETTINGS_HEADER_TABLE_SIZE says. A macro so both hpack.c and hpack_encoder.c can use it
- * without exporting a new symbol. */
+ * SETTINGS_HEADER_TABLE_SIZE says. Unchanged from the hardcoded limit this replaces, so it
+ * is a sanity bound on an absurd advertisement rather than a tuned value: the default table
+ * is 4096 bytes and a large one is tens of KB, so nothing legitimate approaches it. Lowering
+ * it would start refusing sizes we accept today, so it is left as it was.
+ * A macro so both hpack.c and hpack_encoder.c can use it without exporting a new symbol. */
 #define AWS_HPACK_MAX_DYNAMIC_TABLE_SIZE (16 * 1024 * 1024)
 
 /**
