@@ -809,7 +809,8 @@ static int s_aws_input_stream_tester_upload_get_length(struct aws_input_stream *
     return AWS_OP_SUCCESS;
 }
 
-static void s_aws_input_stream_tester_upload_destroy(struct aws_input_stream_tester_upload_impl *test_input_stream) {
+static void s_aws_input_stream_tester_upload_destroy(void *data) {
+    struct aws_input_stream_tester_upload_impl *test_input_stream = data;
     aws_mem_release(test_input_stream->allocator, test_input_stream);
 }
 
