@@ -14,9 +14,13 @@
 #include <aws/io/host_resolver.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
+#include <aws/io/socks5.h>
 #include <aws/io/tls_channel_handler.h>
 #include <aws/io/uri.h>
 #include <aws/testing/aws_test_harness.h>
+#include <aws/testing/socks5_server.h>
+
+#include "aws/io/l4_proxy.h"
 
 /* Singleton used by tests in this file */
 struct test_ctx {
@@ -153,7 +157,8 @@ static void s_test_ctx_clean_up(struct test_ctx *test) {
 static int s_test_tls_download_medium_file_general(
     struct aws_allocator *allocator,
     struct aws_byte_cursor url,
-    bool h2_required) {
+    bool h2_required,
+    bool use_socks5_proxy) {
 
     aws_http_library_init(allocator);
     struct aws_uri uri;
@@ -193,6 +198,31 @@ static int s_test_tls_download_medium_file_general(
     http_options.tls_options = &tls_connection_options;
     http_options.http2_options = &http2_options;
     http_options.user_data = &test;
+
+    struct aws_l4_proxy_config *l4_proxy_config = NULL;
+    struct aws_socks5_server_test_context socks5_server_context;
+    AWS_ZERO_STRUCT(socks5_server_context);
+    if (use_socks5_proxy) {
+        struct aws_socks5_server_test_context_options server_options = {
+            .fault_mode = AWS_SOCKS5_SFM_NONE,
+        };
+
+        aws_socks5_server_test_context_init(&socks5_server_context, allocator, &server_options);
+        aws_socks5_server_test_context_wait_on_server_setup(&socks5_server_context);
+
+        struct aws_socks5_proxy_negotiation_strategy *strategy =
+            aws_socks5_proxy_negotiation_strategy_new_no_auth(allocator);
+
+        struct aws_socks5_proxy_options socks5_options = {
+            .negotiation_strategy = strategy,
+            .proxy_host = aws_byte_cursor_from_c_str("127.0.0.1"),
+            .proxy_port = aws_socks5_server_get_listener_port(socks5_server_context.server),
+        };
+        l4_proxy_config = aws_l4_proxy_config_new_socks5(allocator, &socks5_options);
+
+        aws_socks5_proxy_negotiation_strategy_release(strategy);
+        http_options.l4_proxy_config = l4_proxy_config;
+    }
 
     ASSERT_SUCCESS(aws_http_client_connect(&http_options));
     ASSERT_SUCCESS(s_test_wait(&test, s_test_connection_setup_pred));
@@ -238,6 +268,13 @@ static int s_test_tls_download_medium_file_general(
     aws_http_connection_release(test.client_connection);
     ASSERT_SUCCESS(s_test_wait(&test, s_test_connection_shutdown_pred));
     aws_tls_connection_options_clean_up(&tls_connection_options);
+
+    aws_l4_proxy_config_release(l4_proxy_config);
+    if (use_socks5_proxy) {
+        ASSERT_INT_EQUALS(1, aws_socks5_server_get_connections_created(socks5_server_context.server));
+        aws_socks5_server_test_context_clean_up(&socks5_server_context);
+    }
+
     s_test_ctx_clean_up(&test);
     aws_uri_clean_up(&uri);
     aws_http_library_clean_up();
@@ -249,16 +286,30 @@ static int s_test_tls_download_medium_file_h1(struct aws_allocator *allocator, v
     (void)ctx;
     struct aws_byte_cursor url =
         aws_byte_cursor_from_c_str("https://aws-crt-test-stuff.s3.amazonaws.com/http_test_doc.txt");
-    ASSERT_SUCCESS(s_test_tls_download_medium_file_general(allocator, url, false /*h2_required*/));
+    ASSERT_SUCCESS(
+        s_test_tls_download_medium_file_general(allocator, url, false /*h2_required*/, false /*use_socks5_proxy*/));
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(tls_download_medium_file_h1, s_test_tls_download_medium_file_h1);
+
+static int s_test_tls_download_medium_file_h1_through_socks5_proxy(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    struct aws_byte_cursor url =
+        aws_byte_cursor_from_c_str("https://aws-crt-test-stuff.s3.amazonaws.com/http_test_doc.txt");
+    ASSERT_SUCCESS(
+        s_test_tls_download_medium_file_general(allocator, url, false /*h2_required*/, true /*use_socks5_proxy*/));
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    tls_download_medium_file_h1_through_socks5_proxy,
+    s_test_tls_download_medium_file_h1_through_socks5_proxy);
 
 static int s_tls_download_medium_file_h2(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     /* The cloudfront domain for aws-crt-test-stuff */
     struct aws_byte_cursor url = aws_byte_cursor_from_c_str("https://d1cz66xoahf9cl.cloudfront.net/http_test_doc.txt");
-    ASSERT_SUCCESS(s_test_tls_download_medium_file_general(allocator, url, true /*h2_required*/));
+    ASSERT_SUCCESS(
+        s_test_tls_download_medium_file_general(allocator, url, true /*h2_required*/, false /*use_socks5_proxy*/));
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(tls_download_medium_file_h2, s_tls_download_medium_file_h2);
