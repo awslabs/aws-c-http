@@ -203,7 +203,7 @@ static void s_init_fuzz_test(void) {
 
     s_fuzz_test_initialized = true;
 
-    struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), NULL, AWS_MEMTRACE_BYTES, 0);
+    s_tracing_allocator = aws_mem_tracer_new(aws_default_allocator(), NULL, AWS_MEMTRACE_BYTES, 0);
 
     /* Enable logging */
 
@@ -211,7 +211,7 @@ static void s_init_fuzz_test(void) {
         .level = AWS_LL_TRACE,
         .file = stdout,
     };
-    aws_logger_init_standard(&s_logger, allocator, &log_options);
+    aws_logger_init_standard(&s_logger, s_tracing_allocator, &log_options);
     aws_logger_set(&s_logger);
 
     /* Init HTTP (s2n init is weird, so don't do this under the tracer) */
