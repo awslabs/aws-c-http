@@ -189,10 +189,6 @@ static void s_clean_up_fuzz_test(void) {
 
     aws_logger_set(NULL);
     aws_logger_clean_up(&s_logger);
-
-    /* Check for leaks */
-    // AWS_FATAL_ASSERT(aws_mem_tracer_count(s_tracing_allocator) == 0);
-    // aws_mem_tracer_destroy(s_tracing_allocator);
 }
 
 static void s_init_fuzz_test(void) {
@@ -203,11 +199,9 @@ static void s_init_fuzz_test(void) {
 
     s_fuzz_test_initialized = true;
 
-    s_tracing_allocator =
-        aws_default_allocator(); // aws_mem_tracer_new(aws_default_allocator(), NULL, AWS_MEMTRACE_BYTES, 0);
+    s_tracing_allocator = aws_default_allocator();
 
     /* Enable logging */
-
     struct aws_logger_standard_options log_options = {
         .level = AWS_LL_TRACE,
         .file = stdout,
