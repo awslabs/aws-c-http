@@ -179,6 +179,51 @@ static struct aws_h2_frame_priority_settings s_generate_priority(struct aws_byte
     return priority;
 }
 
+static struct aws_mutex s_fuzz_lock = AWS_MUTEX_INIT;
+static bool s_fuzz_test_initialized = false;
+static struct aws_allocator *s_tracing_allocator = NULL;
+static struct aws_logger s_logger;
+
+static void s_clean_up_fuzz_test(void) {
+    aws_http_library_clean_up();
+
+    aws_logger_set(NULL);
+    aws_logger_clean_up(&s_logger);
+
+    /* Check for leaks */
+    AWS_FATAL_ASSERT(aws_mem_tracer_count(s_tracing_allocator) == 0);
+    aws_mem_tracer_destroy(s_tracing_allocator);
+}
+
+static void s_init_fuzz_test(void) {
+    aws_mutex_lock(&s_fuzz_lock);
+    if (s_fuzz_test_initialized) {
+        goto done;
+    }
+
+    s_fuzz_test_initialized = true;
+
+    struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), NULL, AWS_MEMTRACE_BYTES, 0);
+
+    /* Enable logging */
+
+    struct aws_logger_standard_options log_options = {
+        .level = AWS_LL_TRACE,
+        .file = stdout,
+    };
+    aws_logger_init_standard(&s_logger, allocator, &log_options);
+    aws_logger_set(&s_logger);
+
+    /* Init HTTP (s2n init is weird, so don't do this under the tracer) */
+    aws_http_library_init(aws_default_allocator());
+
+    atexit(s_clean_up_fuzz_test);
+
+done:
+
+    aws_mutex_unlock(&s_fuzz_lock);
+}
+
 AWS_EXTERN_C_BEGIN
 
 /**
@@ -189,21 +234,12 @@ AWS_EXTERN_C_BEGIN
  * it just checks for errors from the encoder & decoder.
  */
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+
+    s_init_fuzz_test();
+
     /* Setup allocator and parameters */
-    struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), NULL, AWS_MEMTRACE_BYTES, 0);
+    struct aws_allocator *allocator = s_tracing_allocator;
     struct aws_byte_cursor input = aws_byte_cursor_from_array(data, size);
-
-    /* Enable logging */
-    struct aws_logger logger;
-    struct aws_logger_standard_options log_options = {
-        .level = AWS_LL_TRACE,
-        .file = stdout,
-    };
-    aws_logger_init_standard(&logger, allocator, &log_options);
-    aws_logger_set(&logger);
-
-    /* Init HTTP (s2n init is weird, so don't do this under the tracer) */
-    aws_http_library_init(aws_default_allocator());
 
     /* Create the encoder */
     struct aws_h2_frame_encoder encoder;
@@ -529,14 +565,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     aws_byte_buf_clean_up(&frame_data);
     aws_h2_decoder_destroy(decoder);
     aws_h2_frame_encoder_clean_up(&encoder);
-    aws_logger_set(NULL);
-    aws_logger_clean_up(&logger);
-
-    atexit(aws_http_library_clean_up);
-
-    /* Check for leaks */
-    AWS_FATAL_ASSERT(aws_mem_tracer_count(allocator) == 0);
-    allocator = aws_mem_tracer_destroy(allocator);
 
     return 0;
 }
