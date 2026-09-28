@@ -536,9 +536,6 @@ static struct aws_h2_frame *s_frame_new_headers_or_push_promise(
     /* Create */
 
     struct aws_h2_frame_headers *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_headers));
-    if (!frame) {
-        return NULL;
-    }
 
     if (aws_byte_buf_init(&frame->whole_encoded_header_block, allocator, s_encoded_header_block_reserve)) {
         goto error;
@@ -833,10 +830,7 @@ static struct aws_h2_frame_prebuilt *s_h2_frame_new_prebuilt(
     /* Use single allocation for frame and buffer storage */
     struct aws_h2_frame_prebuilt *frame;
     void *storage;
-    if (!aws_mem_acquire_many(
-            allocator, 2, &frame, sizeof(struct aws_h2_frame_prebuilt), &storage, encoded_frame_len)) {
-        return NULL;
-    }
+    aws_mem_acquire_many(allocator, 2, &frame, sizeof(struct aws_h2_frame_prebuilt), &storage, encoded_frame_len);
 
     AWS_ZERO_STRUCT(*frame);
     s_init_frame_base(&frame->base, allocator, type, &s_frame_prebuilt_vtable, stream_id);
@@ -938,9 +932,6 @@ struct aws_h2_frame *aws_h2_frame_new_priority(
 
     struct aws_h2_frame_prebuilt *frame =
         s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_PRIORITY, stream_id, payload_len, flags);
-    if (!frame) {
-        return NULL;
-    }
 
     /* Write the priority settings */
     s_frame_priority_settings_encode(priority, &frame->encoded_buf);
@@ -968,9 +959,6 @@ struct aws_h2_frame *aws_h2_frame_new_rst_stream(
 
     struct aws_h2_frame_prebuilt *frame =
         s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_RST_STREAM, stream_id, payload_len, flags);
-    if (!frame) {
-        return NULL;
-    }
 
     /* Write RST_STREAM payload (RFC-7540 6.4):
      * +---------------------------------------------------------------+
@@ -1024,9 +1012,6 @@ struct aws_h2_frame *aws_h2_frame_new_settings(
 
     struct aws_h2_frame_prebuilt *frame =
         s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_SETTINGS, stream_id, payload_len, flags);
-    if (!frame) {
-        return NULL;
-    }
 
     /* Write the settings, each one is encoded like (RFC-7540 6.5.1):
      * +-------------------------------+
@@ -1061,9 +1046,6 @@ struct aws_h2_frame *aws_h2_frame_new_ping(
 
     struct aws_h2_frame_prebuilt *frame =
         s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_PING, stream_id, payload_len, flags);
-    if (!frame) {
-        return NULL;
-    }
 
     /* Write the PING payload (RFC-7540 6.7):
      * +---------------------------------------------------------------+
@@ -1116,9 +1098,6 @@ struct aws_h2_frame *aws_h2_frame_new_goaway(
 
     struct aws_h2_frame_prebuilt *frame =
         s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_GOAWAY, stream_id, payload_len, flags);
-    if (!frame) {
-        return NULL;
-    }
 
     /* Write the GOAWAY payload (RFC-7540 6.8):
      * +-+-------------------------------------------------------------+
@@ -1171,9 +1150,6 @@ struct aws_h2_frame *aws_h2_frame_new_window_update(
 
     struct aws_h2_frame_prebuilt *frame =
         s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id, payload_len, flags);
-    if (!frame) {
-        return NULL;
-    }
 
     /* Write the WINDOW_UPDATE payload (RFC-7540 6.9):
      * +-+-------------------------------------------------------------+
