@@ -1357,7 +1357,7 @@ static int s_error_from_outgoing_body_get_status(struct aws_input_stream *body, 
     return AWS_OP_SUCCESS;
 }
 
-static void s_error_from_outgoing_body_destroy(struct aws_input_stream *body) {
+static void s_error_from_outgoing_body_destroy(void *body) {
     (void)body;
 }
 
@@ -1554,10 +1554,7 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
     };
 
     error_tester.base.vtable = &s_error_from_outgoing_body_vtable;
-    aws_ref_count_init(
-        &error_tester.base.ref_count,
-        &error_tester,
-        (aws_simple_completion_callback *)s_error_from_outgoing_body_destroy);
+    aws_ref_count_init(&error_tester.base.ref_count, &error_tester, s_error_from_outgoing_body_destroy);
 
     struct aws_input_stream *error_from_outgoing_body_stream = &error_tester.base;
 

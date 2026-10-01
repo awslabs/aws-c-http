@@ -485,7 +485,8 @@ static struct aws_input_stream_vtable s_stalling_input_stream_vtable = {
     .get_status = s_stalling_input_stream_get_status,
 };
 
-static void s_stalling_input_stream_destroy(struct stalling_input_stream *impl) {
+static void s_stalling_input_stream_destroy(void *data) {
+    struct stalling_input_stream *impl = data;
     aws_mem_release(impl->allocator, impl);
 }
 
@@ -494,7 +495,7 @@ static struct aws_input_stream *s_stalling_input_stream_new(struct aws_allocator
     impl->allocator = allocator;
     impl->base.impl = impl;
     impl->base.vtable = &s_stalling_input_stream_vtable;
-    aws_ref_count_init(&impl->base.ref_count, impl, (aws_simple_completion_callback *)s_stalling_input_stream_destroy);
+    aws_ref_count_init(&impl->base.ref_count, impl, s_stalling_input_stream_destroy);
     return &impl->base;
 }
 
@@ -1664,9 +1665,11 @@ static int s_parse_chunked_extensions(
         if (NULL != val_end_delimiter) {
             *val_end_delimiter = '\0';
         }
-        struct aws_byte_cursor value = aws_byte_cursor_from_c_str(extensions++);
+        struct aws_byte_cursor value = aws_byte_cursor_from_c_str(extensions);
         ASSERT_BIN_ARRAYS_EQUALS(expected_extension->value.ptr, expected_extension->value.len, value.ptr, value.len);
-        extensions = val_end_delimiter + 1;
+        if (NULL != val_end_delimiter) {
+            extensions = val_end_delimiter + 1;
+        }
     }
     if (i == num_extensions) {
         return AWS_OP_SUCCESS;
@@ -2657,7 +2660,7 @@ static int s_slow_stream_get_length(struct aws_input_stream *stream, int64_t *ou
     *out_length = sender->cursor.len;
     return AWS_OP_SUCCESS;
 }
-static void s_slow_stream_destroy(struct aws_input_stream *stream) {
+static void s_slow_stream_destroy(void *stream) {
     (void)stream;
 }
 
@@ -2681,8 +2684,7 @@ static void s_slow_body_sender_init(struct slow_body_sender *body_sender) {
     body_sender->bytes_per_tick = 1;
 
     body_sender->base.vtable = &s_slow_stream_vtable;
-    aws_ref_count_init(
-        &body_sender->base.ref_count, &body_sender, (aws_simple_completion_callback *)s_slow_stream_destroy);
+    aws_ref_count_init(&body_sender->base.ref_count, &body_sender, s_slow_stream_destroy);
 }
 
 /* It should be fine to receive a response before the request has finished sending */
@@ -2775,8 +2777,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_chunks_done_sendin
         .bytes_per_tick = 1,
     };
     body_sender.base.vtable = &s_slow_stream_vtable;
-    aws_ref_count_init(
-        &body_sender.base.ref_count, &body_sender, (aws_simple_completion_callback *)s_slow_stream_destroy);
+    aws_ref_count_init(&body_sender.base.ref_count, &body_sender, s_slow_stream_destroy);
 
     struct aws_input_stream *body_stream = &body_sender.base;
 
@@ -3877,7 +3878,7 @@ static int s_error_from_outgoing_body_get_status(struct aws_input_stream *body, 
     return AWS_OP_SUCCESS;
 }
 
-static void s_error_from_outgoing_body_destroy(struct aws_input_stream *stream) {
+static void s_error_from_outgoing_body_destroy(void *stream) {
     (void)stream;
 }
 
@@ -3944,10 +3945,7 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
             },
     };
     error_tester.base.vtable = &s_error_from_outgoing_body_vtable;
-    aws_ref_count_init(
-        &error_tester.base.ref_count,
-        &error_tester,
-        (aws_simple_completion_callback *)s_error_from_outgoing_body_destroy);
+    aws_ref_count_init(&error_tester.base.ref_count, &error_tester, s_error_from_outgoing_body_destroy);
     struct aws_input_stream *error_from_outgoing_body_stream = &error_tester.base;
     /* send request */
     struct aws_http_header headers[] = {

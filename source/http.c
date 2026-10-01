@@ -218,7 +218,7 @@ static void s_init_str_to_enum_hash_table(
         alloc,
         end_index - start_index,
         ignore_case ? aws_hash_byte_cursor_ptr_ignore_case : aws_hash_byte_cursor_ptr,
-        (aws_hash_callback_eq_fn *)(ignore_case ? aws_byte_cursor_eq_ignore_case : aws_byte_cursor_eq),
+        ignore_case ? aws_byte_cursor_eq_ignore_case_cb : aws_byte_cursor_eq_cb,
         NULL,
         s_destroy_enum_value);
     AWS_FATAL_ASSERT(!err);
