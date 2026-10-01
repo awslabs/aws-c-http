@@ -643,12 +643,15 @@ H2_DECODER_ON_SERVER_TEST(h2_decoder_headers_cookies) {
     /* clang-format off */
     uint8_t input[] = {
         /* HEADERS FRAME*/
-        0x00, 0x00, 0x06,           /* Length (24) */
+        0x00, 0x00, 20,           /* Length (24) */
         AWS_H2_FRAME_T_HEADERS,     /* Type (8) */
         AWS_H2_FRAME_F_END_STREAM,  /* Flags (8) */
         0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
         /* HEADERS */
         0x82,                       /* ":method: GET" - indexed */
+        0x86,                           /* ":scheme: http" - indexed */
+        0x41, 10, 'a', 'm', 'a', 'z', 'o', 'n', '.', 'c', 'o', 'm', /* ":authority: amazon.com" - indexed name */
+        0x84,                           /* ":path: /" - indexed */
         0x60, 0x03, 'a', '=', 'b',  /* "cache: a=b" - indexed name, uncompressed value */
 
         /* CONTINUATION FRAME*/
@@ -671,10 +674,13 @@ H2_DECODER_ON_SERVER_TEST(h2_decoder_headers_cookies) {
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
     ASSERT_FALSE(frame->headers_malformed);
     /* two sepaprate cookie headers are concatenated and moved as the last header*/
-    ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
+    ASSERT_UINT_EQUALS(6, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
-    ASSERT_SUCCESS(s_check_header(frame, 1, "user-agent", "test", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
-    ASSERT_SUCCESS(s_check_header(frame, 2, "cookie", "a=b; c=d; e=f", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "http", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 2, ":authority", "amazon.com", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 3, ":path", "/", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 4, "user-agent", "test", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 5, "cookie", "a=b; c=d; e=f", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
     ASSERT_TRUE(frame->end_stream);
 
@@ -958,6 +964,92 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_headers_mixed_pseudoheaders) {
 
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 1 /*stream_id*/));
+    ASSERT_TRUE(frame->headers_malformed);
+
+    ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+/* Message is malformed if the required pseudo headers are missing.
+ * A malformed message is a Stream Error, not a Connection Error, so the decoder should continue */
+H2_DECODER_ON_SERVER_TEST(h2_decoder_malformed_headers_missing_expected_pseudo_header) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x02,               /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x82,                           /* ":method: GET" - indexed */
+        0x84,                           /* ":path: /" - indexed */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_H2ERR_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 1 /*stream_id*/));
+    ASSERT_TRUE(frame->headers_malformed);
+
+    ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+/* Message is malformed if TE header has value other than "trailers".
+ * A malformed message is a Stream Error, not a Connection Error, so the decoder should continue */
+H2_DECODER_ON_SERVER_TEST(h2_decoder_malformed_headers_TE_header_unexpected_value) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t valid_input[] = {
+        0x00, 0x00, 16,               /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x82,                           /* ":method: GET" - indexed */
+        0x86,                           /* ":scheme: http" - indexed */
+        0x84,                           /* ":path: /" - indexed */
+        0x40, 0x02, 't', 'e', 0x08, 't', 'r', 'a', 'i', 'l', 'e', 'r', 's',     /* "te: trailers" - TE headers has valid value */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_H2ERR_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(valid_input, sizeof(valid_input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 1 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
+
+    ASSERT_TRUE(frame->end_stream);
+
+    /* clang-format off */
+    uint8_t invalid_input[] = {
+        0x00, 0x00, 16,               /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x82,                           /* ":method: GET" - indexed */
+        0x86,                           /* ":scheme: http" - indexed */
+        0x84,                           /* ":path: /" - indexed */
+        0x40, 0x02, 't', 'e', 0x08, 't', 'r', 'a', 'i', 'l', 'e', 'r', 'r',     /* "te: trailerr" - TE headers has invalid value */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_H2ERR_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(invalid_input, sizeof(invalid_input))));
+
+    /* Validate */
+    frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 1 /*stream_id*/));
     ASSERT_TRUE(frame->headers_malformed);
 

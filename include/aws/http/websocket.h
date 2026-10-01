@@ -12,8 +12,14 @@ AWS_PUSH_SANE_WARNING_LEVEL
 struct aws_http_header;
 struct aws_http_message;
 
-/* TODO: Document lifetime stuff */
-/* TODO: Document CLOSE frame behavior (when auto-sent during close, when auto-closed) */
+/**
+ * Lifetime: the websocket is ref-counted. on_connection_setup hands you one reference; release it with
+ * aws_websocket_release(). Releasing is not closing - call aws_websocket_close() to close.
+ *
+ * CLOSE frames: one is sent automatically during normal channel shutdown, unless shutdown asked to free scarce
+ * resources immediately or writing already stopped (which is the case once you sent your own CLOSE).
+ * Receiving a CLOSE does not close the connection - reading stops, but you must call aws_websocket_close().
+ */
 /* TODO: Accept payload as aws_input_stream */
 
 /**
@@ -174,6 +180,13 @@ struct aws_websocket_client_connection_options {
      * Configuration options related to http proxy usage.
      */
     const struct aws_http_proxy_options *proxy_options;
+
+    /**
+     * Optional.
+     * Configuration for using an l4 proxy.  Currently, only SOCKS5
+     * is supported.  This setting is incompatible with an http proxy.
+     */
+    struct aws_l4_proxy_config *l4_proxy_config;
 
     /**
      * Required.
