@@ -3937,6 +3937,104 @@ TEST_CASE(h2_client_change_settings_failed_no_ack_received) {
     return AWS_OP_SUCCESS;
 }
 
+/* When manual window management is off (automatic window update is on), aws_http_stream_update_window() is not
+ * supported and must be ignored, rather than sending a second WINDOW_UPDATE on top of the automatic one. */
+TEST_CASE(h2_client_manual_updated_window_ignored_when_automatical_on) {
+    /* stream manual window management OFF, so window updates are automatic */
+    ASSERT_SUCCESS(s_manual_window_management_tester_init(
+        allocator, false /*conn*/, false /*stream*/, AWS_H2_INIT_WINDOW_SIZE, ctx));
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    const uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
+    struct aws_h2_stream *h2_stream = AWS_CONTAINER_OF(stream_tester.stream, struct aws_h2_stream, base);
+    const uint32_t window_before = h2_stream->thread_data.window_size_self;
+
+    /* Ask for a window increment. It must be ignored, since we are not in manual mode. */
+    aws_http_stream_update_window(stream_tester.stream, 1024);
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_UINT_EQUALS(window_before, h2_stream->thread_data.window_size_self);
+
+    /* And no WINDOW_UPDATE frame was sent for this stream */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    ASSERT_NULL(
+        h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id, 0, NULL));
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
+/* A window update requested on a stream that has not been activated yet (API state INIT) must not be sent, since the
+ * stream has no id on the wire yet. */
+TEST_CASE(h2_client_manual_stream_updated_window_ignored_invalid_state) {
+    ASSERT_SUCCESS(s_manual_window_management_tester_init(
+        allocator, false /*conn*/, true /*stream*/, AWS_H2_INIT_WINDOW_SIZE, ctx));
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    /* Create the stream but deliberately do NOT activate it */
+    struct aws_http_make_request_options options = {
+        .self_size = sizeof(options),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &options);
+    ASSERT_NOT_NULL(stream);
+
+    struct aws_h2_stream *h2_stream = AWS_CONTAINER_OF(stream, struct aws_h2_stream, base);
+    const uint32_t window_before = h2_stream->thread_data.window_size_self;
+
+    /* Request a window update while the stream is still in the INIT api state */
+    aws_http_stream_update_window(stream, 1024);
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* Nothing was applied and no frame went out, and the connection is unharmed */
+    ASSERT_UINT_EQUALS(window_before, h2_stream->thread_data.window_size_self);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    /* No *stream-level* WINDOW_UPDATE was sent. Connection-level ones (stream id 0) are normal traffic and expected. */
+    size_t search_idx = 0;
+    while (true) {
+        size_t found_idx = 0;
+        struct h2_decoded_frame *frame =
+            h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, search_idx, &found_idx);
+        if (frame == NULL) {
+            break;
+        }
+        ASSERT_UINT_EQUALS(0, frame->stream_id);
+        search_idx = found_idx + 1;
+    }
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    aws_http_stream_release(stream);
+    aws_http_message_release(request);
+    return s_tester_clean_up();
+}
+
 /* Test manual window management for stream successfully disabled the automatically window update */
 TEST_CASE(h2_client_manual_window_management_disabled_auto_window_update) {
     size_t window_size = 10;
