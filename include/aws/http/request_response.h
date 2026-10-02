@@ -1129,6 +1129,9 @@ int aws_http_message_erase_header(struct aws_http_message *message, size_t index
  *      header
  *  - When HTTP/1 message sent on HTTP/2 connection, `aws_http2_message_new_from_http1` will be applied under the hood.
  *  - When HTTP/2 message sent on HTTP/1 connection, no change will be made.
+ *  - `request` is never modified. Protocol conversion builds a new message; otherwise only a refcount is taken.
+ *  - For HTTP/2, a missing `:method` or `:path` fails this call with AWS_ERROR_HTTP_INVALID_METHOD / _INVALID_PATH.
+ *      The remaining pseudo-header rules (RFC-9113 8.3) are enforced by the peer.
  */
 AWS_HTTP_API
 struct aws_http_stream *aws_http_connection_make_request(

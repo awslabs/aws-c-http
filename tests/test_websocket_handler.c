@@ -1222,7 +1222,8 @@ TEST_CASE(websocket_handler_shutdown_handles_queued_close_frame) {
 
     /* Try to make it so we issue channel-shutdown while user CLOSE frame is mid-send.
      * We use the "payload delay" feature in the `send_tester` struct */
-    uint8_t payload_bytes[] = {0x01, 0x02};
+    /* A CLOSE frame's payload must start with a valid 2-byte status code (1000 == normal closure) */
+    uint8_t payload_bytes[] = {0x03, 0xE8};
     struct send_tester send = {
         .payload = aws_byte_cursor_from_array(payload_bytes, sizeof(payload_bytes)),
         .def =
