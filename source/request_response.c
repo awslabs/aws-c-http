@@ -6,6 +6,7 @@
 #include <aws/common/array_list.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
+#include <aws/common/uri.h>
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/request_response_impl.h>
 #include <aws/http/private/strutil.h>
@@ -999,7 +1000,29 @@ struct aws_http_message *aws_http2_message_new_from_http1(
             aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
             goto error;
         }
+        /**
+         * An HTTP/1 request-target may be in absolute-form ("GET https://example.com/index.html HTTP/1.1", RFC-9112
+         * 3.2.2). RFC-9113 8.3.1 wants only the path and query in ":path"; scheme and authority have their own
+         * pseudo-headers. Only absolute-form carries a scheme, which is what tells it apart from origin-form
+         * ("/index.html") and asterisk-form ("*").
+         */
+        struct aws_uri target;
+        AWS_ZERO_STRUCT(target);
+        if (path_cursor.len > 0 && path_cursor.ptr[0] != '/' && path_cursor.ptr[0] != '*') {
+            if (aws_uri_init_parse(&target, alloc, &path_cursor) == AWS_OP_SUCCESS &&
+                aws_uri_scheme(&target)->len > 0) {
+                path_cursor = *aws_uri_path_and_query(&target);
+                if (path_cursor.len == 0) {
+                    /* An absolute URI with an empty path means the origin, i.e. "/". */
+                    path_cursor = aws_byte_cursor_from_c_str("/");
+                }
+            } else {
+                /* Not a URI with a scheme, treat it as an opaque target and pass it through. */
+                aws_reset_error();
+            }
+        }
         if (aws_http_headers_add(copied_headers, aws_http_header_path, path_cursor)) {
+            aws_uri_clean_up(&target);
             goto error;
         }
         AWS_LOGF_TRACE(
@@ -1009,6 +1032,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
             aws_http_header_path.ptr,
             (int)path_cursor.len,
             path_cursor.ptr);
+        aws_uri_clean_up(&target);
     } else {
         int status = 0;
         if (aws_http_message_get_response_status(http1_msg, &status)) {
