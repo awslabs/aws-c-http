@@ -491,7 +491,7 @@ static int s_set_string_from_cursor(
     }
 
     /* Replace existing value */
-    aws_string_destroy(*dst);
+    aws_string_destroy_secure(*dst);
 
     *dst = new_str;
     return AWS_OP_SUCCESS;
@@ -594,7 +594,7 @@ struct aws_http_message *aws_http_message_release(struct aws_http_message *messa
     if (prev_refcount == 1) {
         if (message->request_data) {
             aws_string_destroy(message->request_data->method);
-            aws_string_destroy(message->request_data->path);
+            aws_string_destroy_secure(message->request_data->path);
         }
 
         aws_http_headers_release(message->headers);

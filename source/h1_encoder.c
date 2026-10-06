@@ -458,7 +458,7 @@ error:
 
 void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message) {
     aws_input_stream_release(message->body);
-    aws_byte_buf_clean_up(&message->outgoing_head_buf);
+    aws_byte_buf_clean_up_secure(&message->outgoing_head_buf);
     aws_h1_trailer_destroy(message->trailer);
     AWS_ZERO_STRUCT(*message);
 }
@@ -759,7 +759,7 @@ static int s_state_fn_head(struct aws_h1_encoder *encoder, struct aws_byte_buf *
     }
 
     /* Don't NEED to free this buffer now, but we don't need it anymore, so why not */
-    aws_byte_buf_clean_up(&encoder->message->outgoing_head_buf);
+    aws_byte_buf_clean_up_secure(&encoder->message->outgoing_head_buf);
 
     /* Pick next state */
     if (encoder->message->has_manual_data_writes && encoder->message->has_chunked_encoding_header) {
