@@ -110,13 +110,6 @@ struct aws_http_connection_manager_options {
      */
     const struct proxy_env_var_settings *proxy_ev_settings;
 
-    /**
-     * Optional.
-     * Configuration for using an l4 proxy.  Currently, only SOCKS5
-     * is supported.  This setting is incompatible with an http proxy.
-     */
-    struct aws_l4_proxy_config *l4_proxy_config;
-
     /*
      * Maximum number of connections this manager is allowed to contain
      */
@@ -169,6 +162,13 @@ struct aws_http_connection_manager_options {
      */
     const struct aws_byte_cursor *network_interface_names_array;
     size_t num_network_interface_names;
+
+    /**
+     * Optional.
+     * Configuration for using an l4 proxy.  Currently, only SOCKS5
+     * is supported.  This setting is incompatible with an http proxy.
+     */
+    struct aws_l4_proxy_config *l4_proxy_config;
 };
 
 AWS_EXTERN_C_BEGIN

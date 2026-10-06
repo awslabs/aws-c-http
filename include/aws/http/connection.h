@@ -324,13 +324,6 @@ struct aws_http_client_connection_options {
     const struct proxy_env_var_settings *proxy_ev_settings;
 
     /**
-     * Optional.
-     * Configuration for using an l4 proxy.  Currently, only SOCKS5
-     * is supported.  This setting is incompatible with an http proxy.
-     */
-    struct aws_l4_proxy_config *l4_proxy_config;
-
-    /**
      * Optional
      * Configuration options related to connection health monitoring
      */
@@ -450,6 +443,13 @@ struct aws_http_client_connection_options {
      * Host resolution override that allows the user to override DNS behavior for this particular connection.
      */
     const struct aws_host_resolution_config *host_resolution_config;
+
+    /**
+     * Optional.
+     * Configuration for using an l4 proxy.  Currently, only SOCKS5
+     * is supported.  This setting is incompatible with an http proxy.
+     */
+    struct aws_l4_proxy_config *l4_proxy_config;
 };
 
 /* Predefined settings identifiers (RFC-7540 6.5.2) */

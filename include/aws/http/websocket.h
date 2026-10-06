@@ -11,6 +11,7 @@ AWS_PUSH_SANE_WARNING_LEVEL
 
 struct aws_http_header;
 struct aws_http_message;
+struct aws_l4_proxy_config;
 
 /**
  * Lifetime: the websocket is ref-counted. on_connection_setup hands you one reference; release it with
@@ -182,13 +183,6 @@ struct aws_websocket_client_connection_options {
     const struct aws_http_proxy_options *proxy_options;
 
     /**
-     * Optional.
-     * Configuration for using an l4 proxy.  Currently, only SOCKS5
-     * is supported.  This setting is incompatible with an http proxy.
-     */
-    struct aws_l4_proxy_config *l4_proxy_config;
-
-    /**
      * Required.
      * aws_websocket_client_connect() makes a copy.
      */
@@ -301,6 +295,13 @@ struct aws_websocket_client_connection_options {
      * Host resolution override that allows the user to override DNS behavior for this particular connection.
      */
     const struct aws_host_resolution_config *host_resolution_config;
+
+    /**
+     * Optional.
+     * Configuration for using an l4 proxy.  Currently, only SOCKS5
+     * is supported.  This setting is incompatible with an http proxy.
+     */
+    struct aws_l4_proxy_config *l4_proxy_config;
 };
 
 /**
