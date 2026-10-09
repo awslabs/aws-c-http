@@ -82,7 +82,7 @@ void aws_hpack_static_table_init(struct aws_allocator *allocator) {
         allocator,
         s_static_header_table_size - 1,
         aws_hash_byte_cursor_ptr,
-        (aws_hash_callback_eq_fn *)aws_byte_cursor_eq,
+        aws_byte_cursor_eq_cb,
         NULL,
         NULL);
     AWS_FATAL_ASSERT(AWS_OP_SUCCESS == result);
@@ -139,7 +139,7 @@ void aws_hpack_context_init(
         allocator,
         s_hpack_dynamic_table_initial_elements,
         aws_hash_byte_cursor_ptr,
-        (aws_hash_callback_eq_fn *)aws_byte_cursor_eq,
+        aws_byte_cursor_eq_cb,
         NULL,
         NULL);
 }
