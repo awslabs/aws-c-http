@@ -59,6 +59,10 @@ class H2Protocol(asyncio.Protocol):
         self.raw_headers = None
         self.download_test_length = 2500000000
         self.out_bytes_per_second = 900
+        # Streams that were already responded to immediately upon receiving
+        # headers (see the x-respond-immediately handling in request_received),
+        # so stream_complete does not try to respond again.
+        self.responded_streams = set()
 
     def connection_made(self, transport: asyncio.Transport):
         self.transport = transport
@@ -110,6 +114,25 @@ class H2Protocol(asyncio.Protocol):
         # Store off the request data.
         request_data = RequestData(headers, io.BytesIO())
         self.stream_data[stream_id] = request_data
+
+        # Optionally respond immediately upon receiving the request headers,
+        # without waiting for the client to finish sending its request body.
+        # This lets clients exercise the ordering of the "remote end stream"
+        # signal (the server has finished responding) against stream completion
+        # (both the client and the server have finished) while the client is
+        # still uploading its request body. It mirrors a real server that
+        # returns a status before the full request body arrives (e.g. an
+        # immediate 404 for an unknown path).
+        if headers.get('x-respond-immediately') is not None:
+            status = headers.get('x-expect-status', '404')
+            body = b'Not Found'
+            response_headers = [
+                (':status', status),
+                ('content-length', str(len(body))),
+            ]
+            self.conn.send_headers(stream_id, response_headers, end_stream=False)
+            self.responded_streams.add(stream_id)
+            asyncio.ensure_future(self.send_data(body, stream_id))
 
     def handle_request_echo(self, stream_id: int, request_data: RequestData):
         """
@@ -185,6 +208,11 @@ class H2Protocol(asyncio.Protocol):
         """
         When a stream is complete, we can send our response.
         """
+        if stream_id in self.responded_streams:
+            # We already responded immediately when the headers arrived, so
+            # there is nothing more to send now that the client has finished.
+            self.responded_streams.discard(stream_id)
+            return
         try:
             request_data = self.stream_data[stream_id]
         except KeyError:
@@ -209,8 +237,16 @@ class H2Protocol(asyncio.Protocol):
                 # and the connection. And the function only accepts value > 0.
                 self.conn.increment_flow_control_window(
                     flow_controlled_length)
-                self.conn.increment_flow_control_window(
-                    flow_controlled_length, stream_id)
+                try:
+                    self.conn.increment_flow_control_window(
+                        flow_controlled_length, stream_id)
+                except StreamClosedError:
+                    # The stream may already be closed if we responded
+                    # immediately (x-respond-immediately) and the client is
+                    # only now finishing its request body. There is no stream
+                    # window left to replenish in that case; the connection
+                    # window increment above is still valid.
+                    pass
             stream_data = self.stream_data[stream_id]
         except KeyError:
             self.conn.reset_stream(
