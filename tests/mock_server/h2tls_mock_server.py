@@ -47,6 +47,12 @@ from h2.settings import SettingCodes
 
 RequestData = collections.namedtuple('RequestData', ['headers', 'data'])
 
+# Path that is answered as soon as the request HEADERS arrive. This models a
+# server that produces a final response from the headers alone (e.g. a routing
+# 404 or an auth rejection) and could be used to exercise HTTP/2 full-duplex
+# ordering.
+EARLY_RESPONSE_PATH = '/respond-immediately'
+
 
 class H2Protocol(asyncio.Protocol):
     def __init__(self):
@@ -60,7 +66,7 @@ class H2Protocol(asyncio.Protocol):
         self.download_test_length = 2500000000
         self.out_bytes_per_second = 900
         # Streams that were already responded to immediately upon receiving
-        # headers (see the x-respond-immediately handling in request_received),
+        # headers (see the EARLY_RESPONSE_PATH handling in request_received),
         # so stream_complete does not try to respond again.
         self.responded_streams = set()
 
@@ -115,17 +121,21 @@ class H2Protocol(asyncio.Protocol):
         request_data = RequestData(headers, io.BytesIO())
         self.stream_data[stream_id] = request_data
 
-        # Optionally respond immediately upon receiving the request headers,
-        # without waiting for the client to finish sending its request body.
-        # This lets clients exercise the ordering of the "remote end stream"
-        # signal (the server has finished responding) against stream completion
-        # (both the client and the server have finished) while the client is
-        # still uploading its request body. It mirrors a real server that
-        # returns a status before the full request body arrives (e.g. an
-        # immediate 404 for an unknown path).
-        if headers.get('x-respond-immediately') is not None:
+        # Two distinct response timings are supported, keyed off the path:
+        #
+        #   * EARLY_RESPONSE_PATH -> respond here, as soon as the request
+        #     HEADERS arrive, WITHOUT waiting for the client to finish sending
+        #     its request body. The server sends a complete response (HEADERS +
+        #     DATA + END_STREAM) and then simply leaves the client's upload half
+        #     open; the remaining request body is received and discarded. The
+        #     response status defaults to 404 and can be overridden with the
+        #     x-expect-status request header.
+        #
+        #   * every other path (/echo and any unknown path) -> answered from
+        #     stream_complete, AFTER the full request body has been received.
+        if headers.get(':path') == EARLY_RESPONSE_PATH:
             status = headers.get('x-expect-status', '404')
-            body = b'Not Found'
+            body = ('Early response: ' + status).encode('utf-8')
             response_headers = [
                 (':status', status),
                 ('content-length', str(len(body))),
@@ -242,10 +252,10 @@ class H2Protocol(asyncio.Protocol):
                         flow_controlled_length, stream_id)
                 except StreamClosedError:
                     # The stream may already be closed if we responded
-                    # immediately (x-respond-immediately) and the client is
-                    # only now finishing its request body. There is no stream
-                    # window left to replenish in that case; the connection
-                    # window increment above is still valid.
+                    # immediately (EARLY_RESPONSE_PATH) and the client is only
+                    # now finishing its request body. There is no stream window
+                    # left to replenish in that case; the connection window
+                    # increment above is still valid.
                     pass
             stream_data = self.stream_data[stream_id]
         except KeyError:
