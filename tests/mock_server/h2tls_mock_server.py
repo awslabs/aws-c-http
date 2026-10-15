@@ -47,6 +47,12 @@ from h2.settings import SettingCodes
 
 RequestData = collections.namedtuple('RequestData', ['headers', 'data'])
 
+# Path that is answered as soon as the request HEADERS arrive. This models a
+# server that produces a final response from the headers alone (e.g. a routing
+# 404 or an auth rejection) and could be used to exercise HTTP/2 full-duplex
+# ordering.
+EARLY_RESPONSE_PATH = '/respond-immediately'
+
 
 class H2Protocol(asyncio.Protocol):
     def __init__(self):
@@ -59,6 +65,10 @@ class H2Protocol(asyncio.Protocol):
         self.raw_headers = None
         self.download_test_length = 2500000000
         self.out_bytes_per_second = 900
+        # Streams that were already responded to immediately upon receiving
+        # headers (see the EARLY_RESPONSE_PATH handling in request_received),
+        # so stream_complete does not try to respond again.
+        self.responded_streams = set()
 
     def connection_made(self, transport: asyncio.Transport):
         self.transport = transport
@@ -110,6 +120,29 @@ class H2Protocol(asyncio.Protocol):
         # Store off the request data.
         request_data = RequestData(headers, io.BytesIO())
         self.stream_data[stream_id] = request_data
+
+        # Two distinct response timings are supported, keyed off the path:
+        #
+        #   * EARLY_RESPONSE_PATH -> respond here, as soon as the request
+        #     HEADERS arrive, WITHOUT waiting for the client to finish sending
+        #     its request body. The server sends a complete response (HEADERS +
+        #     DATA + END_STREAM) and then simply leaves the client's upload half
+        #     open; the remaining request body is received and discarded. The
+        #     response status defaults to 404 and can be overridden with the
+        #     x-expect-status request header.
+        #
+        #   * every other path (/echo and any unknown path) -> answered from
+        #     stream_complete, AFTER the full request body has been received.
+        if headers.get(':path') == EARLY_RESPONSE_PATH:
+            status = headers.get('x-expect-status', '404')
+            body = ('Early response: ' + status).encode('utf-8')
+            response_headers = [
+                (':status', status),
+                ('content-length', str(len(body))),
+            ]
+            self.conn.send_headers(stream_id, response_headers, end_stream=False)
+            self.responded_streams.add(stream_id)
+            asyncio.ensure_future(self.send_data(body, stream_id))
 
     def handle_request_echo(self, stream_id: int, request_data: RequestData):
         """
@@ -185,6 +218,11 @@ class H2Protocol(asyncio.Protocol):
         """
         When a stream is complete, we can send our response.
         """
+        if stream_id in self.responded_streams:
+            # We already responded immediately when the headers arrived, so
+            # there is nothing more to send now that the client has finished.
+            self.responded_streams.discard(stream_id)
+            return
         try:
             request_data = self.stream_data[stream_id]
         except KeyError:
@@ -209,8 +247,16 @@ class H2Protocol(asyncio.Protocol):
                 # and the connection. And the function only accepts value > 0.
                 self.conn.increment_flow_control_window(
                     flow_controlled_length)
-                self.conn.increment_flow_control_window(
-                    flow_controlled_length, stream_id)
+                try:
+                    self.conn.increment_flow_control_window(
+                        flow_controlled_length, stream_id)
+                except StreamClosedError:
+                    # The stream may already be closed if we responded
+                    # immediately (EARLY_RESPONSE_PATH) and the client is only
+                    # now finishing its request body. There is no stream window
+                    # left to replenish in that case; the connection window
+                    # increment above is still valid.
+                    pass
             stream_data = self.stream_data[stream_id]
         except KeyError:
             self.conn.reset_stream(
