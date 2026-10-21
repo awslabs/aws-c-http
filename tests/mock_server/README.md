@@ -70,9 +70,23 @@ Returns the specified HTTP status code.
 curl -k -v -H "x-expect-status: 500" https://localhost:3443/echo
 ```
 
+##### `/respond-immediately` - Respond before the body finishes
+
+A dedicated path that returns its response as soon as the request *headers* arrive, without waiting for the client to finish uploading its request body.
+
+The status defaults to `404` and can be overridden with the `x-expect-status` request header.
+
+```bash
+# Default 404, returned before the upload completes
+curl -k -v -X POST --data-binary @largefile https://localhost:3443/respond-immediately
+
+# Override the status (e.g. 503)
+curl -k -v -X POST -H "x-expect-status: 503" --data-binary @largefile https://localhost:3443/respond-immediately
+```
+
 ##### Any other path
 
-Returns 404 Not Found.
+Returns `404 Not Found`, sent after the full request body has been received.
 
 ### Non-TLS server
 

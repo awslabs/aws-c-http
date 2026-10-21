@@ -34,8 +34,8 @@ static struct aws_http_connection_system_vtable s_default_system_vtable = {
 static const struct aws_http_connection_system_vtable *s_system_vtable_ptr = &s_default_system_vtable;
 
 void aws_http_client_bootstrap_destroy(struct aws_http_client_bootstrap *bootstrap) {
-    /* During allocating, the underlying stuctures should be allocated with the bootstrap by aws_mem_acquire_many. Thus,
-     * we only need to clean up the first pointer which is the bootstrap */
+    /* During allocating, the underlying structures should be allocated with the bootstrap by aws_mem_acquire_many.
+     * Thus, we only need to clean up the first pointer which is the bootstrap */
     if (bootstrap->alpn_string_map) {
         aws_hash_table_clean_up(bootstrap->alpn_string_map);
     }
@@ -869,9 +869,6 @@ static void s_client_bootstrap_on_channel_setup(
         struct aws_crt_statistics_handler *http_connection_monitor =
             aws_crt_statistics_handler_new_http_connection_monitor(
                 http_bootstrap->alloc, &http_bootstrap->monitoring_options);
-        if (http_connection_monitor == NULL) {
-            goto error;
-        }
 
         aws_channel_set_statistics_handler(channel, http_connection_monitor);
     }
@@ -984,6 +981,11 @@ int s_validate_http_client_connection_options(const struct aws_http_client_conne
 
     if (options->prior_knowledge_http2 && options->tls_options) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: HTTP/2 prior knowledge only works with cleartext TCP.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (options->l4_proxy_config != NULL && options->proxy_options != NULL) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: (http) proxy_options and l4_proxy_config cannot both be set.");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
@@ -1152,6 +1154,7 @@ int aws_http_client_connect_internal(
         .port = options.port,
         .socket_options = options.socket_options,
         .tls_options = options.tls_options,
+        .l4_proxy_config = options.l4_proxy_config,
         .setup_callback = s_client_bootstrap_on_channel_setup,
         .shutdown_callback = s_client_bootstrap_on_channel_shutdown,
         .enable_read_back_pressure = options.manual_window_management,
@@ -1200,7 +1203,7 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
         if (!options->proxy_ev_settings || options->proxy_ev_settings->env_var_type != AWS_HPEV_ENABLE) {
             return aws_http_client_connect_internal(options, NULL);
         } else {
-            /* Proxy through envrionment variable is enabled */
+            /* Proxy through environment variable is enabled */
             return aws_http_client_connect_via_proxy(options);
         }
     }

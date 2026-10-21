@@ -309,9 +309,6 @@ static struct aws_h2_connection *s_connection_new(
     AWS_PRECONDITION(http2_options);
 
     struct aws_h2_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct aws_h2_connection));
-    if (!connection) {
-        return NULL;
-    }
     connection->base.vtable = &s_h2_connection_vtable;
     connection->base.alloc = alloc;
     connection->base.channel_handler.vtable = &s_h2_connection_vtable.channel_handler_vtable;
@@ -442,7 +439,7 @@ static struct aws_h2_connection *s_connection_new(
     if (!connection->thread_data.init_pending_settings) {
         goto error;
     }
-    /* We enqueue the inital settings when handler get installed */
+    /* We enqueue the initial settings when handler get installed */
     return connection;
 
 error:
@@ -549,18 +546,16 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     size_t settings_storage_size = sizeof(struct aws_http2_setting) * num_settings;
     struct aws_h2_pending_settings *pending_settings;
     uint8_t *settings_storage;
-    if (!aws_mem_acquire_many(
-            allocator,
-            2,
-            &pending_settings,
-            sizeof(struct aws_h2_pending_settings),
-            &settings_storage,
-            settings_storage_size)) {
-        return NULL;
-    }
+    aws_mem_acquire_many(
+        allocator,
+        2,
+        &pending_settings,
+        sizeof(struct aws_h2_pending_settings),
+        &settings_storage,
+        settings_storage_size);
 
     AWS_ZERO_STRUCT(*pending_settings);
-    /* We buffer the settings up, incase the caller has freed them when the ACK arrives */
+    /* We buffer the settings up, in case the caller has freed them when the ACK arrives */
     pending_settings->settings_array = (void *)settings_storage;
     if (add_initial_window) {
         /* insert the initial window size settings to the first of all the settings. */
@@ -570,7 +565,7 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
         settings_storage = settings_storage + sizeof(struct aws_http2_setting);
     }
     if (settings_array) {
-        /* copy all passin settings to the settings storage. */
+        /* copy all passed-in settings to the settings storage. */
         memcpy(settings_storage, settings_array, passin_num_settings * sizeof(struct aws_http2_setting));
     }
     pending_settings->num_settings = num_settings;
@@ -588,9 +583,7 @@ static struct aws_h2_pending_ping *s_new_pending_ping(
     aws_http2_on_ping_complete_fn *on_completed) {
 
     struct aws_h2_pending_ping *pending_ping = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_pending_ping));
-    if (!pending_ping) {
-        return NULL;
-    }
+
     if (optional_opaque_data) {
         memcpy(pending_ping->opaque_data, optional_opaque_data->ptr, AWS_HTTP2_PING_DATA_SIZE);
     }
@@ -1097,7 +1090,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
                 break;
             default:
                 CONNECTION_LOGF(
-                    ERROR, connection, "Invalid state fo cached closed stream, stream id=%" PRIu32, stream_id);
+                    ERROR, connection, "Invalid state for cached closed stream, stream id=%" PRIu32, stream_id);
                 return aws_h2err_from_h2_code(AWS_HTTP2_ERR_INTERNAL_ERROR);
                 break;
         }
@@ -1507,9 +1500,6 @@ static struct aws_h2err s_decoder_on_settings(
     struct aws_http2_setting *callback_array = NULL;
     if (num_settings) {
         callback_array = aws_mem_acquire(connection->base.alloc, num_settings * sizeof(struct aws_http2_setting));
-        if (!callback_array) {
-            return aws_h2err_from_last_error();
-        }
     }
     size_t callback_array_num = 0;
 
@@ -1622,6 +1612,9 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
             } break;
             case AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE: {
                 aws_h2_decoder_set_setting_max_frame_size(decoder, settings_array[i].value);
+            } break;
+            case AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE: {
+                aws_h2_decoder_set_setting_max_header_list_size(decoder, settings_array[i].value);
             } break;
             default:
                 break;
@@ -2185,9 +2178,6 @@ static struct aws_http_stream *s_connection_make_request(
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(client_connection, struct aws_h2_connection, base);
 
-    /* #TODO: http/2-ify the request (ex: add ":method" header). Should we mutate a copy or the original? Validate?
-     *  Or just pass pointer to headers struct and let encoder transform it while encoding? */
-
     struct aws_h2_stream *stream = aws_h2_stream_new_request(client_connection, options);
     if (!stream) {
         CONNECTION_LOGF(
@@ -2215,8 +2205,28 @@ static struct aws_http_stream *s_connection_make_request(
             aws_error_name(aws_last_error()));
         goto error;
     }
+    struct aws_byte_cursor method;
+    AWS_ZERO_STRUCT(method);
+    struct aws_byte_cursor path;
+    AWS_ZERO_STRUCT(path);
 
-    AWS_H2_STREAM_LOG(DEBUG, stream, "Created HTTP/2 request stream"); /* #TODO: print method & path */
+    if (aws_http_message_get_request_method(stream->thread_data.outgoing_message, &method)) {
+        aws_raise_error(AWS_ERROR_HTTP_INVALID_METHOD);
+        CONNECTION_LOG(ERROR, connection, "Cannot create request stream, the `:method` header is missing.");
+        goto error;
+    }
+    if (aws_http_message_get_request_path(stream->thread_data.outgoing_message, &path)) {
+        aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
+        CONNECTION_LOG(ERROR, connection, "Cannot create request stream, the `:path` header is missing.");
+        goto error;
+    }
+
+    AWS_H2_STREAM_LOGF(
+        DEBUG,
+        stream,
+        "Created HTTP/2 request stream, method: " PRInSTR ". path: " PRInSTR "",
+        AWS_BYTE_CURSOR_PRI(method),
+        AWS_BYTE_CURSOR_PRI(path));
     return &stream->base;
 
 error:
@@ -2365,9 +2375,6 @@ static int s_connection_change_settings(
         num_settings,
         on_completed,
         user_data);
-    if (!pending_settings) {
-        return AWS_OP_ERR;
-    }
     struct aws_h2_frame *settings_frame =
         aws_h2_frame_new_settings(connection->base.alloc, settings_array, num_settings, false /*ACK*/);
     if (!settings_frame) {

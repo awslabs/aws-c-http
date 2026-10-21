@@ -14,6 +14,7 @@
 
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
+#include <aws/io/l4_proxy.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
@@ -25,6 +26,8 @@
 #include <aws/common/mutex.h>
 #include <aws/common/ref_count.h>
 #include <aws/common/string.h>
+
+#include "aws/io/l4_proxy.h"
 
 #ifdef _MSC_VER
 #    pragma warning(disable : 4232) /* function pointer to dll symbol */
@@ -126,7 +129,7 @@ enum aws_http_connection_manager_count_type {
  * READY - connections may be acquired and released.  When the external ref count for the manager
  * drops to zero, the manager moves to:
  *
- * TODO: Seems like connections can still be release while shutting down.
+ * Connections may still be released while SHUTTING_DOWN: vended_connection_count can only reach zero that way.
  * SHUTTING_DOWN - connections may no longer be acquired and released (how could they if the external
  * ref count was accurate?) but in case of user ref errors, we simply fail attempts to do so rather
  * than crash or underflow.  While in this state, we wait for a set of tracking counters to all fall to zero:
@@ -136,7 +139,7 @@ enum aws_http_connection_manager_count_type {
  *   vended_connection_count - the # of connections held by external users that haven't been released.  Under correct
  *      usage this should be zero before SHUTTING_DOWN is entered, but we attempt to handle incorrect usage gracefully.
  *
- * While all the counter fall to zero and no outlife transition, connection manager will detroy itself.
+ * While all the counter fall to zero and no outlife transition, connection manager will destroy itself.
  *
  * While shutting down, as pending connects resolve, we immediately release new incoming (from http) connections
  *
@@ -224,7 +227,7 @@ struct aws_http_connection_manager {
 
     /*
      * The number of established new HTTP/2 connections we have waiting for SETTINGS from the http layer
-     * It doesn't contribute to internal refcount as AWS_HCMCT_OPEN_CONNECTION inclues all connections waiting for
+     * It doesn't contribute to internal refcount as AWS_HCMCT_OPEN_CONNECTION includes all connections waiting for
      * settings as well.
      */
     size_t pending_settings_count;
@@ -237,6 +240,7 @@ struct aws_http_connection_manager {
     struct aws_socket_options socket_options;
     struct aws_tls_connection_options *tls_connection_options;
     struct aws_http_proxy_config *proxy_config;
+    struct aws_l4_proxy_config *l4_proxy_config;
     struct aws_http_connection_monitoring_options monitoring_options;
     struct aws_string *host;
     struct proxy_env_var_settings proxy_ev_settings;
@@ -590,7 +594,7 @@ static void s_connection_manager_internal_ref_decrease(
 
     manager->internal_ref[count_type] -= num;
     for (size_t i = 0; i < num; i++) {
-        /* This only happens between transcation init and transcation clean up. As transcation always has a internal
+        /* This only happens between transaction init and transaction clean up. As transaction always has a internal
          * refcount, this will never bring the refcount to zero */
         aws_ref_count_release(&manager->internal_ref_count);
     }
@@ -726,6 +730,7 @@ static void s_aws_http_connection_manager_finish_destroy(void *user_data) {
     if (manager->proxy_config) {
         aws_http_proxy_config_destroy(manager->proxy_config);
     }
+    aws_l4_proxy_config_release(manager->l4_proxy_config);
 
     for (size_t i = 0; i < aws_array_list_length(&manager->network_interface_names); i++) {
         struct aws_string *interface_name = NULL;
@@ -867,35 +872,26 @@ static void s_schedule_culling(struct aws_http_connection_manager *manager) {
         manager->cull_event_loop, manager->cull_task, aws_min_u64(idle_cull_time, acquisition_cull_time));
 }
 
-struct aws_http_connection_manager *aws_http_connection_manager_new(
-    struct aws_allocator *allocator,
-    const struct aws_http_connection_manager_options *options) {
-
-    aws_http_fatal_assert_library_initialized();
-
+static bool s_aws_http_connection_manager_options_are_valid(const struct aws_http_connection_manager_options *options) {
     if (!options) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - options is null");
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        return NULL;
+        return false;
     }
 
     if (!options->socket_options) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - socket_options is null");
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        return NULL;
+        return false;
     }
 
     if (options->max_connections == 0) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - max_connections cannot be 0");
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        return NULL;
+        return false;
     }
 
     if (options->tls_connection_options && options->http2_prior_knowledge) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - HTTP/2 prior knowledge cannot be set when TLS is used");
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        return NULL;
+        return false;
     }
 
     if (options->socket_options->network_interface_name[0] != '\0' && options->num_network_interface_names > 0) {
@@ -903,15 +899,32 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
             AWS_LS_HTTP_CONNECTION_MANAGER,
             "Invalid options - socket_options.network_interface_name and network_interface_names_array cannot be both "
             "set.");
+        return false;
+    }
+
+    if (options->l4_proxy_config != NULL && options->proxy_options != NULL) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "Invalid options - (http) proxy_options and l4_proxy_config cannot both be set.");
+        return false;
+    }
+
+    return true;
+}
+
+struct aws_http_connection_manager *aws_http_connection_manager_new(
+    struct aws_allocator *allocator,
+    const struct aws_http_connection_manager_options *options) {
+
+    aws_http_fatal_assert_library_initialized();
+
+    if (!s_aws_http_connection_manager_options_are_valid(options)) {
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }
 
     struct aws_http_connection_manager *manager =
         aws_mem_calloc(allocator, 1, sizeof(struct aws_http_connection_manager));
-    if (manager == NULL) {
-        return NULL;
-    }
 
     manager->allocator = allocator;
 
@@ -938,12 +951,15 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
             goto on_error;
         }
     }
+
     if (options->proxy_options) {
         manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
         if (manager->proxy_config == NULL) {
             goto on_error;
         }
     }
+
+    manager->l4_proxy_config = aws_l4_proxy_config_acquire(options->l4_proxy_config);
 
     if (options->monitoring_options) {
         manager->monitoring_options = *options->monitoring_options;
@@ -1152,6 +1168,8 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
         aws_http_proxy_options_init_from_config(&proxy_options, manager->proxy_config);
         options.proxy_options = &proxy_options;
     }
+
+    options.l4_proxy_config = manager->l4_proxy_config;
 
     if (manager->system_vtable->aws_http_client_connect(&options)) {
         AWS_LOGF_ERROR(

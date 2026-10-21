@@ -72,7 +72,7 @@ struct aws_h1_connection {
 
         /**
          * All aws_io_messages arriving in the read direction are queued here before processing.
-         * This allows the connection to receive more data than the the current HTTP-stream might allow,
+         * This allows the connection to receive more data than the current HTTP-stream might allow,
          * and process the data later when HTTP-stream's window opens or the next stream begins.
          *
          * The `aws_io_message.copy_mark` is used to track progress on partially processed messages.
@@ -189,8 +189,6 @@ struct aws_h1_window_stats aws_h1_connection_window_stats(struct aws_http_connec
 AWS_EXTERN_C_END
 
 /* DO NOT export functions below. They're only used by other .c files in this library */
-
-/* TODO: introduce naming conventions for private header functions */
 
 void aws_h1_connection_lock_synced_data(struct aws_h1_connection *connection);
 void aws_h1_connection_unlock_synced_data(struct aws_h1_connection *connection);

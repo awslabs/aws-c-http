@@ -254,8 +254,7 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new_reset_clone(
     if (old_user_data->original_tls_options) {
         /* clone tls options, but redirect user data to what we're creating */
         user_data->original_tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
-        if (user_data->original_tls_options == NULL ||
-            aws_tls_connection_options_copy(user_data->original_tls_options, old_user_data->original_tls_options)) {
+        if (aws_tls_connection_options_copy(user_data->original_tls_options, old_user_data->original_tls_options)) {
             goto on_error;
         }
 
@@ -1265,7 +1264,7 @@ static int s_setup_proxy_tls_env_variable(
         if (aws_get_environment_value(
                 options->allocator, s_proxy_no_verify_peer_env_var, &proxy_no_verify_peer_string) == AWS_OP_SUCCESS &&
             proxy_no_verify_peer_string != NULL) {
-            /* turn off the peer verification, if setup from envrionment variable. Mostly for testing. */
+            /* turn off the peer verification, if setup from environment variable. Mostly for testing. */
             aws_tls_ctx_options_set_verify_peer(&tls_ctx_options, false);
             aws_string_destroy(proxy_no_verify_peer_string);
         }
@@ -1299,7 +1298,7 @@ static int s_connect_proxy_via_env_variable(const struct aws_http_client_connect
     bool found = false;
     bool success = false;
     if (s_proxy_uri_init_from_env_variable(options->allocator, options, &proxy_uri, &found)) {
-        /* Envrionment is set but failed to parse it */
+        /* Environment is set but failed to parse it */
         goto done;
     }
     if (found) {
@@ -1345,7 +1344,7 @@ done:
     aws_http_proxy_strategy_release(proxy_options.proxy_strategy);
     aws_uri_clean_up(&proxy_uri);
     if (success && !found) {
-        /* Successfully, but no envrionment variable found. Connect without proxy */
+        /* Successfully, but no environment variable found. Connect without proxy */
         return aws_http_client_connect_internal(options, NULL);
     }
     return success ? AWS_OP_SUCCESS : AWS_OP_ERR;
@@ -1369,9 +1368,6 @@ static struct aws_http_proxy_config *s_aws_http_proxy_config_new(
     AWS_FATAL_ASSERT(proxy_options != NULL);
 
     struct aws_http_proxy_config *config = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_config));
-    if (config == NULL) {
-        return NULL;
-    }
 
     config->allocator = allocator;
     config->connection_type = override_proxy_connection_type;
@@ -1494,9 +1490,6 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_clone(
     AWS_FATAL_ASSERT(proxy_config != NULL);
 
     struct aws_http_proxy_config *config = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_config));
-    if (config == NULL) {
-        return NULL;
-    }
 
     config->connection_type = proxy_config->connection_type;
 
@@ -1611,9 +1604,6 @@ static struct aws_proxied_socket_channel_user_data *s_proxied_socket_channel_use
     struct aws_socket_channel_bootstrap_options *channel_options) {
     struct aws_proxied_socket_channel_user_data *user_data =
         aws_mem_calloc(allocator, 1, sizeof(struct aws_proxied_socket_channel_user_data));
-    if (user_data == NULL) {
-        return NULL;
-    }
 
     user_data->allocator = allocator;
     user_data->original_setup_callback = channel_options->setup_callback;

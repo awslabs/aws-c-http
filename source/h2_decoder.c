@@ -30,6 +30,14 @@ static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 /* initial size for cookie buffer, buffer will grow if needed */
 static const size_t s_decoder_cookie_buffer_initial_size = 512;
 
+/* RFC-9113 6.5.2 (originally RFC-7540 6.5.2): fixed per-field overhead added to
+ * name.len + value.len when accounting a decoded header field against
+ * SETTINGS_MAX_HEADER_LIST_SIZE. This value is mandated by the spec, not implementation-chosen:
+ * it approximates the bookkeeping cost (pointers, length fields, allocation overhead) of storing
+ * one header field, so that a header-list cannot evade the size limit by consisting of many
+ * fields with short or empty names/values. */
+static const size_t s_header_field_size_overhead = 32;
+
 #define DECODER_LOGF(level, decoder, text, ...)                                                                        \
     AWS_LOGF_##level(AWS_LS_HTTP_DECODER, "id=%p " text, (decoder)->logging_id, __VA_ARGS__)
 #define DECODER_LOG(level, decoder, text) DECODER_LOGF(level, decoder, "%s", text)
@@ -262,6 +270,10 @@ struct aws_h2_decoder {
 
         bool body_headers_forbidden;
 
+        /* Running total of decoded header-list size (RFC-9113 6.5.2: name.len + value.len + 32
+         * per header field), checked against settings.max_header_list_size as fields are decoded. */
+        uint64_t header_list_size;
+
         /* Buffer up cookie header fields to concatenate separate ones */
         struct aws_byte_buf cookies;
         /* If separate cookie fields have different compression types, the concatenated cookie uses the strictest type.
@@ -275,6 +287,8 @@ struct aws_h2_decoder {
         uint32_t enable_push;
         /*  the size of the largest frame payload */
         uint32_t max_frame_size;
+        /* max size of a decoded header-list (field section), RFC-9113 6.5.2 accounting */
+        uint32_t max_header_list_size;
     } settings;
 
     struct aws_array_list settings_buffer_list;
@@ -324,6 +338,7 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
 
     decoder->settings.enable_push = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_ENABLE_PUSH];
     decoder->settings.max_frame_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE];
+    decoder->settings.max_header_list_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE];
 
     if (aws_array_list_init_dynamic(
             &decoder->settings_buffer_list, decoder->alloc, 0, sizeof(struct aws_http2_setting))) {
@@ -941,7 +956,7 @@ static struct aws_h2err s_state_fn_frame_push_promise(struct aws_h2_decoder *dec
 
     if (decoder->settings.enable_push == 0) {
         /* treat the receipt of a PUSH_PROMISE frame as a connection error of type PROTOCOL_ERROR.(RFC-7540 6.5.2) */
-        DECODER_LOG(ERROR, decoder, "PUSH_PROMISE is invalid, the seting for enable push is 0");
+        DECODER_LOG(ERROR, decoder, "PUSH_PROMISE is invalid, the setting for enable push is 0");
         return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
     }
 
@@ -1156,6 +1171,60 @@ static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
     if (has_request_pseudoheaders) {
         /* Request header-block. */
         current_block->block_type = AWS_HTTP_HEADER_BLOCK_MAIN;
+        const struct aws_string *method_string = current_block->pseudoheader_values[PSEUDOHEADER_METHOD];
+        const struct aws_string *scheme_string = current_block->pseudoheader_values[PSEUDOHEADER_SCHEME];
+        const struct aws_string *authority_string = current_block->pseudoheader_values[PSEUDOHEADER_AUTHORITY];
+        const struct aws_string *path_string = current_block->pseudoheader_values[PSEUDOHEADER_PATH];
+
+        if (!method_string) {
+            DECODER_LOG(ERROR, decoder, "Request is missing :method.");
+            goto malformed;
+        }
+
+        if (!aws_strutil_is_http_token(aws_byte_cursor_from_string(method_string))) {
+            DECODER_LOG(ERROR, decoder, "Request method is invalid.");
+            DECODER_LOGF(
+                DEBUG,
+                decoder,
+                "Bad method is: '" PRInSTR "'",
+                AWS_BYTE_CURSOR_PRI(aws_byte_cursor_from_string(method_string)));
+            goto malformed;
+        }
+
+        if (aws_string_eq_byte_cursor(method_string, &aws_http_method_connect)) {
+            /* RFC-9113 8.5 The ":scheme" and ":path" pseudo-header fields MUST be omitted for CONNECT method */
+            if (scheme_string) {
+                DECODER_LOG(ERROR, decoder, "CONNECT request must not contain ':scheme' header");
+                goto malformed;
+            }
+            if (path_string) {
+                DECODER_LOG(ERROR, decoder, "CONNECT request must not contain ':path' header");
+                goto malformed;
+            }
+            if (!authority_string) {
+                DECODER_LOG(ERROR, decoder, "CONNECT request is missing :authority.");
+                goto malformed;
+            }
+        } else {
+            /* RFC-9113 8.3.1 All HTTP/2 requests MUST include exactly one valid value for the ":method", ":scheme",
+             * and ":path" pseudo-header fields, unless they are CONNECT requests */
+            if (!scheme_string) {
+                DECODER_LOGF(
+                    ERROR,
+                    decoder,
+                    "" PRInSTR " request is missing required ':scheme' header",
+                    AWS_BYTE_CURSOR_PRI(aws_byte_cursor_from_string(method_string)));
+                goto malformed;
+            }
+            if (!path_string) {
+                DECODER_LOGF(
+                    ERROR,
+                    decoder,
+                    "" PRInSTR " request is missing required ':path' header",
+                    AWS_BYTE_CURSOR_PRI(aws_byte_cursor_from_string(method_string)));
+                goto malformed;
+            }
+        }
 
     } else if (has_response_pseudoheaders) {
         /* Response header block. */
@@ -1198,9 +1267,6 @@ static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
 
         current_block->block_type = AWS_HTTP_HEADER_BLOCK_TRAILING;
     }
-
-    /* #TODO RFC-7540 8.1.2.3 & 8.3 Validate request has correct pseudoheaders. Note different rules for CONNECT */
-    /* #TODO validate pseudoheader values. each one has its own special rules */
 
     /* Finally, deliver header-fields via callback */
     for (size_t i = 0; i < PSEUDOHEADER_COUNT; ++i) {
@@ -1247,9 +1313,36 @@ static struct aws_h2err s_process_header_field(
         goto already_malformed;
     }
 
+    /* Header-list-size accounting, see s_header_field_size_overhead comment above. */
+    current_block->header_list_size += header_field->name.len + header_field->value.len + s_header_field_size_overhead;
+    if (current_block->header_list_size > decoder->settings.max_header_list_size) {
+        DECODER_LOG(ERROR, decoder, "Decoded header-list size exceeds SETTINGS_MAX_HEADER_LIST_SIZE");
+        return aws_h2err_from_h2_code(AWS_HTTP2_ERR_ENHANCE_YOUR_CALM);
+    }
+
     const struct aws_byte_cursor name = header_field->name;
     if (name.len == 0) {
         DECODER_LOG(ERROR, decoder, "Header name is blank");
+        goto malformed;
+    }
+
+    /* RFC9113 8.2.1  A field value MUST NOT start or end with an ASCII whitespace character (ASCII SP or HTAB, 0x20 or
+     * 0x09). */
+    if (!aws_strutil_is_http_field_value(header_field->value)) {
+        /**
+         * RFC9113 8.2.1  HTTP/2 implementations SHOULD validate field names and values, respectively, and treat
+         * messages that contain prohibited characters as malformed.
+         *
+         * Note: Field values that are not valid according to the definition of the corresponding field do not cause a
+         * request to be malformed.
+         */
+        DECODER_LOG(ERROR, decoder, "Invalid header field, bad value");
+        DECODER_LOGF(
+            DEBUG,
+            decoder,
+            "Bad header field is: \"" PRInSTR ": " PRInSTR "\"",
+            AWS_BYTE_CURSOR_PRI(header_field->name),
+            AWS_BYTE_CURSOR_PRI(header_field->value));
         goto malformed;
     }
 
@@ -1326,8 +1419,6 @@ static struct aws_h2err s_process_header_field(
             }
         }
 
-        /* #TODO Validate characters used in header_field->value */
-
         switch (name_enum) {
             case AWS_HTTP_HEADER_COOKIE:
                 /* for a header cookie, we will not fire callback until we concatenate them all, let's store it at the
@@ -1360,7 +1451,18 @@ static struct aws_h2err s_process_header_field(
                     AWS_BYTE_CURSOR_PRI(name));
                 goto malformed;
             } break;
-
+            case AWS_HTTP_HEADER_TE: {
+                /* the TE header field, which MAY be present in an HTTP/2 request; when it is, it MUST NOT contain any
+                 * value other than "trailers" (RFC9113 8.2.2) */
+                if (!aws_byte_cursor_eq_c_str(&header_field->value, "trailers")) {
+                    DECODER_LOGF(
+                        ERROR,
+                        decoder,
+                        "TE header has value:'" PRInSTR "', not allowed in HTTP/2",
+                        AWS_BYTE_CURSOR_PRI(header_field->value));
+                    goto malformed;
+                }
+            } break;
             case AWS_HTTP_HEADER_CONTENT_LENGTH:
                 if (current_block->body_headers_forbidden) {
                     /* The content-length are forbidden */
@@ -1530,8 +1632,6 @@ static struct aws_h2err s_state_fn_header_block_entry(struct aws_h2_decoder *dec
      * If dynamic table size changed via SETTINGS frame, next header-block must start with DYNAMIC_TABLE_RESIZE entry.
      * Is it illegal to receive a resize entry at other times? */
 
-    /* #TODO The TE header field ... MUST NOT contain any value other than "trailers" */
-
     if (result.type == AWS_HPACK_DECODE_T_HEADER_FIELD) {
         const struct aws_http_header *header_field = &result.data.header_field;
 
@@ -1589,4 +1689,9 @@ void aws_h2_decoder_set_setting_enable_push(struct aws_h2_decoder *decoder, uint
 
 void aws_h2_decoder_set_setting_max_frame_size(struct aws_h2_decoder *decoder, uint32_t data) {
     decoder->settings.max_frame_size = data;
+}
+
+void aws_h2_decoder_set_setting_max_header_list_size(struct aws_h2_decoder *decoder, uint32_t data) {
+    decoder->settings.max_header_list_size = data;
+    aws_hpack_decoder_set_max_header_list_size(&decoder->hpack, data);
 }

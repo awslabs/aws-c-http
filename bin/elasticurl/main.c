@@ -76,7 +76,7 @@ static void s_usage(int exit_code) {
     fprintf(stderr, "usage: elasticurl [options] url\n");
     fprintf(stderr, " url: url to make a request to. The default is a GET request.\n");
     fprintf(stderr, "\n Options:\n\n");
-    fprintf(stderr, "      --cacert FILE: path to a CA certficate file.\n");
+    fprintf(stderr, "      --cacert FILE: path to a CA certificate file.\n");
     fprintf(stderr, "      --capath PATH: path to a directory containing CA files.\n");
     fprintf(stderr, "      --cert FILE: path to a PEM encoded certificate to use with mTLS\n");
     fprintf(stderr, "      --key FILE: Path to a PEM encoded private key that matches cert.\n");

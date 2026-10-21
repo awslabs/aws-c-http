@@ -1,6 +1,21 @@
 cmake_minimum_required(VERSION 3.9...3.31)
-project(aws-c-http C)
+# In-source builds inherit aws-c-common's module path from the parent. Standalone
+# builds must locate the installed modules here: find_package needs an enabled
+# language, so it cannot run until after project().
+if (NOT IN_SOURCE_BUILD)
+    find_file(AWS_GET_VERSION_MODULE AwsGetVersion.cmake
+            PATH_SUFFIXES lib/cmake/aws-c-common/modules lib64/cmake/aws-c-common/modules)
+    if (NOT AWS_GET_VERSION_MODULE)
+        message(FATAL_ERROR "Could not find AwsGetVersion.cmake from an installed aws-c-common. Set CMAKE_PREFIX_PATH to the aws-c-common install prefix.")
+    endif()
+    get_filename_component(AWS_COMMON_MODULE_DIR "${AWS_GET_VERSION_MODULE}" DIRECTORY)
+    list(APPEND CMAKE_MODULE_PATH "${AWS_COMMON_MODULE_DIR}")
+endif()
 
+include(AwsGetVersion)
+aws_get_version(AWS_C_HTTP_VERSION AWS_C_HTTP_SOVERSION)
+
+project(aws-c-http LANGUAGES C VERSION ${AWS_C_HTTP_VERSION})
 option(ENABLE_PROXY_INTEGRATION_TESTS "Whether to run the proxy integration tests that rely on pre-configured proxy" OFF)
 option(ENABLE_LOCALHOST_INTEGRATION_TESTS "Whether to run the integration tests that rely on pre-configured localhost" OFF)
 
@@ -43,8 +58,8 @@ aws_set_common_properties(${PROJECT_NAME})
 aws_prepare_symbol_visibility_args(${PROJECT_NAME} "AWS_HTTP")
 aws_add_sanitizers(${PROJECT_NAME})
 
-# We are not ABI stable yet
-set_target_properties(${PROJECT_NAME} PROPERTIES VERSION 1.0.0)
+set_target_properties(${PROJECT_NAME} PROPERTIES VERSION ${AWS_C_HTTP_VERSION})
+set_target_properties(${PROJECT_NAME} PROPERTIES SOVERSION ${AWS_C_HTTP_SOVERSION})
 
 target_include_directories(${PROJECT_NAME} PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

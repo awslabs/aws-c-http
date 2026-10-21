@@ -25,6 +25,8 @@
 #include <aws/io/uri.h>
 
 #include <inttypes.h>
+#include <limits.h>
+#include <stdlib.h>
 
 #ifdef _MSC_VER
 #    pragma warning(disable : 4204) /* Declared initializers */
@@ -37,19 +39,30 @@
         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE),                                                         \
     }
 
-/* TODO: Make those configurable from cmd line */
-const struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("http://localhost:3280/");
-const int rate_secs = 30; /* Time interval to collect data */
-const int streams_per_connection = 20;
-const int max_connections = 8;
-const int num_data_to_collect = 5; /* The number of data to collect */
-const enum aws_log_level log_level = AWS_LOG_LEVEL_NONE;
-const bool direct_connection = false; /* If true, will create one connection and make requests from that connection.
-                                       * If false, will use stream manager to acquire streams */
+/* Defaults for the settings below. Each can be overridden from the command line, see s_parse_options(). */
+#define DEFAULT_URI "http://localhost:3280/"
+#define DEFAULT_RATE_SECS 30
+#define DEFAULT_STREAMS_PER_CONNECTION 20
+#define DEFAULT_MAX_CONNECTIONS 8
+#define DEFAULT_NUM_DATA_TO_COLLECT 5
+#define DEFAULT_DIRECT_CONNECTION false
+/**
+ * From the previous tests, all platforms seem to sustain more than 4000 streams/sec.
+ * It is not platform specific, so on a slow machine you may need to lower it with --rate-threshold.
+ */
+#define DEFAULT_RATE_THRESHOLD 4000
 
-const double rate_threshold =
-    4000; /* From the previous tests. All platforms seem to be larger than 4000, but it could various. TODO: Maybe
-             gather the number of previous test run, and be platform specific. */
+static struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(DEFAULT_URI);
+static int rate_secs = DEFAULT_RATE_SECS; /* Time interval to collect data */
+static int streams_per_connection = DEFAULT_STREAMS_PER_CONNECTION;
+static int max_connections = DEFAULT_MAX_CONNECTIONS;
+static int num_data_to_collect = DEFAULT_NUM_DATA_TO_COLLECT; /* The number of data to collect */
+static enum aws_log_level log_level = AWS_LOG_LEVEL_NONE;
+static bool direct_connection =
+    DEFAULT_DIRECT_CONNECTION; /* If true, will create one connection and make requests from that connection.
+                                * If false, will use stream manager to acquire streams */
+
+static double rate_threshold = DEFAULT_RATE_THRESHOLD;
 
 struct aws_http_benchmark_helper {
     struct aws_task task;
@@ -97,7 +110,8 @@ static void s_collect_data_task(struct aws_task *task, void *arg, enum aws_task_
     /* collect data */
     size_t stream_completed = aws_atomic_exchange_int(&app_ctx->streams_completed, 0);
 
-    /* TODO: maybe collect the data somewhere instead of just printing it out. */
+    /* Results are printed and averaged in-process; this is a pass/fail benchmark run from CI, so there is no
+     * store to report them to. */
     double rate = (double)stream_completed / rate_secs;
     helper->results[helper->num_collected] = rate;
     ++helper->num_collected;
@@ -344,9 +358,122 @@ static void s_run_benchmark(struct benchmark_ctx *app_ctx) {
     aws_http_message_release(request);
 }
 
+/************************* Command line options ************************************/
+
+static const struct aws_cli_option s_long_options[] = {
+    {"uri", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'u'},
+    {"rate-secs", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'r'},
+    {"streams-per-connection", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 's'},
+    {"max-connections", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'c'},
+    {"num-loops", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'n'},
+    {"rate-threshold", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 't'},
+    {"log-level", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'l'},
+    {"direct-connection", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'd'},
+    {"help", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'h'},
+    {NULL, AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 0},
+};
+
+static void s_print_usage(FILE *out) {
+    fprintf(
+        out,
+        "usage: h2benchmark [options]\n"
+        "\n"
+        "  -u, --uri URI                     URI to benchmark against (default: %s)\n"
+        "  -r, --rate-secs N                 seconds per measurement interval (default: %d)\n"
+        "  -s, --streams-per-connection N    max concurrent streams per connection (default: %d)\n"
+        "  -c, --max-connections N           max connections (default: %d)\n"
+        "  -n, --num-loops N                 number of intervals to measure (default: %d)\n"
+        "  -t, --rate-threshold F            fail if streams/sec averages below this (default: %d)\n"
+        "  -l, --log-level N                 0=none 1=fatal 2=error 3=warn 4=info 5=debug 6=trace (default: 0)\n"
+        "  -d, --direct-connection           use a single connection instead of the stream manager\n"
+        "  -h, --help                        show this message\n",
+        DEFAULT_URI,
+        DEFAULT_RATE_SECS,
+        DEFAULT_STREAMS_PER_CONNECTION,
+        DEFAULT_MAX_CONNECTIONS,
+        DEFAULT_NUM_DATA_TO_COLLECT,
+        DEFAULT_RATE_THRESHOLD);
+}
+
+/* Parse a non-negative integer option value, exiting on anything invalid. */
+static int s_parse_non_negative_int(const char *name, const char *value) {
+    char *end = NULL;
+    long parsed = strtol(value, &end, 10);
+    if (end == value || *end != '\0' || parsed < 0 || parsed > INT_MAX) {
+        fprintf(stderr, "Invalid value for %s: '%s', expected a non-negative integer\n", name, value);
+        exit(1);
+    }
+    return (int)parsed;
+}
+
+/* Parse a positive integer option value, exiting on anything invalid. */
+static int s_parse_positive_int(const char *name, const char *value) {
+    char *end = NULL;
+    long parsed = strtol(value, &end, 10);
+    if (end == value || *end != '\0' || parsed <= 0 || parsed > INT_MAX) {
+        fprintf(stderr, "Invalid value for %s: '%s', expected a positive integer\n", name, value);
+        exit(1);
+    }
+    return (int)parsed;
+}
+
+static void s_parse_options(int argc, char **argv) {
+    while (true) {
+        int option_index = 0;
+        int c = aws_cli_getopt_long(argc, argv, "u:r:s:c:n:t:l:dh", s_long_options, &option_index);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+            case 'u':
+                uri_cursor = aws_byte_cursor_from_c_str(aws_cli_optarg);
+                break;
+            case 'r':
+                rate_secs = s_parse_positive_int("--rate-secs", aws_cli_optarg);
+                break;
+            case 's':
+                streams_per_connection = s_parse_positive_int("--streams-per-connection", aws_cli_optarg);
+                break;
+            case 'c':
+                max_connections = s_parse_positive_int("--max-connections", aws_cli_optarg);
+                break;
+            case 'n':
+                num_data_to_collect = s_parse_positive_int("--num-loops", aws_cli_optarg);
+                break;
+            case 't': {
+                char *end = NULL;
+                rate_threshold = strtod(aws_cli_optarg, &end);
+                if (end == aws_cli_optarg || *end != '\0' || rate_threshold < 0) {
+                    fprintf(stderr, "Invalid value for --rate-threshold: '%s'\n", aws_cli_optarg);
+                    exit(1);
+                }
+                break;
+            }
+            case 'l': {
+                int level = s_parse_non_negative_int("--log-level", aws_cli_optarg);
+                if (level > AWS_LOG_LEVEL_TRACE) {
+                    fprintf(stderr, "Invalid --log-level: %d, max is %d\n", level, AWS_LOG_LEVEL_TRACE);
+                    exit(1);
+                }
+                log_level = (enum aws_log_level)level;
+                break;
+            }
+            case 'd':
+                direct_connection = true;
+                break;
+            case 'h':
+                s_print_usage(stdout);
+                exit(0);
+            default:
+                s_print_usage(stderr);
+                exit(1);
+        }
+    }
+}
+
 int main(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+    s_parse_options(argc, argv);
 
     struct aws_allocator *allocator = aws_default_allocator();
 

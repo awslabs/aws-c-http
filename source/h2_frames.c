@@ -32,7 +32,14 @@ const uint32_t aws_h2_settings_initial[AWS_HTTP2_SETTINGS_END_RANGE] = {
     [AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS] = UINT32_MAX, /* "Initially there is no limit to this value" */
     [AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] = AWS_H2_INIT_WINDOW_SIZE,
     [AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE] = 16384,
-    [AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE] = UINT32_MAX, /* "The initial value of this setting is unlimited" */
+    /* RFC-7540 6.5.2: "The initial value of this setting is unlimited." However, the same
+     * section also says "For any given request, a lower limit than what is advertised MAY be
+     * enforced" - so a receiver is explicitly permitted to self-enforce something stricter than
+     * what it advertises. We use that allowance to self-enforce 32KB by default, rather than
+     * leaving decoded header-list size fully unbounded for an application that never configures
+     * this setting; it can still be raised or lowered via aws_http2_connection_options or
+     * aws_http2_connection_change_settings. */
+    [AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE] = 32 * 1024,
 };
 
 const uint32_t aws_h2_settings_bounds[AWS_HTTP2_SETTINGS_END_RANGE][2] = {
@@ -529,9 +536,6 @@ static struct aws_h2_frame *s_frame_new_headers_or_push_promise(
     /* Create */
 
     struct aws_h2_frame_headers *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_headers));
-    if (!frame) {
-        return NULL;
-    }
 
     if (aws_byte_buf_init(&frame->whole_encoded_header_block, allocator, s_encoded_header_block_reserve)) {
         goto error;
@@ -826,10 +830,7 @@ static struct aws_h2_frame_prebuilt *s_h2_frame_new_prebuilt(
     /* Use single allocation for frame and buffer storage */
     struct aws_h2_frame_prebuilt *frame;
     void *storage;
-    if (!aws_mem_acquire_many(
-            allocator, 2, &frame, sizeof(struct aws_h2_frame_prebuilt), &storage, encoded_frame_len)) {
-        return NULL;
-    }
+    aws_mem_acquire_many(allocator, 2, &frame, sizeof(struct aws_h2_frame_prebuilt), &storage, encoded_frame_len);
 
     AWS_ZERO_STRUCT(*frame);
     s_init_frame_base(&frame->base, allocator, type, &s_frame_prebuilt_vtable, stream_id);
@@ -931,9 +932,6 @@ struct aws_h2_frame *aws_h2_frame_new_priority(
 
     struct aws_h2_frame_prebuilt *frame =
         s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_PRIORITY, stream_id, payload_len, flags);
-    if (!frame) {
-        return NULL;
-    }
 
     /* Write the priority settings */
     s_frame_priority_settings_encode(priority, &frame->encoded_buf);
@@ -961,9 +959,6 @@ struct aws_h2_frame *aws_h2_frame_new_rst_stream(
 
     struct aws_h2_frame_prebuilt *frame =
         s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_RST_STREAM, stream_id, payload_len, flags);
-    if (!frame) {
-        return NULL;
-    }
 
     /* Write RST_STREAM payload (RFC-7540 6.4):
      * +---------------------------------------------------------------+
@@ -1017,9 +1012,6 @@ struct aws_h2_frame *aws_h2_frame_new_settings(
 
     struct aws_h2_frame_prebuilt *frame =
         s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_SETTINGS, stream_id, payload_len, flags);
-    if (!frame) {
-        return NULL;
-    }
 
     /* Write the settings, each one is encoded like (RFC-7540 6.5.1):
      * +-------------------------------+
@@ -1054,9 +1046,6 @@ struct aws_h2_frame *aws_h2_frame_new_ping(
 
     struct aws_h2_frame_prebuilt *frame =
         s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_PING, stream_id, payload_len, flags);
-    if (!frame) {
-        return NULL;
-    }
 
     /* Write the PING payload (RFC-7540 6.7):
      * +---------------------------------------------------------------+
@@ -1109,9 +1098,6 @@ struct aws_h2_frame *aws_h2_frame_new_goaway(
 
     struct aws_h2_frame_prebuilt *frame =
         s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_GOAWAY, stream_id, payload_len, flags);
-    if (!frame) {
-        return NULL;
-    }
 
     /* Write the GOAWAY payload (RFC-7540 6.8):
      * +-+-------------------------------------------------------------+
@@ -1164,9 +1150,6 @@ struct aws_h2_frame *aws_h2_frame_new_window_update(
 
     struct aws_h2_frame_prebuilt *frame =
         s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id, payload_len, flags);
-    if (!frame) {
-        return NULL;
-    }
 
     /* Write the WINDOW_UPDATE payload (RFC-7540 6.9):
      * +-+-------------------------------------------------------------+
