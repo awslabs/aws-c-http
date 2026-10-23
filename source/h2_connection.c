@@ -1688,8 +1688,9 @@ static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t 
             if (aws_h2err_failed(err)) {
                 return err;
             }
-            if (window_resume) {
-                /* Set the stream free from stalled list */
+            /* A stream may receive WINDOW_UPDATE after sending END_STREAM (RFC9113 6.9) */
+            if (window_resume && stream->node.next != NULL) {
+                /* Only move live streams from the stalled list to the outgoing list */
                 AWS_H2_STREAM_LOGF(
                     DEBUG,
                     stream,
