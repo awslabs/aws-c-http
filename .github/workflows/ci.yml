@@ -22,6 +22,7 @@ jobs:
   linux-compat:
     runs-on: ubuntu-24.04 # latest
     strategy:
+      fail-fast: false
       matrix:
         image:
           - manylinux1-x64
@@ -47,6 +48,7 @@ jobs:
   linux-compiler-compat:
     runs-on: ubuntu-24.04 # latest
     strategy:
+      fail-fast: false
       matrix:
         compiler:
           - name: clang-6
@@ -95,6 +97,7 @@ jobs:
   clang-sanitizers:
     runs-on: ubuntu-24.04 # latest
     strategy:
+      fail-fast: false
       matrix:
         sanitizers: [",thread", ",address,undefined"]
     steps:

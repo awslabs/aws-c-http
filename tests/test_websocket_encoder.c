@@ -337,7 +337,7 @@ ENCODER_TEST_CASE(websocket_encoder_extended_length) {
     return AWS_OP_SUCCESS;
 }
 
-/* Ensure the encoder can handle outputing data across split buffers.
+/* Ensure the encoder can handle outputting data across split buffers.
  * Best way I know is to output 1 byte at a time, that covers EVERY possible splitting point. */
 ENCODER_TEST_CASE(websocket_encoder_1_byte_at_a_time) {
     (void)ctx;

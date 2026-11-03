@@ -721,7 +721,7 @@ static int s_sm_tester_offer_waiting_connections(void) {
         ASSERT_SUCCESS(s_sm_tester_finish_up_fake_connection_set_up(fake_connection));
     }
     s_tester.delay_finished = true;
-    /* We are not haveing any threads. so, not invoking anything */
+    /* We are not having any threads. so, not invoking anything */
     return AWS_OP_SUCCESS;
 }
 
@@ -1770,7 +1770,7 @@ TEST_CASE(localhost_integ_h2_sm_connection_monitor_kill_slow_connection) {
     (void)ctx;
     struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:3443/echo");
     struct aws_http_connection_monitoring_options monitor_opt = {
-        .allowable_throughput_failure_interval_seconds = 1,
+        .allowable_throughput_failure_interval_seconds = 2,
         .minimum_throughput_bytes_per_second = 1000,
     };
     struct sm_tester_options options = {

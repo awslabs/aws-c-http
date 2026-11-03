@@ -4,6 +4,7 @@
  */
 
 #include <aws/common/string.h>
+#include <aws/http/http.h>
 #include <aws/http/private/request_response_impl.h>
 #include <aws/http/request_response.h>
 #include <aws/http/status_code.h>
@@ -492,6 +493,104 @@ TEST_CASE(message_refcounts) {
     ASSERT_TRUE(aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Host")));
 
     aws_http_headers_release(headers);
+    return AWS_OP_SUCCESS;
+}
+
+/* Helper: transform an HTTP/1 request into HTTP/2 and return the given pseudo-header's value */
+static int s_h2_pseudo_header_from_http1(
+    struct aws_allocator *allocator,
+    const char *method,
+    const char *target,
+    const struct aws_http_header *extra_headers,
+    size_t num_extra_headers,
+    const char *pseudo_name,
+    struct aws_byte_buf *out_value,
+    bool *out_found) {
+
+    struct aws_http_message *http1 = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(http1);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(http1, aws_byte_cursor_from_c_str(method)));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(http1, aws_byte_cursor_from_c_str(target)));
+    if (num_extra_headers) {
+        ASSERT_SUCCESS(aws_http_message_add_header_array(http1, extra_headers, num_extra_headers));
+    }
+
+    struct aws_http_message *h2 = aws_http2_message_new_from_http1(allocator, http1);
+    ASSERT_NOT_NULL(h2);
+
+    struct aws_byte_cursor value;
+    AWS_ZERO_STRUCT(value);
+    *out_found =
+        aws_http_headers_get(aws_http_message_get_headers(h2), aws_byte_cursor_from_c_str(pseudo_name), &value) ==
+        AWS_OP_SUCCESS;
+    if (*out_found) {
+        ASSERT_SUCCESS(aws_byte_buf_init_copy_from_cursor(out_value, allocator, value));
+    }
+
+    aws_http_message_release(h2);
+    aws_http_message_release(http1);
+    return AWS_OP_SUCCESS;
+}
+
+/* An origin-form request-target ("/index.html") carries no scheme or authority, so :scheme defaults to https
+ * and :authority comes from the Host header. */
+TEST_CASE(message_h2_from_http1_origin_form_target) {
+    (void)ctx;
+    aws_http_library_init(allocator);
+    struct aws_http_header host_header[] = {DEFINE_HEADER("Host", "example.com")};
+    struct aws_byte_buf value;
+    bool found = false;
+
+    ASSERT_SUCCESS(
+        s_h2_pseudo_header_from_http1(allocator, "GET", "/index.html", host_header, 1, ":path", &value, &found));
+    ASSERT_TRUE(found);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&value, "/index.html"));
+    aws_byte_buf_clean_up(&value);
+
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+/* An absolute-form request-target names the scheme and authority, and :path must carry only the path and query
+ * (RFC-9113 8.3.1), not the whole absolute URI. */
+TEST_CASE(message_h2_from_http1_absolute_form_target) {
+    (void)ctx;
+    aws_http_library_init(allocator);
+    struct aws_byte_buf value;
+    bool found = false;
+
+    /* :path carries only the path and query, not the whole absolute URI (RFC-9113 8.3.1) */
+    ASSERT_SUCCESS(s_h2_pseudo_header_from_http1(
+        allocator, "GET", "http://example.com/index.html?q=1", NULL, 0, ":path", &value, &found));
+    ASSERT_TRUE(found);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&value, "/index.html?q=1"));
+    aws_byte_buf_clean_up(&value);
+
+    /* An absolute URI with an empty path means the origin, "/" */
+    ASSERT_SUCCESS(
+        s_h2_pseudo_header_from_http1(allocator, "GET", "https://example.com", NULL, 0, ":path", &value, &found));
+    ASSERT_TRUE(found);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&value, "/"));
+    aws_byte_buf_clean_up(&value);
+
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+/* The asterisk-form target ("OPTIONS *") is not a URI, so it must pass through untouched */
+TEST_CASE(message_h2_from_http1_asterisk_form_target) {
+    (void)ctx;
+    aws_http_library_init(allocator);
+    struct aws_http_header host_header[] = {DEFINE_HEADER("Host", "example.com")};
+    struct aws_byte_buf value;
+    bool found = false;
+
+    ASSERT_SUCCESS(s_h2_pseudo_header_from_http1(allocator, "OPTIONS", "*", host_header, 1, ":path", &value, &found));
+    ASSERT_TRUE(found);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&value, "*"));
+    aws_byte_buf_clean_up(&value);
+
+    aws_http_library_clean_up();
     return AWS_OP_SUCCESS;
 }
 

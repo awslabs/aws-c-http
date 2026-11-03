@@ -274,12 +274,16 @@ struct aws_h2_frame *aws_h2_frame_new_push_promise(
     const struct aws_http_headers *headers,
     uint8_t pad_length);
 
+/* Never returns NULL. If the allocation cannot be satisfied the allocator aborts the
+ * process (AWS_PANIC_OOM), so there is no OOM failure for callers to check. */
 AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_ping(
     struct aws_allocator *allocator,
     bool ack,
     const uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE]);
 
+/* Never returns NULL. If the allocation cannot be satisfied the allocator aborts the
+ * process (AWS_PANIC_OOM), so there is no OOM failure for callers to check. */
 AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_goaway(
     struct aws_allocator *allocator,

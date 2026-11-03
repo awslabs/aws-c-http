@@ -11,9 +11,16 @@ AWS_PUSH_SANE_WARNING_LEVEL
 
 struct aws_http_header;
 struct aws_http_message;
+struct aws_l4_proxy_config;
 
-/* TODO: Document lifetime stuff */
-/* TODO: Document CLOSE frame behavior (when auto-sent during close, when auto-closed) */
+/**
+ * Lifetime: the websocket is ref-counted. on_connection_setup hands you one reference; release it with
+ * aws_websocket_release(). Releasing is not closing - call aws_websocket_close() to close.
+ *
+ * CLOSE frames: one is sent automatically during normal channel shutdown, unless shutdown asked to free scarce
+ * resources immediately or writing already stopped (which is the case once you sent your own CLOSE).
+ * Receiving a CLOSE does not close the connection - reading stops, but you must call aws_websocket_close().
+ */
 /* TODO: Accept payload as aws_input_stream */
 
 /**
@@ -288,6 +295,13 @@ struct aws_websocket_client_connection_options {
      * Host resolution override that allows the user to override DNS behavior for this particular connection.
      */
     const struct aws_host_resolution_config *host_resolution_config;
+
+    /**
+     * Optional.
+     * Configuration for using an l4 proxy.  Currently, only SOCKS5
+     * is supported.  This setting is incompatible with an http proxy.
+     */
+    struct aws_l4_proxy_config *l4_proxy_config;
 };
 
 /**
@@ -472,7 +486,7 @@ int aws_websocket_random_handshake_key(struct aws_byte_buf *dst);
 
 /**
  * Create request with all required fields for a websocket upgrade request.
- * The method and path are set, and the the following headers are added:
+ * The method and path are set, and the following headers are added:
  *
  * Host: <host>
  * Upgrade: websocket

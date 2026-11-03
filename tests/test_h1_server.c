@@ -918,7 +918,7 @@ TEST_CASE(h1_server_send_response_before_request_finished) {
 }
 
 /* Check that expected matches data stretched across multiple messages.
- * The event-loop is ticked, and messages are dequed, as this function progresses. */
+ * The event-loop is ticked, and messages are dequeued, as this function progresses. */
 static int s_check_multiple_messages(struct tester *tester, struct aws_byte_cursor expected, size_t *out_num_messages) {
     size_t num_messages = 0;
 
@@ -1357,7 +1357,7 @@ static int s_error_from_outgoing_body_get_status(struct aws_input_stream *body, 
     return AWS_OP_SUCCESS;
 }
 
-static void s_error_from_outgoing_body_destroy(struct aws_input_stream *body) {
+static void s_error_from_outgoing_body_destroy(void *body) {
     (void)body;
 }
 
@@ -1554,10 +1554,7 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
     };
 
     error_tester.base.vtable = &s_error_from_outgoing_body_vtable;
-    aws_ref_count_init(
-        &error_tester.base.ref_count,
-        &error_tester,
-        (aws_simple_completion_callback *)s_error_from_outgoing_body_destroy);
+    aws_ref_count_init(&error_tester.base.ref_count, &error_tester, s_error_from_outgoing_body_destroy);
 
     struct aws_input_stream *error_from_outgoing_body_stream = &error_tester.base;
 
