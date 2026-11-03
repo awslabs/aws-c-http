@@ -738,6 +738,8 @@ add_net_test_case(h2_sm_with_initial_settings)
 add_net_test_case(h2_sm_mock_max_concurrent_streams)
 add_net_test_case(h2_sm_mock_max_concurrent_streams_multiple_connections)
 add_net_test_case(h2_sm_mock_max_concurrent_streams_zero_means_no_limit)
+add_net_test_case(h2_sm_mock_connection_acquisition_timeout)
+add_net_test_case(h2_sm_mock_connection_idle_culling)
 
 # Tests against real world server
 add_net_test_case(h2_sm_acquire_stream)

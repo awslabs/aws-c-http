@@ -1238,6 +1238,8 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         .num_initial_settings = options->num_initial_settings,
         .max_closed_streams = options->max_closed_streams,
         .http2_conn_manual_window_management = options->conn_manual_window_management,
+        .max_connection_idle_in_milliseconds = options->max_connection_idle_in_milliseconds,
+        .connection_acquisition_timeout_ms = options->connection_acquisition_timeout_ms,
     };
     /* aws_http_connection_manager_new needs to be the last thing that can fail */
     stream_manager->connection_manager = aws_http_connection_manager_new(allocator, &cm_options);

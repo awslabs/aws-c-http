@@ -62,6 +62,9 @@ struct sm_tester_options {
 
     bool manual_window;
     size_t initial_window_size;
+
+    uint64_t max_connection_idle_in_milliseconds;
+    uint64_t connection_acquisition_timeout_ms;
 };
 
 static struct aws_logger s_logger;
@@ -302,6 +305,8 @@ static int s_tester_init(struct sm_tester_options *options) {
         .num_initial_settings = options->num_initial_settings,
         .initial_window_size = options->initial_window_size,
         .enable_read_back_pressure = options->manual_window,
+        .max_connection_idle_in_milliseconds = options->max_connection_idle_in_milliseconds,
+        .connection_acquisition_timeout_ms = options->connection_acquisition_timeout_ms,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
@@ -1490,6 +1495,86 @@ TEST_CASE(h2_sm_mock_max_concurrent_streams_zero_means_no_limit) {
     /* All 10 streams should be acquired without waiting */
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(num_to_acquire));
     ASSERT_UINT_EQUALS(num_to_acquire, aws_array_list_length(&s_tester.streams));
+
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+
+    return s_tester_clean_up();
+}
+
+/* Test that connection_acquisition_timeout_ms fails the stream acquisition when no connection arrives in time */
+TEST_CASE(h2_sm_mock_connection_acquisition_timeout) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 1,
+        .connection_acquisition_timeout_ms = 200,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    /* The connection is created but its setup never completes until we offer it */
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_delay_mock);
+
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    ASSERT_UINT_EQUALS(1, s_tester.delay_offer_connection_count);
+
+    /* The connection manager's cull task times out the pending acquisition */
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1));
+    ASSERT_UINT_EQUALS(1, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_MANAGER_CONNECTION_ACQUIRE_FAILURE, s_tester.error_code);
+    ASSERT_UINT_EQUALS(0, aws_array_list_length(&s_tester.streams));
+
+    /* Finish the delayed connection setup so the connection manager can shut down */
+    ASSERT_SUCCESS(s_sm_tester_offer_waiting_connections());
+    s_drain_all_fake_connection_testing_channel();
+
+    return s_tester_clean_up();
+}
+
+static int s_wait_on_cm_idle_connection_count(size_t count) {
+    struct aws_http_manager_metrics metrics;
+    for (int i = 0; i < 100; ++i) {
+        AWS_ZERO_STRUCT(metrics);
+        aws_http_connection_manager_fetch_metrics(s_tester.connection_manager, &metrics);
+        if (metrics.available_concurrency == count) {
+            return AWS_OP_SUCCESS;
+        }
+        aws_thread_current_sleep(aws_timestamp_convert(50, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
+    }
+    ASSERT_UINT_EQUALS(count, metrics.available_concurrency);
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that max_connection_idle_in_milliseconds closes a connection that has no open streams */
+TEST_CASE(h2_sm_mock_connection_idle_culling) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        /* The fake connection holds its own ref, so a culled connection stays open until clean up and still counts
+         * against max_connections. Allow a second connection for the acquisition after culling. */
+        .max_connections = 2,
+        .max_connection_idle_in_milliseconds = 500,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1));
+
+    /* With no streams left, the stream manager returns the connection to the connection manager's idle pool */
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+    ASSERT_SUCCESS(s_wait_on_cm_idle_connection_count(1));
+
+    /* The connection manager culls the idle connection after the idle time */
+    ASSERT_SUCCESS(s_wait_on_cm_idle_connection_count(0));
+
+    /* The culled connection is not reused, a new stream needs a new connection */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(2));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(2));
+    ASSERT_UINT_EQUALS(0, s_tester.acquiring_stream_errors);
+    ASSERT_UINT_EQUALS(2, aws_array_list_length(&s_tester.fake_connections));
 
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
 

@@ -165,6 +165,25 @@ struct aws_http2_stream_manager_options {
      * existing streams to complete before creating new ones, even if connections have available capacity.
      */
     size_t max_concurrent_streams;
+
+    /**
+     * Optional.
+     * If set to a non-zero value, a connection with no open streams is returned to the underlying connection pool,
+     * and is closed if it stays there longer than this.
+     * See `aws_http_connection_manager_options.max_connection_idle_in_milliseconds`.
+     */
+    uint64_t max_connection_idle_in_milliseconds;
+
+    /**
+     * Optional.
+     * If set to a non-zero value, the stream manager gives up waiting for a new connection from the underlying
+     * connection pool after this long, and fails the stream acquisitions that need that connection with
+     * AWS_ERROR_HTTP_STREAM_MANAGER_CONNECTION_ACQUIRE_FAILURE.
+     * This does not limit the time an acquisition waits for capacity on connections already held, for example when
+     * `max_concurrent_streams` is reached.
+     * See `aws_http_connection_manager_options.connection_acquisition_timeout_ms`.
+     */
+    uint64_t connection_acquisition_timeout_ms;
 };
 
 struct aws_http2_stream_manager_acquire_stream_options {
