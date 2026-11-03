@@ -184,6 +184,16 @@ struct aws_http2_stream_manager_options {
      * See `aws_http_connection_manager_options.connection_acquisition_timeout_ms`.
      */
     uint64_t connection_acquisition_timeout_ms;
+
+    /**
+     * Optional (ignored if 0).
+     * After a request is fully sent, if the server does not begin responding within N milliseconds,
+     * then fail with AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT.
+     * This can be overridden per-request by aws_http_make_request_options.response_first_byte_timeout_ms.
+     * See `aws_http_connection_manager_options.response_first_byte_timeout_ms`.
+     * TODO: Only supported in HTTP/1.1 now, support it in HTTP/2
+     */
+    uint64_t response_first_byte_timeout_ms;
 };
 
 struct aws_http2_stream_manager_acquire_stream_options {
