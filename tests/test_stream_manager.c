@@ -65,6 +65,8 @@ struct sm_tester_options {
 
     uint64_t max_connection_idle_in_milliseconds;
     uint64_t connection_acquisition_timeout_ms;
+    size_t max_concurrent_streams;
+    size_t max_pending_stream_acquisitions;
 };
 
 static struct aws_logger s_logger;
@@ -307,6 +309,8 @@ static int s_tester_init(struct sm_tester_options *options) {
         .enable_read_back_pressure = options->manual_window,
         .max_connection_idle_in_milliseconds = options->max_connection_idle_in_milliseconds,
         .connection_acquisition_timeout_ms = options->connection_acquisition_timeout_ms,
+        .max_concurrent_streams = options->max_concurrent_streams,
+        .max_pending_stream_acquisitions = options->max_pending_stream_acquisitions,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
@@ -1410,6 +1414,81 @@ TEST_CASE(h2_sm_mock_max_concurrent_streams) {
     /* Should complete without error */
     ASSERT_INT_EQUALS(0, s_tester.stream_complete_errors);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.stream_completed_error_code);
+
+    return s_tester_clean_up();
+}
+
+/* Test that max_pending_stream_acquisitions rejects new acquisitions once the stream manager has no more capacity */
+TEST_CASE(h2_sm_mock_max_pending_stream_acquisitions) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 1,
+        .max_concurrent_streams = 2,
+        .max_pending_stream_acquisitions = 2,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+
+    /* Fill the only connection up to max_concurrent_streams */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(2));
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(2));
+    ASSERT_UINT_EQUALS(0, s_tester.acquiring_stream_errors);
+
+    /* No more capacity: 2 acquisitions can wait, the 3rd is rejected right away */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(3));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(3));
+    ASSERT_UINT_EQUALS(1, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED, s_tester.error_code);
+    ASSERT_UINT_EQUALS(2, aws_array_list_length(&s_tester.streams));
+
+    /* Completing the open streams lets the 2 waiting acquisitions through */
+    struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
+    s_fake_connection_complete_streams(fake_connection, 2, false);
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(5));
+    ASSERT_UINT_EQUALS(4, aws_array_list_length(&s_tester.streams));
+    ASSERT_UINT_EQUALS(1, s_tester.acquiring_stream_errors);
+    ASSERT_UINT_EQUALS(1, aws_array_list_length(&s_tester.fake_connections));
+
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+
+    return s_tester_clean_up();
+}
+
+/* Test that acquisitions expected to fit on connections still being acquired don't count against
+ * max_pending_stream_acquisitions */
+TEST_CASE(h2_sm_mock_max_pending_stream_acquisitions_connection_acquiring) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 1,
+        .ideal_concurrent_streams_per_connection = 2,
+        .max_pending_stream_acquisitions = 1,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    /* The connection is not delivered until we offer it */
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_delay_mock);
+
+    /* The first 2 acquisitions are expected to fit on the connection being acquired, the 3rd waits and the 4th is
+     * rejected */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(4));
+    ASSERT_UINT_EQUALS(1, s_tester.delay_offer_connection_count);
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1));
+    ASSERT_UINT_EQUALS(1, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED, s_tester.error_code);
+    ASSERT_UINT_EQUALS(0, aws_array_list_length(&s_tester.streams));
+
+    /* Deliver the connection, all 3 accepted acquisitions get a stream */
+    ASSERT_SUCCESS(s_sm_tester_offer_waiting_connections());
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(4));
+    ASSERT_UINT_EQUALS(3, aws_array_list_length(&s_tester.streams));
+    ASSERT_UINT_EQUALS(1, s_tester.acquiring_stream_errors);
+
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
 
     return s_tester_clean_up();
 }
