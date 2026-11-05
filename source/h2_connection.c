@@ -919,6 +919,7 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
                 aws_linked_list_push_back(waiting_streams_list, node);
                 break;
             case AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED:
+                stream->thread_data.peer_window_stalled = true;
                 aws_linked_list_push_back(stalled_window_streams_list, node);
                 AWS_H2_STREAM_LOG(
                     DEBUG,
@@ -1688,8 +1689,11 @@ static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t 
             if (aws_h2err_failed(err)) {
                 return err;
             }
-            if (window_resume) {
+            /* The window can reopen on a stream that is not waiting for it: one that has already sent END_STREAM,
+             * or one waiting for manual writes. Only move the stream if it is in the stalled list. */
+            if (window_resume && stream->thread_data.peer_window_stalled) {
                 /* Set the stream free from stalled list */
+                stream->thread_data.peer_window_stalled = false;
                 AWS_H2_STREAM_LOGF(
                     DEBUG,
                     stream,
@@ -1885,6 +1889,7 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
     if (stream->node.next) {
         aws_linked_list_remove(&stream->node);
     }
+    stream->thread_data.peer_window_stalled = false;
 
     if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0 &&
         connection->thread_data.incoming_timestamp_ns != 0) {
