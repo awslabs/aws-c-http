@@ -1464,7 +1464,8 @@ TEST_CASE(h2_sm_mock_max_pending_stream_acquisitions_connection_acquiring) {
     (void)ctx;
     struct sm_tester_options options = {
         .max_connections = 1,
-        .ideal_concurrent_streams_per_connection = 2,
+        .ideal_concurrent_streams_per_connection = 1,
+        .max_concurrent_streams_per_connection = 2,
         .max_pending_stream_acquisitions = 1,
         .alloc = allocator,
     };
@@ -1472,8 +1473,9 @@ TEST_CASE(h2_sm_mock_max_pending_stream_acquisitions_connection_acquiring) {
     /* The connection is not delivered until we offer it */
     s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_delay_mock);
 
-    /* The first 2 acquisitions are expected to fit on the connection being acquired, the 3rd waits and the 4th is
-     * rejected */
+    /* The connection being acquired is the last one allowed, so it will be filled up to
+     * max_concurrent_streams_per_connection, not just the ideal number. The first 2 acquisitions are expected to fit
+     * on it, the 3rd waits and the 4th is rejected. */
     ASSERT_SUCCESS(s_sm_stream_acquiring(4));
     ASSERT_UINT_EQUALS(1, s_tester.delay_offer_connection_count);
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1));
@@ -1481,8 +1483,66 @@ TEST_CASE(h2_sm_mock_max_pending_stream_acquisitions_connection_acquiring) {
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED, s_tester.error_code);
     ASSERT_UINT_EQUALS(0, aws_array_list_length(&s_tester.streams));
 
-    /* Deliver the connection, all 3 accepted acquisitions get a stream */
+    /* Deliver the connection, 2 acquisitions get a stream and the 3rd keeps waiting */
     ASSERT_SUCCESS(s_sm_tester_offer_waiting_connections());
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(3));
+    ASSERT_UINT_EQUALS(2, aws_array_list_length(&s_tester.streams));
+
+    /* Completing a stream lets the 3rd acquisition through */
+    s_fake_connection_complete_streams(s_get_fake_connection(0), 1, false);
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(4));
+    ASSERT_UINT_EQUALS(3, aws_array_list_length(&s_tester.streams));
+    ASSERT_UINT_EQUALS(1, s_tester.acquiring_stream_errors);
+
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+
+    return s_tester_clean_up();
+}
+
+/* Test that a connection still being acquired doesn't count as room once max_concurrent_streams leaves none */
+TEST_CASE(h2_sm_mock_max_pending_stream_acquisitions_global_limit) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 2,
+        .ideal_concurrent_streams_per_connection = 1,
+        .max_concurrent_streams_per_connection = 10,
+        .max_concurrent_streams = 2,
+        .max_pending_stream_acquisitions = 1,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+
+    /* Connection A arrives right away and gets the 1st stream */
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1));
+
+    /* The 2nd acquisition requests connection B, which is held back */
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_delay_mock);
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    ASSERT_UINT_EQUALS(1, s_tester.delay_offer_connection_count);
+
+    /* B could carry 10 streams, but max_concurrent_streams leaves room for only 1 more, which the 2nd acquisition
+     * takes. The 3rd waits and the 4th is rejected. */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(2));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(2));
+    ASSERT_UINT_EQUALS(1, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED, s_tester.error_code);
+    ASSERT_UINT_EQUALS(1, aws_array_list_length(&s_tester.streams));
+
+    /* Deliver B. s_sm_tester_offer_waiting_connections() starts from index 0, which is A, so finish B directly. */
+    ASSERT_SUCCESS(s_sm_tester_finish_up_fake_connection_set_up(s_get_fake_connection(1)));
+    s_tester.delay_finished = true;
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(3));
+    ASSERT_UINT_EQUALS(2, aws_array_list_length(&s_tester.streams));
+
+    /* Completing A's stream frees room under max_concurrent_streams for the 3rd acquisition */
+    s_fake_connection_complete_streams(s_get_fake_connection(0), 1, false);
     s_drain_all_fake_connection_testing_channel();
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(4));
     ASSERT_UINT_EQUALS(3, aws_array_list_length(&s_tester.streams));

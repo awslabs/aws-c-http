@@ -120,10 +120,18 @@ static bool s_sm_max_pending_stream_acquisitions_reached_synced(struct aws_http2
         /* The stream manager will request a new connection for this acquisition. */
         return false;
     }
-    /* Acquisitions expected to fit on the connections still being acquired are not waiting. Same estimate as
-     * s_sm_on_connection_acquired_failed_synced. */
+    /* Acquisitions expected to fit on the connections still being acquired are not waiting. Once those connections
+     * arrive the manager holds max_connections, so it fills each one up to max_concurrent_streams_per_connection. */
     size_t num_can_fit =
-        aws_mul_size_saturating(stream_manager->ideal_concurrent_streams_per_connection, connections_acquiring);
+        aws_mul_size_saturating(stream_manager->max_concurrent_streams_per_connection, connections_acquiring);
+    if (stream_manager->max_concurrent_streams > 0) {
+        /* No more than the room left under max_concurrent_streams can start, however many connections arrive. */
+        size_t total_active_streams =
+            stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_OPEN_STREAM] +
+            stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_MAKE_REQUESTS];
+        size_t room = aws_sub_size_saturating(stream_manager->max_concurrent_streams, total_active_streams);
+        num_can_fit = aws_min_size(num_can_fit, room);
+    }
     size_t num_waiting = aws_sub_size_saturating(
         stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION], num_can_fit);
     return num_waiting >= stream_manager->max_pending_stream_acquisitions;

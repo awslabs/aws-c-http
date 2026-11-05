@@ -197,12 +197,13 @@ struct aws_http2_stream_manager_options {
 
     /**
      * Optional. 0 means no limit (default).
-     * Once the stream manager cannot get more capacity, because it already holds or is acquiring `max_connections`
-     * connections or `max_concurrent_streams` is reached, aws_http2_stream_manager_acquire_stream() fails with
-     * AWS_ERROR_HTTP_STREAM_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED if this many stream acquisitions are already
-     * waiting.
-     * Stream acquisitions expected to fit on connections still being acquired don't count as waiting.
-     * The callback for a rejected acquisition is invoked before aws_http2_stream_manager_acquire_stream() returns.
+     * The max number of stream acquisitions waiting for capacity once no more connections can be acquired or
+     * `max_concurrent_streams` is reached. Beyond it, aws_http2_stream_manager_acquire_stream() fails right away with
+     * AWS_ERROR_HTTP_STREAM_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED.
+     * Acquisitions expected to fit on connections still being acquired, up to `max_concurrent_streams_per_connection`
+     * each, are not counted as waiting.
+     * The limit is checked only on new acquisitions. If the server allows fewer concurrent streams than expected,
+     * more than this many can end up waiting.
      */
     size_t max_pending_stream_acquisitions;
 };
