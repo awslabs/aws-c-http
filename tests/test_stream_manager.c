@@ -67,6 +67,7 @@ struct sm_tester_options {
     uint64_t connection_acquisition_timeout_ms;
     size_t max_concurrent_streams;
     size_t max_pending_stream_acquisitions;
+    uint64_t stream_acquisition_timeout_ms;
 };
 
 static struct aws_logger s_logger;
@@ -311,6 +312,7 @@ static int s_tester_init(struct sm_tester_options *options) {
         .connection_acquisition_timeout_ms = options->connection_acquisition_timeout_ms,
         .max_concurrent_streams = options->max_concurrent_streams,
         .max_pending_stream_acquisitions = options->max_pending_stream_acquisitions,
+        .stream_acquisition_timeout_ms = options->stream_acquisition_timeout_ms,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
@@ -1638,6 +1640,108 @@ TEST_CASE(h2_sm_mock_max_concurrent_streams_zero_means_no_limit) {
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
 
     return s_tester_clean_up();
+}
+
+/* Test that stream_acquisition_timeout_ms fails an acquisition waiting for room on a connection already held */
+TEST_CASE(h2_sm_mock_stream_acquisition_timeout) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 1,
+        .max_concurrent_streams_per_connection = 1,
+        .stream_acquisition_timeout_ms = 200,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+
+    /* The 1st stream fills the only connection */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1));
+
+    /* The 2nd acquisition waits for room on the connection and times out */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(2));
+    ASSERT_UINT_EQUALS(1, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_MANAGER_ACQUISITION_TIMEOUT, s_tester.error_code);
+    ASSERT_UINT_EQUALS(1, aws_array_list_length(&s_tester.streams));
+
+    /* Once the 1st stream completes, a new acquisition gets the connection */
+    s_fake_connection_complete_streams(s_get_fake_connection(0), 1, false);
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(3));
+    ASSERT_UINT_EQUALS(2, aws_array_list_length(&s_tester.streams));
+    ASSERT_UINT_EQUALS(1, s_tester.acquiring_stream_errors);
+
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+
+    return s_tester_clean_up();
+}
+
+/* Test that stream_acquisition_timeout_ms fails an acquisition waiting for a new connection */
+TEST_CASE(h2_sm_mock_stream_acquisition_timeout_waiting_for_connection) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 1,
+        .stream_acquisition_timeout_ms = 200,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    /* The connection is created but its setup never completes until we offer it */
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_delay_mock);
+
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    ASSERT_UINT_EQUALS(1, s_tester.delay_offer_connection_count);
+
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1));
+    ASSERT_UINT_EQUALS(1, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_MANAGER_ACQUISITION_TIMEOUT, s_tester.error_code);
+    ASSERT_UINT_EQUALS(0, aws_array_list_length(&s_tester.streams));
+
+    /* Finish the delayed connection setup so the connection manager can shut down. With nothing pending, the stream
+     * manager releases the connection right away. */
+    ASSERT_SUCCESS(s_sm_tester_offer_waiting_connections());
+    s_drain_all_fake_connection_testing_channel();
+
+    return s_tester_clean_up();
+}
+
+/* Test that shutting down doesn't wait for a scheduled acquisition timeout */
+TEST_CASE(h2_sm_mock_stream_acquisition_timeout_shutdown) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 1,
+        .max_concurrent_streams_per_connection = 1,
+        .stream_acquisition_timeout_ms = 60 * 1000,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+
+    /* The 2nd acquisition waits for room, so the timeout task is scheduled 60s out */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(2));
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1));
+
+    /* Completing the 1st stream lets the 2nd through. The timeout task stays scheduled with nothing pending. */
+    s_fake_connection_complete_streams(s_get_fake_connection(0), 1, false);
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(2));
+    ASSERT_UINT_EQUALS(0, s_tester.acquiring_stream_errors);
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+
+    /* Shutdown cancels the timeout task instead of waiting 60s for it to run */
+    uint64_t start_ns = 0;
+    ASSERT_SUCCESS(aws_high_res_clock_get_ticks(&start_ns));
+    ASSERT_SUCCESS(s_tester_clean_up());
+    uint64_t end_ns = 0;
+    ASSERT_SUCCESS(aws_high_res_clock_get_ticks(&end_ns));
+    ASSERT_TRUE(end_ns - start_ns < aws_timestamp_convert(10, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL));
+    return AWS_OP_SUCCESS;
 }
 
 /* Test that connection_acquisition_timeout_ms fails the stream acquisition when no connection arrives in time */
