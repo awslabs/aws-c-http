@@ -194,6 +194,18 @@ struct aws_http2_stream_manager_options {
      * TODO: Only supported in HTTP/1.1 now, support it in HTTP/2
      */
     uint64_t response_first_byte_timeout_ms;
+
+    /**
+     * Optional. 0 means no limit (default).
+     * The max number of stream acquisitions waiting for capacity once no more connections can be acquired or
+     * `max_concurrent_streams` is reached. Beyond it, aws_http2_stream_manager_acquire_stream() fails right away with
+     * AWS_ERROR_HTTP_STREAM_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED.
+     * Acquisitions expected to fit on connections still being acquired, up to `max_concurrent_streams_per_connection`
+     * each, are not counted as waiting.
+     * The limit is checked only on new acquisitions. If the server allows fewer concurrent streams than expected,
+     * more than this many can end up waiting.
+     */
+    size_t max_pending_stream_acquisitions;
 };
 
 struct aws_http2_stream_manager_acquire_stream_options {

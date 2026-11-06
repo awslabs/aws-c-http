@@ -129,6 +129,12 @@ struct aws_http2_stream_manager {
     size_t max_concurrent_streams;
 
     /**
+     * Optional. 0 means no limit (default).
+     * The max number of stream acquisitions waiting once the stream manager cannot get more capacity.
+     */
+    size_t max_pending_stream_acquisitions;
+
+    /**
      * Task to invoke pending acquisition callbacks asynchronously if stream manager is shutting.
      */
     struct aws_event_loop *finish_pending_stream_acquisitions_task_event_loop;

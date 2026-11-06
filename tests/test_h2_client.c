@@ -5867,6 +5867,133 @@ TEST_CASE(h2_client_manual_data_write) {
     return s_tester_clean_up();
 }
 
+/* Peer sends SETTINGS with a stream window too small to send DATA (at or below AWS_H2_MIN_WINDOW_SIZE). */
+static int s_send_connection_preface_with_small_stream_window(struct aws_allocator *allocator) {
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE, .value = 5},
+    };
+    struct aws_h2_frame *settings =
+        aws_h2_frame_new_settings(allocator, settings_array, AWS_ARRAY_SIZE(settings_array), false /*ack*/);
+    ASSERT_NOT_NULL(settings);
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface(&s_tester.peer, settings));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    return AWS_OP_SUCCESS;
+}
+
+/* A stream that already sent END_STREAM is in no outgoing list. A WINDOW_UPDATE that reopens its window must not try
+ * to move it between lists. */
+TEST_CASE(h2_client_stream_window_update_after_end_stream) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    ASSERT_SUCCESS(s_send_connection_preface_with_small_stream_window(allocator));
+
+    /* send request without body, the HEADERS frame ends the stream */
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
+
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *sent_headers_frame =
+        h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_HEADERS, stream_id, 0, NULL);
+    ASSERT_NOT_NULL(sent_headers_frame);
+    ASSERT_TRUE(sent_headers_frame->end_stream);
+
+    /* fake peer sends a WINDOW_UPDATE that reopens the stream window */
+    struct aws_h2_frame *window_update = aws_h2_frame_new_window_update(allocator, stream_id, 256);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, window_update));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_FALSE(stream_tester.complete);
+
+    /* fake peer sends response */
+    struct aws_http_header response_headers_src[] = {
+        DEFINE_HEADER(":status", "200"),
+    };
+    struct aws_http_headers *response_headers = aws_http_headers_new(allocator);
+    aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
+    struct aws_h2_frame *response_frame =
+        aws_h2_frame_new_headers(allocator, stream_id, response_headers, true /*end_stream*/, 0, NULL);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(200, stream_tester.response_status);
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* clean up */
+    aws_http_headers_release(response_headers);
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
+/* A manual-write stream with no pending writes waits in the waiting list, even when its window is exhausted.
+ * A WINDOW_UPDATE that reopens the window must leave it there until data is written. */
+TEST_CASE(h2_client_manual_data_write_window_update_while_waiting_for_writes) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    ASSERT_SUCCESS(s_send_connection_preface_with_small_stream_window(allocator));
+
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "PUT"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .http2_use_manual_data_writes = true,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
+    ASSERT_NOT_NULL(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    uint32_t stream_id = aws_http_stream_get_id(stream);
+
+    /* fake peer sends a WINDOW_UPDATE that reopens the stream window, while the stream has nothing to write */
+    struct aws_h2_frame *window_update = aws_h2_frame_new_window_update(allocator, stream_id, 256);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, window_update));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* now write the body, it should be sent with the reopened window */
+    struct aws_byte_cursor body_cursor = aws_byte_cursor_from_c_str("hello CRT!");
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body_cursor);
+    struct aws_http2_stream_write_data_options write = {
+        .data = body_stream,
+        .end_stream = true,
+    };
+    ASSERT_SUCCESS(aws_http2_stream_write_data(stream, &write));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *sent_headers_frame =
+        h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_HEADERS, stream_id, 0, NULL);
+    ASSERT_NOT_NULL(sent_headers_frame);
+    ASSERT_FALSE(sent_headers_frame->end_stream);
+    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
+        &s_tester.peer.decode, stream_id, "hello CRT!", true /*expect_end_stream*/));
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* clean up */
+    aws_input_stream_release(body_stream);
+    aws_http_message_release(request);
+    aws_http_stream_release(stream);
+    aws_http_connection_close(s_tester.connection);
+    return s_tester_clean_up();
+}
+
 static void s_http_stream_write_complete_fn(struct aws_http_stream *stream, int error_code, void *user_data) {
     (void)stream;
     int *ctx = (int *)user_data;

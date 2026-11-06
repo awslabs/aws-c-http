@@ -107,6 +107,36 @@ static bool s_sm_allows_more_concurrent_streams(struct aws_http2_stream_manager 
     return true;
 }
 
+/* Returns true if a new stream acquisition must be rejected because of max_pending_stream_acquisitions.
+ * *_synced should only be called with LOCK HELD or from another synced function */
+static bool s_sm_max_pending_stream_acquisitions_reached_synced(struct aws_http2_stream_manager *stream_manager) {
+    if (stream_manager->max_pending_stream_acquisitions == 0) {
+        return false;
+    }
+    size_t connections_acquiring = stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_CONNECTIONS_ACQUIRING];
+    bool can_get_more_connections =
+        stream_manager->synced_data.holding_connections_count + connections_acquiring < stream_manager->max_connections;
+    if (can_get_more_connections && s_sm_allows_more_concurrent_streams(stream_manager)) {
+        /* The stream manager will request a new connection for this acquisition. */
+        return false;
+    }
+    /* Acquisitions expected to fit on the connections still being acquired are not waiting. Once those connections
+     * arrive the manager holds max_connections, so it fills each one up to max_concurrent_streams_per_connection. */
+    size_t num_can_fit =
+        aws_mul_size_saturating(stream_manager->max_concurrent_streams_per_connection, connections_acquiring);
+    if (stream_manager->max_concurrent_streams > 0) {
+        /* No more than the room left under max_concurrent_streams can start, however many connections arrive. */
+        size_t total_active_streams =
+            stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_OPEN_STREAM] +
+            stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_MAKE_REQUESTS];
+        size_t room = aws_sub_size_saturating(stream_manager->max_concurrent_streams, total_active_streams);
+        num_can_fit = aws_min_size(num_can_fit, room);
+    }
+    size_t num_waiting = aws_sub_size_saturating(
+        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION], num_can_fit);
+    return num_waiting >= stream_manager->max_pending_stream_acquisitions;
+}
+
 /* The count acquire and release all needs to be invoked helding the lock */
 static void s_sm_count_increase_synced(
     struct aws_http2_stream_manager *stream_manager,
@@ -1258,7 +1288,8 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     stream_manager->max_concurrent_streams_per_connection =
         options->max_concurrent_streams_per_connection ? options->max_concurrent_streams_per_connection : UINT32_MAX;
     stream_manager->max_connections = options->max_connections;
-    stream_manager->max_concurrent_streams = options->max_concurrent_streams; /* 0 means no limit */
+    stream_manager->max_concurrent_streams = options->max_concurrent_streams;                   /* 0 means no limit */
+    stream_manager->max_pending_stream_acquisitions = options->max_pending_stream_acquisitions; /* 0 means no limit */
     stream_manager->close_connection_on_server_error = options->close_connection_on_server_error;
 
     return stream_manager;
@@ -1297,16 +1328,34 @@ void aws_http2_stream_manager_acquire_stream(
     STREAM_MANAGER_LOGF(
         TRACE, stream_manager, "Stream Manager creates acquisition:%p for user", (void *)pending_stream_acquisition);
     s_aws_stream_management_transaction_init(&work, stream_manager);
+    bool max_pending_exceeded = false;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
         /* it's use after free crime */
         AWS_FATAL_ASSERT(stream_manager->synced_data.state != AWS_H2SMST_DESTROYING);
-        aws_linked_list_push_back(
-            &stream_manager->synced_data.pending_stream_acquisitions, &pending_stream_acquisition->node);
-        s_sm_count_increase_synced(stream_manager, AWS_SMCT_PENDING_ACQUISITION, 1);
-        s_aws_http2_stream_manager_build_transaction_synced(&work);
+        max_pending_exceeded = s_sm_max_pending_stream_acquisitions_reached_synced(stream_manager);
+        if (!max_pending_exceeded) {
+            aws_linked_list_push_back(
+                &stream_manager->synced_data.pending_stream_acquisitions, &pending_stream_acquisition->node);
+            s_sm_count_increase_synced(stream_manager, AWS_SMCT_PENDING_ACQUISITION, 1);
+            s_aws_http2_stream_manager_build_transaction_synced(&work);
+        }
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
+
+    if (max_pending_exceeded) {
+        STREAM_MANAGER_LOGF(
+            ERROR,
+            stream_manager,
+            "acquisition:%p failed, max pending stream acquisitions reached (%zu)",
+            (void *)pending_stream_acquisition,
+            stream_manager->max_pending_stream_acquisitions);
+        pending_stream_acquisition->callback(
+            NULL,
+            AWS_ERROR_HTTP_STREAM_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED,
+            pending_stream_acquisition->user_data);
+        s_pending_stream_acquisition_destroy(pending_stream_acquisition);
+    }
     s_aws_http2_stream_manager_execute_transaction(&work);
 }
 

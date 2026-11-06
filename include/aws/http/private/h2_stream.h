@@ -118,6 +118,10 @@ struct aws_h2_stream {
          * asleep. When stream needs to be awaken, moving the stream back to the outgoing_streams_list and set this bool
          * to false */
         bool waiting_for_writes;
+        /* Indicates that the peer's flow-control window for this stream is too small to send more DATA, and the stream
+         * is in the stalled_window_streams_list waiting for WINDOW_UPDATE. Only a stream with this set may be moved
+         * back to the outgoing_streams_list on WINDOW_UPDATE. */
+        bool peer_window_stalled;
         /* Set when s_stream_complete has been called. Prevents double-completion
          * (e.g. GOAWAY completes stream, then pending cancel cross-thread task fires) */
         bool is_complete;
