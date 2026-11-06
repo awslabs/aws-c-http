@@ -206,6 +206,14 @@ struct aws_http2_stream_manager_options {
      * more than this many can end up waiting.
      */
     size_t max_pending_stream_acquisitions;
+
+    /**
+     * Optional. 0 means no timeout (default).
+     * If set, a stream acquisition that has waited this long without getting a connection fails with
+     * AWS_ERROR_HTTP_STREAM_MANAGER_ACQUISITION_TIMEOUT. This covers waiting for a new connection and waiting for room
+     * on connections already held, for example when `max_concurrent_streams` is reached.
+     */
+    uint64_t stream_acquisition_timeout_ms;
 };
 
 struct aws_http2_stream_manager_acquire_stream_options {

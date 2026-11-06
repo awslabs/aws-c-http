@@ -331,6 +331,82 @@ static void s_finish_pending_stream_acquisitions_list_helper(
     }
 }
 
+/* Schedule acquisition_timeout_task for the oldest pending acquisition's deadline, if anything is pending and the task
+ * is not scheduled yet. Pending acquisitions are kept in arrival order, so the front one has the earliest deadline,
+ * and a scheduled task already runs no later than any newer deadline.
+ * *_synced should only be called with LOCK HELD or from another synced function */
+static void s_schedule_acquisition_timeout_task_synced(struct aws_http2_stream_manager *stream_manager) {
+    struct aws_linked_list *pending = &stream_manager->synced_data.pending_stream_acquisitions;
+    if (stream_manager->synced_data.acquisition_timeout_task_scheduled || aws_linked_list_empty(pending)) {
+        return;
+    }
+    struct aws_h2_sm_pending_stream_acquisition *front =
+        AWS_CONTAINER_OF(aws_linked_list_front(pending), struct aws_h2_sm_pending_stream_acquisition, node);
+    stream_manager->synced_data.acquisition_timeout_task_scheduled = true;
+    aws_event_loop_schedule_task_future(
+        stream_manager->acquisition_timeout_event_loop,
+        &stream_manager->acquisition_timeout_task,
+        front->timeout_timestamp_ns);
+}
+
+/* Fail the stream acquisitions that have waited longer than stream_acquisition_timeout_ns, then reschedule if any are
+ * still pending. */
+static void s_acquisition_timeout_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    struct aws_http2_stream_manager *stream_manager = arg;
+    struct aws_linked_list timed_out_acquisitions;
+    aws_linked_list_init(&timed_out_acquisitions);
+    uint64_t now = 0;
+    aws_event_loop_current_clock_time(stream_manager->acquisition_timeout_event_loop, &now);
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(stream_manager);
+        stream_manager->synced_data.acquisition_timeout_task_scheduled = false;
+        /* When shutting down, the finish pending acquisitions task fails the rest. */
+        if (status == AWS_TASK_STATUS_RUN_READY && stream_manager->synced_data.state == AWS_H2SMST_READY) {
+            struct aws_linked_list *pending = &stream_manager->synced_data.pending_stream_acquisitions;
+            size_t num_timed_out = 0;
+            while (!aws_linked_list_empty(pending)) {
+                struct aws_h2_sm_pending_stream_acquisition *front =
+                    AWS_CONTAINER_OF(aws_linked_list_front(pending), struct aws_h2_sm_pending_stream_acquisition, node);
+                if (front->timeout_timestamp_ns > now) {
+                    break;
+                }
+                aws_linked_list_pop_front(pending);
+                aws_linked_list_push_back(&timed_out_acquisitions, &front->node);
+                ++num_timed_out;
+            }
+            s_sm_count_decrease_synced(stream_manager, AWS_SMCT_PENDING_ACQUISITION, num_timed_out);
+            s_schedule_acquisition_timeout_task_synced(stream_manager);
+        }
+        s_unlock_synced_data(stream_manager);
+    } /* END CRITICAL SECTION */
+
+    s_finish_pending_stream_acquisitions_list_helper(
+        stream_manager, &timed_out_acquisitions, AWS_ERROR_HTTP_STREAM_MANAGER_ACQUISITION_TIMEOUT);
+}
+
+/* Scheduled on acquisition_timeout_event_loop at shutdown, to cancel acquisition_timeout_task if it's scheduled. */
+static void s_cancel_acquisition_timeout_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+    (void)status;
+    struct aws_http2_stream_manager *stream_manager = arg;
+    bool scheduled = false;
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(stream_manager);
+        /* No new acquisition can schedule the task once shutting down. A schedule from before the shutdown happened
+         * with the lock held, so it was queued on this event loop ahead of this cancel task. */
+        scheduled = stream_manager->synced_data.acquisition_timeout_task_scheduled;
+        s_unlock_synced_data(stream_manager);
+    } /* END CRITICAL SECTION */
+    if (scheduled) {
+        /* Runs the timeout task synchronously with AWS_TASK_STATUS_CANCELED, so it won't reschedule */
+        aws_event_loop_cancel_task(
+            stream_manager->acquisition_timeout_event_loop, &stream_manager->acquisition_timeout_task);
+    }
+    aws_mem_release(stream_manager->allocator, task);
+    /* Release the ref that kept the manager alive for the timeout task */
+    aws_ref_count_release(&stream_manager->internal_ref_count);
+}
+
 /* This is scheduled to run on a separate event loop to finish pending acquisition asynchronously */
 static void s_finish_pending_stream_acquisitions_task(struct aws_task *task, void *arg, enum aws_task_status status) {
     (void)status;
@@ -1172,6 +1248,14 @@ void s_stream_manager_on_zero_external_ref(void *user_data) {
         s_lock_synced_data(stream_manager);
         stream_manager->synced_data.state = AWS_H2SMST_DESTROYING;
         s_aws_http2_stream_manager_build_transaction_synced(&work);
+        if (stream_manager->acquisition_timeout_event_loop) {
+            /* Cancel the timeout task from its event loop, as tasks can only be cancelled from the event loop
+             * thread. */
+            struct aws_task *cancel_task = aws_mem_calloc(stream_manager->allocator, 1, sizeof(struct aws_task));
+            aws_task_init(
+                cancel_task, s_cancel_acquisition_timeout_task, stream_manager, "sm_cancel_acquisition_timeout");
+            aws_event_loop_schedule_task_now(stream_manager->acquisition_timeout_event_loop, cancel_task);
+        }
         /* Release the internal ref count as no external usage anymore */
         aws_ref_count_release(&stream_manager->internal_ref_count);
         s_unlock_synced_data(stream_manager);
@@ -1250,6 +1334,17 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     }
 
     stream_manager->bootstrap = aws_client_bootstrap_acquire(options->bootstrap);
+    if (options->stream_acquisition_timeout_ms) {
+        stream_manager->stream_acquisition_timeout_ns = aws_timestamp_convert(
+            options->stream_acquisition_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
+        stream_manager->acquisition_timeout_event_loop =
+            aws_event_loop_group_get_next_loop(stream_manager->bootstrap->event_loop_group);
+        aws_task_init(
+            &stream_manager->acquisition_timeout_task,
+            s_acquisition_timeout_task,
+            stream_manager,
+            "sm_stream_acquisition_timeout");
+    }
     struct aws_http_connection_manager_options cm_options = {
         .bootstrap = options->bootstrap,
         .socket_options = options->socket_options,
@@ -1291,6 +1386,11 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     stream_manager->max_concurrent_streams = options->max_concurrent_streams;                   /* 0 means no limit */
     stream_manager->max_pending_stream_acquisitions = options->max_pending_stream_acquisitions; /* 0 means no limit */
     stream_manager->close_connection_on_server_error = options->close_connection_on_server_error;
+    if (stream_manager->acquisition_timeout_event_loop) {
+        /* Keeps the manager alive for the timeout task, until the cancel task at shutdown releases it. Taken only
+         * after nothing can fail, so the error path doesn't need to release it. */
+        aws_ref_count_acquire(&stream_manager->internal_ref_count);
+    }
 
     return stream_manager;
 on_error:
@@ -1335,10 +1435,20 @@ void aws_http2_stream_manager_acquire_stream(
         AWS_FATAL_ASSERT(stream_manager->synced_data.state != AWS_H2SMST_DESTROYING);
         max_pending_exceeded = s_sm_max_pending_stream_acquisitions_reached_synced(stream_manager);
         if (!max_pending_exceeded) {
+            if (stream_manager->acquisition_timeout_event_loop) {
+                /* Set with the lock held, so deadlines increase in list order. */
+                uint64_t now = 0;
+                aws_event_loop_current_clock_time(stream_manager->acquisition_timeout_event_loop, &now);
+                pending_stream_acquisition->timeout_timestamp_ns = now + stream_manager->stream_acquisition_timeout_ns;
+            }
             aws_linked_list_push_back(
                 &stream_manager->synced_data.pending_stream_acquisitions, &pending_stream_acquisition->node);
             s_sm_count_increase_synced(stream_manager, AWS_SMCT_PENDING_ACQUISITION, 1);
             s_aws_http2_stream_manager_build_transaction_synced(&work);
+            if (stream_manager->acquisition_timeout_event_loop) {
+                /* Start the timeout task if anything is still waiting and it isn't running already */
+                s_schedule_acquisition_timeout_task_synced(stream_manager);
+            }
         }
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
