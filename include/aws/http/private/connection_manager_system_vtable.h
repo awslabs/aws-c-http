@@ -22,6 +22,7 @@ struct aws_http_connection_manager_system_vtable {
     void (*aws_http_connection_close)(struct aws_http_connection *connection);
     void (*aws_http_connection_release)(struct aws_http_connection *connection);
     bool (*aws_http_connection_new_requests_allowed)(const struct aws_http_connection *connection);
+    bool (*aws_http_connection_is_connection_idle)(const struct aws_http_connection *connection);
     int (*aws_high_res_clock_get_ticks)(uint64_t *timestamp);
     bool (*aws_channel_thread_is_callers_thread)(struct aws_channel *channel);
     struct aws_channel *(*aws_http_connection_get_channel)(struct aws_http_connection *connection);

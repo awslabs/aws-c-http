@@ -952,6 +952,12 @@ static bool s_aws_http_connection_manager_is_connection_available_sync_mock(
     return !proxy->is_closed_on_release;
 }
 
+static bool s_aws_http_connection_manager_is_connection_idle_sync_mock(const struct aws_http_connection *connection) {
+    (void)connection;
+    /* Mock connections are always idle */
+    return true;
+}
+
 static bool s_aws_http_connection_manager_is_callers_thread_sync_mock(struct aws_channel *channel) {
     (void)channel;
 
@@ -977,6 +983,7 @@ static struct aws_http_connection_manager_system_vtable s_synchronous_mocks = {
     .aws_http_connection_release = s_aws_http_connection_manager_release_connection_sync_mock,
     .aws_http_connection_close = s_aws_http_connection_manager_close_connection_sync_mock,
     .aws_http_connection_new_requests_allowed = s_aws_http_connection_manager_is_connection_available_sync_mock,
+    .aws_http_connection_is_connection_idle = s_aws_http_connection_manager_is_connection_idle_sync_mock,
     .aws_high_res_clock_get_ticks = aws_high_res_clock_get_ticks,
     .aws_http_connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
     .aws_channel_thread_is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
@@ -988,6 +995,7 @@ static struct aws_http_connection_manager_system_vtable s_async_connect_mock = {
     .aws_http_connection_release = s_aws_http_connection_manager_release_connection_sync_mock,
     .aws_http_connection_close = s_aws_http_connection_manager_close_connection_sync_mock,
     .aws_http_connection_new_requests_allowed = s_aws_http_connection_manager_is_connection_available_sync_mock,
+    .aws_http_connection_is_connection_idle = s_aws_http_connection_manager_is_connection_idle_sync_mock,
     .aws_high_res_clock_get_ticks = aws_high_res_clock_get_ticks,
     .aws_http_connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
     .aws_channel_thread_is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
@@ -1244,6 +1252,7 @@ static struct aws_http_connection_manager_system_vtable s_idle_mocks = {
     .aws_http_connection_release = s_aws_http_connection_manager_release_connection_sync_mock,
     .aws_http_connection_close = s_aws_http_connection_manager_close_connection_sync_mock,
     .aws_http_connection_new_requests_allowed = s_aws_http_connection_manager_is_connection_available_sync_mock,
+    .aws_http_connection_is_connection_idle = s_aws_http_connection_manager_is_connection_idle_sync_mock,
     .aws_high_res_clock_get_ticks = s_tester_get_mock_time,
     .aws_http_connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
     .aws_channel_thread_is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
