@@ -104,6 +104,7 @@ struct sm_tester {
     int stream_completed_error_code;
 
     bool is_shutdown_complete;
+    bool event_loop_barrier_done;
 
     /* Fake HTTP/2 connection */
     size_t wait_for_fake_connection_count;
@@ -192,16 +193,36 @@ static bool s_is_shutdown_complete(void *context) {
 static int s_wait_on_shutdown_complete(void) {
     ASSERT_SUCCESS(aws_mutex_lock(&s_tester.lock));
 
-    /* Returns non-zero if shutdown is not complete within 1ms */
-    int signal_error = aws_condition_variable_wait_for_pred(
-        &s_tester.signal,
-        &s_tester.lock,
-        aws_timestamp_convert(1, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL),
-        s_is_shutdown_complete,
-        NULL);
+    int signal_error = aws_condition_variable_wait_pred(&s_tester.signal, &s_tester.lock, s_is_shutdown_complete, NULL);
 
     ASSERT_SUCCESS(aws_mutex_unlock(&s_tester.lock));
     return signal_error;
+}
+
+static bool s_is_event_loop_barrier_done(void *context) {
+    (void)context;
+    return s_tester.event_loop_barrier_done;
+}
+
+static void s_event_loop_barrier_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    (void)arg;
+    (void)status;
+    aws_mutex_lock(&s_tester.lock);
+    s_tester.event_loop_barrier_done = true;
+    aws_mutex_unlock(&s_tester.lock);
+    aws_condition_variable_notify_one(&s_tester.signal);
+}
+
+/* Returns once the event loop has run every task that was queued on it before this call */
+static void s_wait_on_event_loop_barrier(struct aws_event_loop *event_loop) {
+    struct aws_task task;
+    aws_task_init(&task, s_event_loop_barrier_task, NULL, "sm_tester_event_loop_barrier");
+    s_tester.event_loop_barrier_done = false;
+    aws_event_loop_schedule_task_now(event_loop, &task);
+    aws_mutex_lock(&s_tester.lock);
+    aws_condition_variable_wait_pred(&s_tester.signal, &s_tester.lock, s_is_event_loop_barrier_done, NULL);
+    aws_mutex_unlock(&s_tester.lock);
 }
 
 static void s_sm_tester_on_sm_shutdown_complete(void *user_data) {
@@ -458,14 +479,18 @@ static int s_complete_all_fake_connection_streams_with_data(void) {
 
 static int s_tester_clean_up(void) {
     s_release_all_streams();
+    struct aws_event_loop *timeout_event_loop = NULL;
     if (s_tester.stream_manager) {
+        timeout_event_loop = s_tester.stream_manager->acquisition_timeout_event_loop;
         s_release_fake_connections();
         aws_http2_stream_manager_release(s_tester.stream_manager);
     }
-    /* Shutdown can queue more channel tasks from an event loop thread, so keep draining until it completes */
-    do {
-        s_drain_all_fake_connection_testing_channel();
-    } while (s_wait_on_shutdown_complete());
+    if (timeout_event_loop) {
+        /* The manager finishes destroying on this event loop, so wait for it before draining the fake channels */
+        s_wait_on_event_loop_barrier(timeout_event_loop);
+    }
+    s_drain_all_fake_connection_testing_channel();
+    s_wait_on_shutdown_complete();
     s_clean_fake_connections();
     aws_client_bootstrap_release(s_tester.client_bootstrap);
 
