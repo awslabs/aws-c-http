@@ -94,6 +94,8 @@ struct aws_http2_stream_manager {
      * It's a sum of connections_acquiring_count, open_stream_count, pending_make_requests_count and
      * pending_stream_acquisition_count, besides the number of `struct aws_http2_stream_management_transaction` alive.
      * And one for external usage.
+     * And one for acquisition_timeout_task, if stream_acquisition_timeout_ns is set. The cancel task releases it at
+     * shutdown on acquisition_timeout_event_loop, so the manager is destroyed on that thread.
      *
      * Once this refcount drops to zero, stream manager should either be cleaned up all the memory all waiting for
      * the last task to clean un the memory and do nothing else.
