@@ -43,6 +43,7 @@ struct aws_http_connection_vtable {
     void (*stop_new_requests)(struct aws_http_connection *connection);
     bool (*is_open)(const struct aws_http_connection *connection);
     bool (*new_requests_allowed)(const struct aws_http_connection *connection);
+    bool (*is_connection_idle)(const struct aws_http_connection *connection);
 
     /* HTTP/2 specific functions */
     void (*update_window)(struct aws_http_connection *connection, uint32_t increment_size);
@@ -205,6 +206,13 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
     const struct aws_http1_connection_options *http1_options,
     const struct aws_http2_connection_options *http2_options,
     void *connection_user_data);
+
+/**
+ * Return whether the connection has no streams in progress.
+ * Used internally by the connection manager to decide whether to recycle or destroy a connection on release.
+ */
+AWS_HTTP_API
+bool aws_http_connection_is_connection_idle(const struct aws_http_connection *connection);
 
 AWS_EXTERN_C_END
 

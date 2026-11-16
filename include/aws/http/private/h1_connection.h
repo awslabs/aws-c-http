@@ -136,6 +136,11 @@ struct aws_h1_connection {
         /* If non-zero, reason to immediately reject new streams. (ex: closing) */
         int new_stream_error_code;
 
+        /* Number of streams in new_client_stream_list + thread_data.stream_list.
+         * Incremented when a stream is submitted, decremented when s_stream_complete() fires.
+         * Used by new_requests_allowed() to prevent recycling connections with active streams. */
+        size_t num_streams_in_progress;
+
         /* If true, user has called connection_close() or stream_cancel(),
          * but the cross_thread_work_task hasn't processed it yet */
         bool shutdown_requested;
