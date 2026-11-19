@@ -27,7 +27,7 @@ struct aws_http_manager_metrics;
  * When stream is NULL, error code will be set to indicate what happened.
  * If there is a stream returned, you own the stream completely.
  * Invoked on the same thread as other callback of the stream, which will be the thread of the connection, ideally.
- * If there is no connection made, the callback will be invoked from a sperate thread.
+ * If there is no connection made, the callback will be invoked from a separate thread.
  */
 typedef void(
     aws_http2_stream_manager_on_stream_acquired_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
@@ -74,10 +74,10 @@ struct aws_http2_stream_manager_options {
      * Optional.
      * HTTP/2 connection configuration. Check `struct aws_http2_connection_options` for details of each config.
      * Notes for window control:
-     * - By default, client will will maintain its flow-control windows such that no back-pressure is applied and data
+     * - By default, client will maintain its flow-control windows such that no back-pressure is applied and data
      * arrives as fast as possible.
      * - For connection level window control, `conn_manual_window_management` will enable manual control. The
-     * inital window size is not controllable.
+     * initial window size is not controllable.
      * - For stream level window control, `enable_read_back_pressure` will enable manual control. The initial window
      * size needs to be set through `initial_window_size` or `initial_settings_array`.
      */
@@ -143,12 +143,12 @@ struct aws_http2_stream_manager_options {
      * 0 will be considered as using a default value.
      * The ideal number of concurrent streams for a connection. Stream manager will try to create a new connection if
      * one connection reaches this number. But, if the max connections reaches, manager will reuse connections to create
-     * the acquired steams as much as possible. */
+     * the acquired streams as much as possible. */
     size_t ideal_concurrent_streams_per_connection;
     /**
      * Optional.
      * Default is no limit, which will use the limit from the server. 0 will be considered as using the default value.
-     * The real number of concurrent streams per connection will be controlled by the minmal value of the setting from
+     * The real number of concurrent streams per connection will be controlled by the minimal value of the setting from
      * other end and the value here.
      */
     size_t max_concurrent_streams_per_connection;
@@ -165,6 +165,55 @@ struct aws_http2_stream_manager_options {
      * existing streams to complete before creating new ones, even if connections have available capacity.
      */
     size_t max_concurrent_streams;
+
+    /**
+     * Optional.
+     * If set to a non-zero value, a connection with no open streams is returned to the underlying connection pool,
+     * and is closed if it stays there longer than this.
+     * See `aws_http_connection_manager_options.max_connection_idle_in_milliseconds`.
+     */
+    uint64_t max_connection_idle_in_milliseconds;
+
+    /**
+     * Optional.
+     * If set to a non-zero value, the stream manager gives up waiting for a new connection from the underlying
+     * connection pool after this long, and fails the stream acquisitions that need that connection with
+     * AWS_ERROR_HTTP_STREAM_MANAGER_CONNECTION_ACQUIRE_FAILURE.
+     * This does not limit the time an acquisition waits for capacity on connections already held, for example when
+     * `max_concurrent_streams` is reached.
+     * See `aws_http_connection_manager_options.connection_acquisition_timeout_ms`.
+     */
+    uint64_t connection_acquisition_timeout_ms;
+
+    /**
+     * Optional (ignored if 0).
+     * After a request is fully sent, if the server does not begin responding within N milliseconds,
+     * then fail with AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT.
+     * This can be overridden per-request by aws_http_make_request_options.response_first_byte_timeout_ms.
+     * See `aws_http_connection_manager_options.response_first_byte_timeout_ms`.
+     * TODO: Only supported in HTTP/1.1 now, support it in HTTP/2
+     */
+    uint64_t response_first_byte_timeout_ms;
+
+    /**
+     * Optional. 0 means no limit (default).
+     * The max number of stream acquisitions waiting for capacity once no more connections can be acquired or
+     * `max_concurrent_streams` is reached. Beyond it, aws_http2_stream_manager_acquire_stream() fails right away with
+     * AWS_ERROR_HTTP_STREAM_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED.
+     * Acquisitions expected to fit on connections still being acquired, up to `max_concurrent_streams_per_connection`
+     * each, are not counted as waiting.
+     * The limit is checked only on new acquisitions. If the server allows fewer concurrent streams than expected,
+     * more than this many can end up waiting.
+     */
+    size_t max_pending_stream_acquisitions;
+
+    /**
+     * Optional. 0 means no timeout (default).
+     * If set, a stream acquisition that has waited this long without getting a connection fails with
+     * AWS_ERROR_HTTP_STREAM_MANAGER_ACQUISITION_TIMEOUT. This covers waiting for a new connection and waiting for room
+     * on connections already held, for example when `max_concurrent_streams` is reached.
+     */
+    uint64_t stream_acquisition_timeout_ms;
 };
 
 struct aws_http2_stream_manager_acquire_stream_options {

@@ -18,10 +18,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), NULL, AWS_MEMTRACE_BYTES, 0);
     struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(data, size);
 
-    /* Enable logging */
+    /* Enable logging. Keep the level low: ctest holds all of a test's output in memory, and TRACE logging on
+     * every iteration of a 60s fuzz run produces gigabytes, enough to make ctest itself run out of memory.
+     * Raise it locally to AWS_LL_TRACE when replaying a single crashing input. */
     struct aws_logger logger;
     struct aws_logger_standard_options log_options = {
-        .level = AWS_LL_TRACE,
+        .level = AWS_LL_ERROR,
         .file = stdout,
     };
     aws_logger_init_standard(&logger, allocator, &log_options);

@@ -23,6 +23,8 @@ static int s_on_headers(
     struct client_stream_tester *tester = user_data;
     ASSERT_FALSE(tester->complete);
 
+    tester->num_headers_received += num_headers;
+
     if (tester->current_header_block == UNKNOWN_HEADER_BLOCK) {
         tester->current_header_block = header_block;
     } else {

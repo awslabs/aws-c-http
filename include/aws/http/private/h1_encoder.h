@@ -96,6 +96,8 @@ struct aws_h1_encoder {
     struct aws_http_stream *current_stream;
 };
 
+/* Never returns NULL. If the allocation cannot be satisfied the allocator aborts the
+ * process (AWS_PANIC_OOM), so there is no OOM failure for callers to check. */
 struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const struct aws_http1_chunk_options *options);
 struct aws_h1_trailer *aws_h1_trailer_new(
     struct aws_allocator *allocator,

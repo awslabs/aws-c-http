@@ -67,6 +67,8 @@ struct aws_h1_decoder;
 
 AWS_EXTERN_C_BEGIN
 
+/* Never returns NULL. If the allocation cannot be satisfied the allocator aborts the
+ * process (AWS_PANIC_OOM), so there is no OOM failure for callers to check. */
 AWS_HTTP_API struct aws_h1_decoder *aws_h1_decoder_new(struct aws_h1_decoder_params *params);
 AWS_HTTP_API void aws_h1_decoder_destroy(struct aws_h1_decoder *decoder);
 AWS_HTTP_API int aws_h1_decode(struct aws_h1_decoder *decoder, struct aws_byte_cursor *data);

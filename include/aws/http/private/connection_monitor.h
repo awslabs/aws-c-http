@@ -29,6 +29,9 @@ AWS_EXTERN_C_BEGIN
 /**
  * Creates a new http connection monitor that regularly checks the connection's throughput and shuts the connection
  * down if the a minimum threshold is not met for a configurable number of seconds.
+ *
+ * Never returns NULL. If the allocation cannot be satisfied the allocator aborts the process
+ * (AWS_PANIC_OOM), so there is no OOM failure for callers to check.
  */
 AWS_HTTP_API
 struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connection_monitor(

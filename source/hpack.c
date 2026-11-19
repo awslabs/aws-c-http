@@ -6,13 +6,12 @@
 
 /* #TODO test empty strings */
 
-/* #TODO remove all OOM error handling in HTTP/2 & HPACK. make functions void if possible */
-
 /* RFC-7540 6.5.2 */
 const size_t s_hpack_dynamic_table_initial_size = 4096;
 const size_t s_hpack_dynamic_table_initial_elements = 512;
-/* TODO: shouldn't be a hardcoded max_size, it should be driven by SETTINGS_HEADER_TABLE_SIZE */
-const size_t s_hpack_dynamic_table_max_size = 16 * 1024 * 1024;
+/* SETTINGS_HEADER_TABLE_SIZE drives the table size, but it is chosen by the peer, so this is the
+ * ceiling we impose on top of it. */
+const size_t s_hpack_dynamic_table_max_size = AWS_HPACK_MAX_DYNAMIC_TABLE_SIZE;
 
 struct aws_http_header s_static_header_table[] = {
 #define HEADER(_index, _name)                                                                                          \
@@ -83,7 +82,7 @@ void aws_hpack_static_table_init(struct aws_allocator *allocator) {
         allocator,
         s_static_header_table_size - 1,
         aws_hash_byte_cursor_ptr,
-        (aws_hash_callback_eq_fn *)aws_byte_cursor_eq,
+        aws_byte_cursor_eq_cb,
         NULL,
         NULL);
     AWS_FATAL_ASSERT(AWS_OP_SUCCESS == result);
@@ -140,7 +139,7 @@ void aws_hpack_context_init(
         allocator,
         s_hpack_dynamic_table_initial_elements,
         aws_hash_byte_cursor_ptr,
-        (aws_hash_callback_eq_fn *)aws_byte_cursor_eq,
+        aws_byte_cursor_eq_cb,
         NULL,
         NULL);
 }
@@ -253,7 +252,7 @@ trans_index_from_dynamic_table:
     } else {
         index = (context->dynamic_table.buffer_capacity - context->dynamic_table.index_0) + absolute_index;
     }
-    /* Need to add the static table size to re-base indicies */
+    /* Need to add the static table size to re-base indices */
     index += s_static_header_table_size;
     return index;
 }
@@ -314,9 +313,6 @@ static int s_dynamic_table_resize_buffer(struct aws_hpack_context *context, size
 
     /* Allocate the new buffer */
     new_buffer = aws_mem_calloc(context->allocator, new_max_elements, sizeof(struct aws_http_header));
-    if (!new_buffer) {
-        return AWS_OP_ERR;
-    }
 
     /* Don't bother copying data if old buffer was of size 0 */
     if (AWS_UNLIKELY(context->dynamic_table.num_elements == 0)) {
@@ -449,9 +445,6 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
 
     if (buf_memory_size) {
         uint8_t *buf_memory = aws_mem_acquire(context->allocator, buf_memory_size);
-        if (!buf_memory) {
-            return AWS_OP_ERR;
-        }
         struct aws_byte_buf buf = aws_byte_buf_from_empty_array(buf_memory, buf_memory_size);
         /* Copy header, then backup strings into our own allocation */
         *table_header = *header;

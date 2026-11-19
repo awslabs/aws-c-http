@@ -115,6 +115,7 @@ AWS_HTTP_API struct aws_h2err aws_h2_decode(struct aws_h2_decoder *decoder, stru
 AWS_HTTP_API void aws_h2_decoder_set_setting_header_table_size(struct aws_h2_decoder *decoder, uint32_t data);
 AWS_HTTP_API void aws_h2_decoder_set_setting_enable_push(struct aws_h2_decoder *decoder, uint32_t data);
 AWS_HTTP_API void aws_h2_decoder_set_setting_max_frame_size(struct aws_h2_decoder *decoder, uint32_t data);
+AWS_HTTP_API void aws_h2_decoder_set_setting_max_header_list_size(struct aws_h2_decoder *decoder, uint32_t data);
 
 AWS_EXTERN_C_END
 

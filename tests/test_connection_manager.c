@@ -492,7 +492,7 @@ AWS_TEST_CASE(connection_manager_single_connection, s_test_connection_manager_si
 
 static int s_test_connection_manager_proxy_envrionment_empty_string(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
-    /* Set proxy related envrionment variables to empty string and make sure we just skip proxy */
+    /* Set proxy related environment variables to empty string and make sure we just skip proxy */
     struct aws_string *empty = aws_string_new_from_c_str(allocator, "");
     ASSERT_SUCCESS(aws_set_environment_value(s_http_proxy_env_var, empty));
     ASSERT_SUCCESS(aws_set_environment_value(s_http_proxy_env_var_low, empty));
@@ -1577,7 +1577,7 @@ AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_url_h2_env_var, "AWS_TEST_HTTPS_H2_
 static int s_get_proxy_environment_configurations(
     struct aws_allocator *allocator,
     struct proxy_integration_configurations *configs) {
-    /* get the envrionment configurations, and fail if any one is not set */
+    /* get the environment configurations, and fail if any one is not set */
     if (aws_get_environment_value(allocator, s_http_proxy_host_env_var, &configs->http_proxy_host) ||
         configs->http_proxy_host == NULL) {
         return AWS_OP_ERR;

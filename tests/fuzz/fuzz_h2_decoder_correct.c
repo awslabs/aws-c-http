@@ -56,6 +56,21 @@ static struct aws_http_headers *s_generate_headers(
     struct aws_byte_buf buf;
     aws_byte_buf_init(&buf, allocator, 1024);
 
+    /* Track cumulative header-list size (RFC-9113 6.5.2: name.len + value.len + 32 per field).
+     * Stop generating headers before we exceed SETTINGS_MAX_HEADER_LIST_SIZE,
+     * since the decoder rightfully rejects oversized header lists.
+     * Start with the size consumed by pseudo-headers already added above. */
+    uint64_t header_list_size = 0;
+    const uint64_t max_header_list_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE];
+
+    /* Account for pseudo-headers already added */
+    size_t num_pseudo_headers = aws_http_headers_count(headers);
+    for (size_t i = 0; i < num_pseudo_headers; i++) {
+        struct aws_http_header pseudo;
+        aws_http_headers_get_index(headers, i, &pseudo);
+        header_list_size += pseudo.name.len + pseudo.value.len + 32;
+    }
+
     while (input->len) {
         buf.len = 0;
 
@@ -104,6 +119,13 @@ static struct aws_http_headers *s_generate_headers(
 
         header.value = aws_byte_cursor_from_buf(&buf);
         aws_byte_cursor_advance(&header.value, header.name.len);
+
+        /* Stop if adding this header would exceed the header-list budget */
+        uint64_t field_size = header.name.len + header.value.len + 32;
+        if (header_list_size + field_size > max_header_list_size) {
+            break;
+        }
+        header_list_size += field_size;
 
         aws_http_headers_add_header(headers, &header);
     }
@@ -171,10 +193,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), NULL, AWS_MEMTRACE_BYTES, 0);
     struct aws_byte_cursor input = aws_byte_cursor_from_array(data, size);
 
-    /* Enable logging */
+    /* Enable logging. Keep the level low: ctest holds all of a test's output in memory, and TRACE logging on
+     * every iteration of a 60s fuzz run produces gigabytes, enough to make ctest itself run out of memory.
+     * Raise it locally to AWS_LL_TRACE when replaying a single crashing input. */
     struct aws_logger logger;
     struct aws_logger_standard_options log_options = {
-        .level = AWS_LL_TRACE,
+        .level = AWS_LL_ERROR,
         .file = stdout,
     };
     aws_logger_init_standard(&logger, allocator, &log_options);

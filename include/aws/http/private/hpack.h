@@ -10,6 +10,14 @@
 #include <aws/common/hash_table.h>
 #include <aws/compression/huffman.h>
 
+/* The largest dynamic table this implementation will allocate, whatever the peer's
+ * SETTINGS_HEADER_TABLE_SIZE says. Unchanged from the hardcoded limit this replaces, so it
+ * is a sanity bound on an absurd advertisement rather than a tuned value: the default table
+ * is 4096 bytes and a large one is tens of KB, so nothing legitimate approaches it. Lowering
+ * it would start refusing sizes we accept today, so it is left as it was.
+ * A macro so both hpack.c and hpack_encoder.c can use it without exporting a new symbol. */
+#define AWS_HPACK_MAX_DYNAMIC_TABLE_SIZE (16 * 1024 * 1024)
+
 /**
  * Result of aws_hpack_decode() call.
  * If a complete entry has not been decoded yet, type is ONGOING.
@@ -109,6 +117,10 @@ struct aws_hpack_decoder {
     /* TODO: check the new (RFC 9113 - 4.3.1) to make sure we did it right */
     /* SETTINGS_HEADER_TABLE_SIZE from http2 */
     size_t dynamic_table_protocol_max_size_setting;
+
+    /* Maximum decoded header-list size (from SETTINGS_MAX_HEADER_LIST_SIZE).
+     * Individual HPACK string lengths are checked against this to prevent unbounded growth. */
+    uint64_t max_header_list_size;
 
     /* PRO TIP: Don't union progress_integer and progress_string together, since string_decode calls integer_decode */
     struct hpack_progress_integer {
@@ -251,6 +263,10 @@ void aws_hpack_decoder_clean_up(struct aws_hpack_decoder *decoder);
  * sends the appropriate Dynamic Table Size Updates in the next header block we receive. */
 AWS_HTTP_API
 void aws_hpack_decoder_update_max_table_size(struct aws_hpack_decoder *decoder, uint32_t new_max_size);
+
+/* Update the maximum header-list size used to bound individual HPACK string lengths. */
+AWS_HTTP_API
+void aws_hpack_decoder_set_max_header_list_size(struct aws_hpack_decoder *decoder, uint64_t max_header_list_size);
 
 /**
  * Decode the next entry in the header-block-fragment.

@@ -63,6 +63,8 @@ struct aws_h2_sm_pending_stream_acquisition {
     struct aws_channel_task make_request_task;
     aws_http2_stream_manager_on_stream_acquired_fn *callback;
     void *user_data;
+    /* When the acquisition times out if it is still waiting for a connection. 0 if no timeout. */
+    uint64_t timeout_timestamp_ns;
 };
 
 /* connections_acquiring_count, open_stream_count, pending_make_requests_count AND pending_stream_acquisition_count */
@@ -92,6 +94,8 @@ struct aws_http2_stream_manager {
      * It's a sum of connections_acquiring_count, open_stream_count, pending_make_requests_count and
      * pending_stream_acquisition_count, besides the number of `struct aws_http2_stream_management_transaction` alive.
      * And one for external usage.
+     * And one for acquisition_timeout_task, if stream_acquisition_timeout_ns is set. The cancel task releases it at
+     * shutdown on acquisition_timeout_event_loop, so the manager is destroyed on that thread.
      *
      * Once this refcount drops to zero, stream manager should either be cleaned up all the memory all waiting for
      * the last task to clean un the memory and do nothing else.
@@ -111,11 +115,11 @@ struct aws_http2_stream_manager {
      * Default is no limit. 0 will be considered as using the default value.
      * The ideal number of concurrent streams for a connection. Stream manager will try to create a new connection if
      * one connection reaches this number. But, if the max connections reaches, manager will reuse connections to create
-     * the acquired steams as much as possible. */
+     * the acquired streams as much as possible. */
     size_t ideal_concurrent_streams_per_connection;
     /**
      * Default is no limit. 0 will be considered as using the default value.
-     * The real number of concurrent streams per connection will be controlled by the minmal value of the setting from
+     * The real number of concurrent streams per connection will be controlled by the minimal value of the setting from
      * other end and the value here.
      */
     size_t max_concurrent_streams_per_connection;
@@ -127,6 +131,27 @@ struct aws_http2_stream_manager {
      * before creating new ones, even if connections have available capacity.
      */
     size_t max_concurrent_streams;
+
+    /**
+     * Optional. 0 means no limit (default).
+     * The max number of stream acquisitions waiting once the stream manager cannot get more capacity.
+     */
+    size_t max_pending_stream_acquisitions;
+
+    /**
+     * 0 means no timeout (default).
+     * How long a stream acquisition can wait for a connection before it fails.
+     */
+    uint64_t stream_acquisition_timeout_ns;
+    /**
+     * Task to fail the stream acquisitions that timed out. Only set up if stream_acquisition_timeout_ns is set.
+     * It runs on acquisition_timeout_event_loop at the oldest pending acquisition's deadline, and is only scheduled
+     * while acquisitions are pending. One ref on internal_ref_count keeps the manager alive for it, from creation
+     * until the cancel task at shutdown.
+     */
+    struct aws_task acquisition_timeout_task;
+    /* NULL if stream_acquisition_timeout_ns is not set */
+    struct aws_event_loop *acquisition_timeout_event_loop;
 
     /**
      * Task to invoke pending acquisition callbacks asynchronously if stream manager is shutting.
@@ -156,7 +181,7 @@ struct aws_http2_stream_manager {
          * all_held_connections. Set of `struct aws_h2_sm_connection *`
          */
         struct aws_random_access_set nonideal_available_set;
-        /* We don't mantain set for connections that is full or "dead" (Cannot make any new streams). We have
+        /* We don't maintain a set for connections that is full or "dead" (Cannot make any new streams). We have
          * all_held_connections tracking them */
 
         /**
@@ -192,6 +217,10 @@ struct aws_http2_stream_manager {
         size_t internal_refcount_stats[AWS_SMCT_COUNT];
 
         bool finish_pending_stream_acquisitions_task_scheduled;
+
+        /* Whether acquisition_timeout_task is scheduled. Only scheduled while acquisitions are pending. */
+        bool acquisition_timeout_task_scheduled;
+
     } synced_data;
 };
 
