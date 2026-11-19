@@ -808,7 +808,7 @@ void aws_h1_decoder_set_body_headers_ignored_on_2xx(struct aws_h1_decoder *decod
     decoder->body_headers_ignored_on_2xx = body_headers_ignored_on_2xx;
 }
 
-int aws_h1_decoder_on_connection_closed(struct aws_h1_decoder *decoder) {
+int aws_h1_decoder_finish_indeterminate_length_body(struct aws_h1_decoder *decoder) {
     if (!decoder) {
         return AWS_OP_SUCCESS;
     }

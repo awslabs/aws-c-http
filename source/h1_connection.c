@@ -144,9 +144,9 @@ static void s_stop(
     AWS_ASSERT(stop_reading || stop_writing || schedule_shutdown); /* You are required to stop at least 1 thing */
 
     if (stop_reading) {
-        /* signal the decoder that the connection has closed without error */
+        /* A clean close ends a response body of indeterminate length (RFC-7230 3.3.3) */
         if (!error_code) {
-            if(aws_h1_decoder_on_connection_closed(connection->thread_data.incoming_stream_decoder)) {
+            if (aws_h1_decoder_finish_indeterminate_length_body(connection->thread_data.incoming_stream_decoder)) {
                 error_code = aws_last_error();
             }
         }
