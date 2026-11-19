@@ -144,13 +144,6 @@ static void s_stop(
     AWS_ASSERT(stop_reading || stop_writing || schedule_shutdown); /* You are required to stop at least 1 thing */
 
     if (stop_reading) {
-        /* A clean close ends a response body of indeterminate length (RFC-7230 3.3.3) */
-        if (!error_code) {
-            if (aws_h1_decoder_finish_indeterminate_length_body(connection->thread_data.incoming_stream_decoder)) {
-                error_code = aws_last_error();
-            }
-        }
-
         if (connection->thread_data.read_state == AWS_CONNECTION_READ_OPEN) {
             connection->thread_data.read_state = AWS_CONNECTION_READ_SHUT_DOWN_COMPLETE;
         } else if (connection->thread_data.read_state == AWS_CONNECTION_READ_SHUTTING_DOWN) {
@@ -1954,7 +1947,10 @@ void aws_h1_connection_try_process_read_messages(struct aws_h1_connection *conne
 
     if (connection->thread_data.read_state == AWS_CONNECTION_READ_SHUTTING_DOWN &&
         connection->thread_data.read_buffer.pending_bytes == 0) {
-        /* Done processing the pending buffer. */
+        /* Done processing the pending buffer. The delayed shutdown came from the channel, so the peer has closed. */
+        if (aws_h1_decoder_finish_indeterminate_length_body(connection->thread_data.incoming_stream_decoder)) {
+            goto shutdown;
+        }
         aws_raise_error(connection->thread_data.pending_shutdown_error_code);
         goto shutdown;
     }
@@ -2243,6 +2239,12 @@ static int s_handler_shutdown(
             s_initialize_read_delay_shutdown(connection, error_code);
             /* Return success, and wait for the buffered data to be processed to propagate the shutdown. */
             return AWS_OP_SUCCESS;
+        }
+        /* If reading is still open, this handler didn't start the shutdown, so the peer has closed.
+         * That ends a response body of indeterminate length (RFC-7230 3.3.3). */
+        if (connection->thread_data.read_state == AWS_CONNECTION_READ_OPEN &&
+            aws_h1_decoder_finish_indeterminate_length_body(connection->thread_data.incoming_stream_decoder)) {
+            error_code = aws_last_error();
         }
         s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, false /*schedule_shutdown*/, error_code);
     } else /* dir == AWS_CHANNEL_DIR_WRITE */ {
