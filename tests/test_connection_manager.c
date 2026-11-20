@@ -1440,9 +1440,11 @@ static int s_test_connection_manager_idle_culling_mixture(struct aws_allocator *
      * release the connections
      * Previous tests created situations where the entire block of idle connections end up getting culled.  We also
      * want to create a situation where just some of the connections get culled.
+     *
+     * Release the second batch well past the first (not just 1ns later).
      */
     s_release_connections(5, false);
-    s_tester_set_mock_time(now + 1);
+    s_tester_set_mock_time(now + aws_timestamp_convert(100, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
     s_release_connections(5, false);
     s_tester_set_mock_time(now);
     uint64_t one_sec_in_nanos = aws_timestamp_convert(1, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL);

@@ -30,7 +30,7 @@ static int s_scan_outgoing_headers(
     bool use_manual_data_writes) {
 
     size_t total = 0;
-    bool has_body_stream = aws_http_message_get_body_stream(message);
+    bool has_body_stream = aws_http_message_get_body_stream(message) != NULL;
     bool has_content_length_header = false;
     bool has_transfer_encoding_header = false;
 
@@ -1200,7 +1200,7 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
 }
 
 bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder) {
-    return encoder->message;
+    return encoder->message != NULL;
 }
 
 bool aws_h1_encoder_is_waiting_for_chunks(const struct aws_h1_encoder *encoder) {

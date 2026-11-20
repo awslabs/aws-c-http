@@ -617,12 +617,12 @@ struct aws_http_message *aws_http_message_acquire(struct aws_http_message *messa
 
 bool aws_http_message_is_request(const struct aws_http_message *message) {
     AWS_PRECONDITION(message);
-    return message->request_data;
+    return message->request_data != NULL;
 }
 
 bool aws_http_message_is_response(const struct aws_http_message *message) {
     AWS_PRECONDITION(message);
-    return message->response_data;
+    return message->response_data != NULL;
 }
 
 enum aws_http_version aws_http_message_get_protocol_version(const struct aws_http_message *message) {

@@ -1947,7 +1947,10 @@ void aws_h1_connection_try_process_read_messages(struct aws_h1_connection *conne
 
     if (connection->thread_data.read_state == AWS_CONNECTION_READ_SHUTTING_DOWN &&
         connection->thread_data.read_buffer.pending_bytes == 0) {
-        /* Done processing the pending buffer. */
+        /* Done processing the pending buffer. The delayed shutdown came from the channel, so the peer has closed. */
+        if (aws_h1_decoder_finish_indeterminate_length_body(connection->thread_data.incoming_stream_decoder)) {
+            goto shutdown;
+        }
         aws_raise_error(connection->thread_data.pending_shutdown_error_code);
         goto shutdown;
     }
@@ -2051,6 +2054,16 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
 
     bool body_headers_ignored = incoming_stream->base.request_method == AWS_HTTP_METHOD_HEAD;
     aws_h1_decoder_set_body_headers_ignored(connection->thread_data.incoming_stream_decoder, body_headers_ignored);
+    /**
+     * RFC-7230 3.3.3
+     * 2. Any 2xx (Successful) response to a CONNECT request implies that
+     * the connection will become a tunnel immediately after the empty
+     * line that concludes the header fields.  A client MUST ignore any
+     * Content-Length or Transfer-Encoding header fields received in
+     * such a message. . */
+    aws_h1_decoder_set_body_headers_ignored_on_2xx(
+        connection->thread_data.incoming_stream_decoder,
+        incoming_stream->base.request_method == AWS_HTTP_METHOD_CONNECT);
 
     if (incoming_stream->base.metrics.receive_start_timestamp_ns == -1) {
         /* That's the first time for the stream receives any message */
@@ -2226,6 +2239,12 @@ static int s_handler_shutdown(
             s_initialize_read_delay_shutdown(connection, error_code);
             /* Return success, and wait for the buffered data to be processed to propagate the shutdown. */
             return AWS_OP_SUCCESS;
+        }
+        /* If reading is still open, this handler didn't start the shutdown, so the peer has closed.
+         * That ends a response body of indeterminate length (RFC-7230 3.3.3). */
+        if (connection->thread_data.read_state == AWS_CONNECTION_READ_OPEN &&
+            aws_h1_decoder_finish_indeterminate_length_body(connection->thread_data.incoming_stream_decoder)) {
+            error_code = aws_last_error();
         }
         s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, false /*schedule_shutdown*/, error_code);
     } else /* dir == AWS_CHANNEL_DIR_WRITE */ {

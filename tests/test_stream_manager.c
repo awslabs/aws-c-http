@@ -51,6 +51,8 @@ struct sm_tester_options {
 
     struct aws_byte_cursor *uri_cursor;
     const enum aws_log_level *log_level;
+    /* Log to this file instead of stderr. NULL means stderr. */
+    const char *log_filename;
     bool prior_knowledge;
     bool close_connection_on_server_error;
     size_t connection_ping_period_ms;
@@ -243,8 +245,12 @@ static int s_tester_init(struct sm_tester_options *options) {
 
     struct aws_logger_standard_options logger_options = {
         .level = options->log_level ? *options->log_level : AWS_LOG_LEVEL_TRACE,
-        .file = stderr,
     };
+    if (options->log_filename) {
+        logger_options.filename = options->log_filename;
+    } else {
+        logger_options.file = stderr;
+    }
 
     aws_logger_init_standard(&s_logger, alloc, &logger_options);
     aws_logger_set(&s_logger);
@@ -2025,6 +2031,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
         .uri_cursor = &uri_cursor,
         .monitor_opt = &monitor_opt,
         .log_level = &log_level,
+        .log_filename = "localhost_integ_h2_sm_acquire_stream_stress.log",
     };
     ASSERT_SUCCESS(s_tester_init(&options));
     size_t num_to_acquire = 500 * 100;
@@ -2113,6 +2120,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
         .alloc = allocator,
         .uri_cursor = &uri_cursor,
         .log_level = &log_level,
+        .log_filename = "localhost_integ_h2_sm_acquire_stream_stress_with_body.log",
     };
     ASSERT_SUCCESS(s_tester_init(&options));
     s_tester.length_sent = 2000;

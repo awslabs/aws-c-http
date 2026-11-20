@@ -275,11 +275,11 @@ bool aws_http_connection_new_requests_allowed(const struct aws_http_connection *
 }
 
 bool aws_http_connection_is_client(const struct aws_http_connection *connection) {
-    return connection->client_data;
+    return connection->client_data != NULL;
 }
 
 bool aws_http_connection_is_server(const struct aws_http_connection *connection) {
-    return connection->server_data;
+    return connection->server_data != NULL;
 }
 
 int aws_http2_connection_change_settings(

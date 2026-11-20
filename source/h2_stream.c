@@ -961,7 +961,7 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_i(
     /* Not calling s_check_state_allows_frame_type() here because we already checked
      * at start of HEADERS frame in aws_h2_stream_on_decoder_headers_begin() */
 
-    bool is_server = stream->base.server_data;
+    bool is_server = stream->base.server_data != NULL;
 
     /* RFC-7540 8.1 - Message consists of:
      * - 0+ Informational 1xx headers (response-only, decoder validates that this only occurs in responses)
